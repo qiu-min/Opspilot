@@ -22,13 +22,14 @@ import type { ModelAdapter } from './model-adapter.js';
 export interface OpenAiCompletionsRequest {
   readonly model: string;
   readonly messages: readonly unknown[];
-  readonly tools: readonly unknown[];
-  readonly tool_choice: 'auto';
+  readonly tools?: readonly unknown[];
+  readonly tool_choice?: 'auto';
   readonly stream: true;
   readonly stream_options: { readonly include_usage: true };
   readonly response_format?: unknown;
   readonly temperature?: number;
   readonly max_tokens?: number;
+  readonly max_completion_tokens?: number;
   readonly reasoning_effort?: string;
   readonly reasoning?: { readonly effort: string };
   readonly thinking?: { readonly type: 'enabled' };
@@ -138,9 +139,10 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
         const stream = await client.chat.completions.create(
           {
             model: model.id,
-            messages: toOpenAiCompletionsMessages(context),
-            tools: toOpenAiCompletionsTools(context.tools ?? []),
-            tool_choice: 'auto',
+            messages: toOpenAiCompletionsMessages(context, model.compat),
+            ...(context.tools && context.tools.length > 0
+              ? { tools: toOpenAiCompletionsTools(context.tools), tool_choice: 'auto' as const }
+              : {}),
             stream: true,
             stream_options: { include_usage: true },
             ...(options.responseFormat === undefined
@@ -155,13 +157,28 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
                     },
                   },
                 }),
-            ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
-            ...(options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens }),
+            ...(options.temperature === undefined
+              ? {}
+              : model.compat?.supportsTemperature === false
+                ? (() => {
+                    throw new ModelGatewayError(
+                      'UNSUPPORTED_CAPABILITY',
+                      `Model ${model.provider}/${model.id} does not support temperature.`,
+                    );
+                  })()
+                : { temperature: options.temperature }),
+            ...(options.maxTokens === undefined
+              ? {}
+              : model.compat?.maxTokensField === 'max_completion_tokens'
+                ? { max_completion_tokens: options.maxTokens }
+                : { max_tokens: options.maxTokens }),
             ...reasoningRequest(options),
           },
           { signal: options.signal },
         );
         let content = '';
+        let thinking = '';
+        let thinkingSignature: string | undefined;
         let responseId: string | undefined;
         let finalReason: FinishReason = 'stop';
         let finalUsage: Usage | undefined;
@@ -181,6 +198,13 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
           if (typeof delta?.content === 'string') {
             content += delta.content;
             controller.emit({ type: 'text.delta', contentIndex: 0, delta: delta.content });
+          }
+          for (const field of ['reasoning_content', 'reasoning', 'reasoning_text']) {
+            if (typeof delta?.[field] === 'string' && delta[field].length > 0) {
+              thinking += delta[field];
+              thinkingSignature ??= field;
+              break;
+            }
           }
           if (Array.isArray(delta?.tool_calls))
             for (const rawCall of delta.tool_calls) {
@@ -216,14 +240,19 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
           controller.emit({ type: 'tool-call.completed', contentIndex: index, toolCall });
           return toolCall;
         });
-        if (content.length === 0 && toolCalls.length === 0)
+        if (content.length === 0 && thinking.length === 0 && toolCalls.length === 0)
           throw new ModelGatewayError(
             'INVALID_RESPONSE',
             'Model provider returned no text or tool call.',
           );
         const response: ModelResponse = {
           model,
-          content: content.length === 0 ? [] : [{ type: 'text', text: content }],
+          content: [
+            ...(thinking.length === 0
+              ? []
+              : [{ type: 'thinking' as const, thinking, thinkingSignature }]),
+            ...(content.length === 0 ? [] : [{ type: 'text' as const, text: content }]),
+          ],
           toolCalls,
           finishReason: toolCalls.length > 0 ? 'tool_calls' : finalReason,
           ...(finalUsage === undefined ? {} : { usage: finalUsage }),

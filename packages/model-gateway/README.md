@@ -73,6 +73,10 @@ Gateway 在 Adapter 前验证能力并按 Pi 的规则回退：优先寻找更�
 
 未声明或不支持 reasoning 的模型会以稳定错误码拒绝请求，不会猜测 Provider 参数。最终 `ModelResponse.reasoning` 记录请求等级和实际选择等级；不会保存或展示模型私有思维链。
 
+## Kimi K3
+
+K3 通过同一个 `openai-completions` Adapter 和模型级 `compat` 配置接入。它使用顶层 `reasoning_effort`，并将 `maxTokens` 映射为 `max_completion_tokens`；显式传入 `temperature` 会得到 `UNSUPPORTED_CAPABILITY`。流式 `reasoning_content` 会保存为 `ThinkingContent`，只用于多轮 assistant 消息原样回传，既不是最终文本，也不会产生 `text.delta`。
+
 ## Provider 配置
 
 默认配置为仓库根目录的 `config/model-providers.json`。Provider 使用 `apiKeyEnv` 引用环境变量，不能提交明文密钥：

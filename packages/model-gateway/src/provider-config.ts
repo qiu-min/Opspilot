@@ -4,6 +4,7 @@ import {
   type Model,
   ModelGatewayError,
   modelApiSchema,
+  openAiCompletionsCompatSchema,
   reasoningProtocolSchema,
   thinkingLevelMapSchema,
 } from './contracts/index.js';
@@ -15,7 +16,10 @@ const id = z
   .min(1)
   .max(100)
   .regex(/^[A-Za-z][A-Za-z0-9_-]*$/);
-const environmentVariable = z.string().trim().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
+const environmentVariable = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 const url = z
   .string()
   .url()
@@ -31,6 +35,7 @@ export const modelDefinitionConfigSchema = z
     reasoning: z.boolean().default(false),
     thinkingLevelMap: thinkingLevelMapSchema.optional(),
     reasoningProtocol: reasoningProtocolSchema.optional(),
+    compat: openAiCompletionsCompatSchema.optional(),
   })
   .strict()
   .superRefine((model, context) => {
@@ -124,6 +129,7 @@ export function resolveProviders(config: ModelGatewayConfig): readonly ResolvedP
         ...(model.reasoningProtocol === undefined
           ? {}
           : { reasoningProtocol: model.reasoningProtocol }),
+        ...(model.compat === undefined ? {} : { compat: model.compat }),
       })),
     };
   });

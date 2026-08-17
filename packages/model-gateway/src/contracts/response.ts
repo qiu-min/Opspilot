@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { Model, ModelThinkingLevel, ThinkingLevel } from './model.js';
-import type { ModelToolCall, TextContent } from './context.js';
+import type { AssistantContent, ModelToolCall } from './context.js';
 
 export interface Usage {
   readonly inputTokens: number;
@@ -26,7 +26,7 @@ export interface ReasoningDecision {
 
 export interface ModelResponse {
   readonly model: Model;
-  readonly content: readonly TextContent[];
+  readonly content: readonly AssistantContent[];
   readonly toolCalls: readonly ModelToolCall[];
   readonly finishReason: FinishReason;
   readonly usage?: Usage;

@@ -67,4 +67,36 @@ describe('provider configuration', () => {
       }).success,
     ).toBe(true);
   });
+  it('keeps K3 compatibility settings strongly typed when resolving a model', () => {
+    const providers = resolveProviders({
+      providers: [
+        {
+          ...config.providers[0],
+          models: [
+            {
+              id: 'kimi-k3',
+              api: 'openai-completions',
+              reasoning: true,
+              reasoningProtocol: 'openai-reasoning-effort',
+              thinkingLevelMap: {
+                off: null,
+                minimal: 'low',
+                low: 'low',
+                medium: 'high',
+                high: 'max',
+              },
+              compat: {
+                maxTokensField: 'max_completion_tokens',
+                supportsTemperature: false,
+                requiresReasoningContentOnAssistantMessages: true,
+              },
+            },
+          ],
+        },
+      ],
+    });
+    expect(providers[0]?.models[0]?.compat).toMatchObject({
+      maxTokensField: 'max_completion_tokens',
+    });
+  });
 });

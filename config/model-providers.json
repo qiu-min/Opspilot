@@ -21,6 +21,11 @@
             "low": "low",
             "medium": "high",
             "high": "max"
+          },
+          "compat": {
+            "maxTokensField": "max_completion_tokens",
+            "supportsTemperature": false,
+            "requiresReasoningContentOnAssistantMessages": true
           }
         }
       ]

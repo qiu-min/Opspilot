@@ -30,6 +30,19 @@ export const reasoningProtocolSchema = z.enum([
 ]);
 export type ReasoningProtocol = z.infer<typeof reasoningProtocolSchema>;
 
+export const openAiCompletionsCompatSchema = z
+  .object({
+    maxTokensField: z.enum(['max_tokens', 'max_completion_tokens']).optional(),
+    supportsTemperature: z.boolean().optional(),
+    requiresReasoningContentOnAssistantMessages: z.boolean().optional(),
+  })
+  .strict();
+export interface OpenAiCompletionsCompat {
+  readonly maxTokensField?: 'max_tokens' | 'max_completion_tokens';
+  readonly supportsTemperature?: boolean;
+  readonly requiresReasoningContentOnAssistantMessages?: boolean;
+}
+
 export interface Model {
   readonly provider: string;
   readonly id: string;
@@ -41,6 +54,7 @@ export interface Model {
   readonly reasoning: boolean;
   readonly thinkingLevelMap?: ThinkingLevelMap;
   readonly reasoningProtocol?: ReasoningProtocol;
+  readonly compat?: OpenAiCompletionsCompat;
 }
 
 export const modelSchema = z
@@ -58,6 +72,7 @@ export const modelSchema = z
     reasoning: z.boolean(),
     thinkingLevelMap: thinkingLevelMapSchema.optional(),
     reasoningProtocol: reasoningProtocolSchema.optional(),
+    compat: openAiCompletionsCompatSchema.optional(),
   })
   .strict()
   .superRefine((model, context) => {

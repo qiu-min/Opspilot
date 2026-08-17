@@ -1,10 +1,20 @@
 import {
   type Context,
+  type OpenAiCompletionsCompat,
   type ModelToolCall,
   ModelGatewayError,
   type Tool,
+  type TextContent,
+  type ThinkingContent,
   validateModelToolCall,
 } from '../contracts/index.js';
+
+function textFromContent(blocks: readonly (TextContent | ThinkingContent)[]): string {
+  return blocks
+    .filter((block): block is TextContent => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n');
+}
 
 export type OpenAiCompletionTool = {
   readonly type: 'function';
@@ -26,30 +36,53 @@ export function toOpenAiCompletionsTools(tools: readonly Tool[]): readonly OpenA
     },
   }));
 }
-export function toOpenAiCompletionsMessages(context: Context): readonly unknown[] {
+/** 将统一上下文转换为 OpenAI Chat Completions 消息，保留 Provider 要求的推理字段。 */
+export function toOpenAiCompletionsMessages(
+  context: Context,
+  compat: OpenAiCompletionsCompat | undefined,
+): readonly unknown[] {
   const messages = context.systemPrompt
     ? [
-        { role: 'system' as const, content: [{ type: 'text' as const, text: context.systemPrompt }] },
+        {
+          role: 'system' as const,
+          content: [{ type: 'text' as const, text: context.systemPrompt }],
+        },
         ...context.messages,
       ]
     : context.messages;
   return messages.map((message) => {
-    const content = message.content.map((block) => block.text).join('\n');
+    const content = textFromContent(message.content);
     if (message.role === 'tool') return { role: 'tool', tool_call_id: message.callId, content };
-    if (message.role === 'assistant')
+    if (message.role === 'assistant') {
+      const thinkingBlocks = message.content.filter(
+        (block): block is Extract<(typeof message.content)[number], { type: 'thinking' }> =>
+          block.type === 'thinking' && block.thinking.length > 0,
+      );
+      const reasoning = thinkingBlocks[0];
+      const toolCalls = message.toolCalls;
       return {
         role: 'assistant',
         content: content || null,
-        ...(message.toolCalls === undefined
+        ...(reasoning?.thinkingSignature === undefined
+          ? compat?.requiresReasoningContentOnAssistantMessages && toolCalls && toolCalls.length > 0
+            ? { reasoning_content: '' }
+            : {}
+          : {
+              [reasoning.thinkingSignature]: thinkingBlocks
+                .map((block) => block.thinking)
+                .join('\n'),
+            }),
+        ...(toolCalls === undefined
           ? {}
           : {
-              tool_calls: message.toolCalls.map((call) => ({
+              tool_calls: toolCalls.map((call) => ({
                 id: call.callId,
                 type: 'function',
                 function: { name: call.name, arguments: JSON.stringify(call.arguments) },
               })),
             }),
       };
+    }
     return { role: message.role, content };
   });
 }

@@ -31,7 +31,10 @@ export const toolSchema = z
           path: ['type'],
           message: 'Tool parameters.type must be "object".',
         });
-      if (!Object.hasOwn(value, 'properties') || !jsonObjectSchema.safeParse(value.properties).success)
+      if (
+        !Object.hasOwn(value, 'properties') ||
+        !jsonObjectSchema.safeParse(value.properties).success
+      )
         context.addIssue({
           code: 'custom',
           path: ['properties'],
@@ -50,6 +53,23 @@ export const textContentSchema = z
   .object({ type: z.literal('text'), text: z.string().max(100_000) })
   .strict();
 
+/** 表示 Provider 返回的私有推理内容，仅用于后续请求保持上下文连续性。 */
+export interface ThinkingContent {
+  readonly type: 'thinking';
+  readonly thinking: string;
+  readonly thinkingSignature?: string;
+}
+
+export const thinkingContentSchema = z
+  .object({
+    type: z.literal('thinking'),
+    thinking: z.string().max(1_000_000),
+    thinkingSignature: z.string().trim().min(1).max(100).optional(),
+  })
+  .strict();
+
+export type AssistantContent = TextContent | ThinkingContent;
+
 export interface ModelToolCall<TArguments extends JsonObject = JsonObject> {
   readonly callId: string;
   readonly name: string;
@@ -65,7 +85,7 @@ export type Message =
   | { readonly role: 'user'; readonly content: readonly TextContent[] }
   | {
       readonly role: 'assistant';
-      readonly content: readonly TextContent[];
+      readonly content: readonly AssistantContent[];
       readonly toolCalls?: readonly ModelToolCall[];
     }
   | {
@@ -86,7 +106,7 @@ export const messageSchema = z.discriminatedUnion('role', [
   z
     .object({
       role: z.literal('assistant'),
-      content: z.array(textContentSchema).max(100),
+      content: z.array(z.union([textContentSchema, thinkingContentSchema])).max(100),
       toolCalls: z.array(modelToolCallSchema).max(128).optional(),
     })
     .strict(),
@@ -122,7 +142,8 @@ export const contextSchema = z
 
 export function validateContext(value: unknown): Context {
   const parsed = contextSchema.safeParse(value);
-  if (!parsed.success) throw new ModelGatewayError('INVALID_INPUT', 'Invalid model context.', parsed.error);
+  if (!parsed.success)
+    throw new ModelGatewayError('INVALID_INPUT', 'Invalid model context.', parsed.error);
   return parsed.data;
 }
 

@@ -19,6 +19,23 @@ const model: Model = {
 };
 
 describe('ThinkingLevel', () => {
+  it('maps K3 levels without selecting its unsupported off value', () => {
+    const k3: Model = {
+      ...model,
+      provider: 'moonshot',
+      id: 'kimi-k3',
+      thinkingLevelMap: { off: null, minimal: 'low', low: 'low', medium: 'high', high: 'max' },
+    };
+    expect(resolveThinking(k3, { reasoning: 'minimal' }).resolvedReasoning?.providerValue).toBe(
+      'low',
+    );
+    expect(resolveThinking(k3, { reasoning: 'low' }).resolvedReasoning?.providerValue).toBe('low');
+    expect(resolveThinking(k3, { reasoning: 'medium' }).resolvedReasoning?.providerValue).toBe(
+      'high',
+    );
+    expect(resolveThinking(k3, { reasoning: 'high' }).resolvedReasoning?.providerValue).toBe('max');
+    expect(getSupportedThinkingLevels(k3)).not.toContain('off');
+  });
   it('reports explicitly configured reasoning levels', () => {
     expect(getSupportedThinkingLevels(model)).toEqual(['off', 'minimal', 'medium']);
   });
@@ -43,9 +60,9 @@ describe('ThinkingLevel', () => {
       thinkingLevelMap: { ...model.thinkingLevelMap, high: null },
     };
     expect(clampThinkingLevel(disabledHigh, 'high')).toBe('medium');
-    expect(resolveThinking(disabledHigh, { reasoning: 'high' }).resolvedReasoning?.providerValue).toBe(
-      'medium',
-    );
+    expect(
+      resolveThinking(disabledHigh, { reasoning: 'high' }).resolvedReasoning?.providerValue,
+    ).toBe('medium');
   });
   it('rejects reasoning requests for models without the capability', () => {
     try {
