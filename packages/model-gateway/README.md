@@ -16,7 +16,7 @@ Options  → 本轮怎样调用，例如 reasoning、温度、输出上限、取
 import { createModelGateway, loadModelGatewayConfig } from '@opspilot/model-gateway';
 
 const gateway = createModelGateway(await loadModelGatewayConfig());
-const model = gateway.getModel('moonshot', 'your-model-id');
+const model = gateway.getModel('moonshot', 'kimi-k3');
 if (!model) throw new Error('Configured model was not found.');
 
 const response = await gateway.complete(
@@ -33,7 +33,6 @@ const response = await gateway.complete(
   },
   {
     reasoning: 'high',
-    temperature: 0.2,
     maxTokens: 800,
   },
 );
@@ -71,11 +70,11 @@ Gateway 在 Adapter 前验证能力并按 Pi 的规则回退：优先寻找更�
 - `openai-reasoning-object` → `reasoning: { effort }`
 - `deepseek-thinking` → `thinking: { type: 'enabled' }` 与 `reasoning_effort`
 
-未声明或不支持 reasoning 的模型会以稳定错误码拒绝请求，不会猜测 Provider 参数。最终 `ModelResponse.reasoning` 记录请求等级和实际选择等级；不会保存或展示模型私有思维链。
+未声明或不支持 reasoning 的模型会以稳定错误码拒绝请求，不会猜测 Provider 参数。最终 `ModelResponse.reasoning` 记录请求等级和实际选择等级；不会将模型私有推理作为用户可见文本或 `text.delta` 事件。
 
 ## Kimi K3
 
-K3 通过同一个 `openai-completions` Adapter 和模型级 `compat` 配置接入。它使用顶层 `reasoning_effort`，并将 `maxTokens` 映射为 `max_completion_tokens`；显式传入 `temperature` 会得到 `UNSUPPORTED_CAPABILITY`。流式 `reasoning_content` 会保存为 `ThinkingContent`，只用于多轮 assistant 消息原样回传，既不是最终文本，也不会产生 `text.delta`。
+K3 通过同一个 `openai-completions` Adapter 和模型级 `compat` 配置接入。它使用顶层 `reasoning_effort`，并将 `maxTokens` 映射为 `max_completion_tokens`；显式传入 `temperature` 会得到 `UNSUPPORTED_CAPABILITY`。多轮工具调用协议要求的 `reasoning_content` 会以带来源信息的 `ThinkingContent` 保留在内存上下文中，仅允许回传给产生它的同一 Provider、API 与模型；它既不是用户可见文本，也不会产生 `text.delta`、记录日志或跨 Provider 发送。
 
 ## Provider 配置
 

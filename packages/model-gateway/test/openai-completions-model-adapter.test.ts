@@ -48,6 +48,11 @@ const context = {
     },
   ],
 };
+const k3ThinkingSource = {
+  api: 'openai-completions',
+  provider: 'moonshot',
+  model: 'kimi-k3',
+};
 function stream(...items: unknown[]): AsyncIterable<unknown> {
   return (async function* () {
     yield* items;
@@ -239,12 +244,22 @@ describe('OpenAI Chat Completions adapter', () => {
     for await (const event of result) events.push(event);
     await expect(result.result()).resolves.toMatchObject({
       content: [
-        { type: 'thinking', thinking: 'first second', thinkingSignature: 'reasoning_content' },
+        {
+          type: 'thinking',
+          thinking: 'first second',
+          thinkingSignature: 'reasoning_content',
+          source: k3ThinkingSource,
+        },
         { type: 'text', text: 'answer' },
       ],
     });
     expect(events.map((event) => event.type)).not.toContain('thinking.delta');
-    expect(events.filter((event) => event.type === 'text.delta')).toHaveLength(1);
+    const response = await result.result();
+    const textDelta = events.find((event) => event.type === 'text.delta');
+    expect(textDelta).toMatchObject({
+      contentIndex: response.content.findIndex((block) => block.type === 'text'),
+    });
+    expect(response.content.map((block) => block.type)).toEqual(['thinking', 'text']);
     expect(sent).toMatchObject({ reasoning_effort: 'high', max_completion_tokens: 32768 });
     expect(sent).not.toHaveProperty('max_tokens');
     expect(sent).not.toHaveProperty('reasoning');
@@ -275,6 +290,7 @@ describe('OpenAI Chat Completions adapter', () => {
                   type: 'thinking',
                   thinking: 'private chain',
                   thinkingSignature: 'reasoning_content',
+                  source: k3ThinkingSource,
                 },
               ],
               toolCalls: [{ callId: 'call_1', name: 'query_logs', arguments: {} }],
@@ -347,5 +363,99 @@ describe('OpenAI Chat Completions adapter', () => {
       .result();
     expect(sent).toMatchObject({ max_tokens: 12 });
     expect(sent).not.toHaveProperty('reasoning_content');
+  });
+
+  it('keeps content indexes consistent when text arrives before reasoning', async () => {
+    const adapter = new OpenAiCompletionsModelAdapter(() => ({
+      chat: {
+        completions: {
+          async create() {
+            return stream(
+              { choices: [{ delta: { content: 'answer' }, finish_reason: null }] },
+              { choices: [{ delta: { reasoning_content: 'private' }, finish_reason: 'stop' }] },
+            );
+          },
+        },
+      },
+    }));
+    const events = [];
+    const result = adapter.stream(k3Model, context, {}, provider);
+    for await (const event of result) events.push(event);
+    const response = await result.result();
+    const textDelta = events.find((event) => event.type === 'text.delta');
+    expect(response.content.map((block) => block.type)).toEqual(['text', 'thinking']);
+    expect(textDelta).toMatchObject({
+      contentIndex: response.content.findIndex((block) => block.type === 'text'),
+    });
+  });
+
+  it('does not replay K3 thinking to a different provider or model', async () => {
+    const sent: OpenAiCompletionsRequest[] = [];
+    const adapter = new OpenAiCompletionsModelAdapter(() => ({
+      chat: {
+        completions: {
+          async create(input) {
+            sent.push(input);
+            return stream({ choices: [{ delta: { content: 'done' }, finish_reason: 'stop' }] });
+          },
+        },
+      },
+    }));
+    const history = {
+      messages: [
+        {
+          role: 'assistant' as const,
+          content: [
+            {
+              type: 'thinking' as const,
+              thinking: 'k3-private',
+              thinkingSignature: 'reasoning_content' as const,
+              source: k3ThinkingSource,
+            },
+          ],
+          toolCalls: [{ callId: 'call_1', name: 'query_logs', arguments: {} }],
+        },
+      ],
+    };
+    await adapter
+      .stream({ ...model, provider: 'openai', reasoning: false }, history, {}, provider)
+      .result();
+    await adapter.stream({ ...k3Model, provider: 'other' }, history, {}, provider).result();
+    await adapter.stream({ ...k3Model, id: 'other-kimi' }, history, {}, provider).result();
+    const standardAssistant = sent[0]?.messages[0] as Record<string, unknown>;
+    expect(standardAssistant).not.toHaveProperty('reasoning_content');
+    expect(standardAssistant).not.toHaveProperty('reasoning');
+    expect(standardAssistant).not.toHaveProperty('reasoning_text');
+    for (const request of sent.slice(1)) {
+      const assistant = request.messages[0] as Record<string, unknown>;
+      expect(assistant).not.toHaveProperty('reasoning_content', 'k3-private');
+      expect(assistant).not.toHaveProperty('reasoning');
+      expect(assistant).not.toHaveProperty('reasoning_text');
+      expect(assistant).toMatchObject({ reasoning_content: '' });
+    }
+  });
+
+  it('does not duplicate a multi-field reasoning delta', async () => {
+    const adapter = new OpenAiCompletionsModelAdapter(() => ({
+      chat: {
+        completions: {
+          async create() {
+            return stream({
+              choices: [
+                {
+                  delta: { reasoning_content: 'same', reasoning: 'same', content: 'answer' },
+                  finish_reason: 'stop',
+                },
+              ],
+            });
+          },
+        },
+      },
+    }));
+    const response = await adapter.stream(k3Model, context, {}, provider).result();
+    expect(response.content.find((block) => block.type === 'thinking')).toMatchObject({
+      thinking: 'same',
+      thinkingSignature: 'reasoning_content',
+    });
   });
 });

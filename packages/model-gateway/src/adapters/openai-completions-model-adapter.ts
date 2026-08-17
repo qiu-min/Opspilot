@@ -7,6 +7,9 @@ import {
   type ModelEventStream,
   ModelGatewayError,
   type ModelResponse,
+  type TextContent,
+  type ThinkingContent,
+  type ThinkingSignature,
   toModelGatewayError,
   type Usage,
 } from '../contracts/index.js';
@@ -139,7 +142,7 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
         const stream = await client.chat.completions.create(
           {
             model: model.id,
-            messages: toOpenAiCompletionsMessages(context, model.compat),
+            messages: toOpenAiCompletionsMessages(context, model),
             ...(context.tools && context.tools.length > 0
               ? { tools: toOpenAiCompletionsTools(context.tools), tool_choice: 'auto' as const }
               : {}),
@@ -176,9 +179,29 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
           },
           { signal: options.signal },
         );
-        let content = '';
-        let thinking = '';
-        let thinkingSignature: string | undefined;
+        type StreamingBlock = TextContent | ThinkingContent;
+        const blocks: StreamingBlock[] = [];
+        let textBlock: TextContent | undefined;
+        let thinkingBlock: ThinkingContent | undefined;
+        const ensureTextBlock = (): TextContent => {
+          if (!textBlock) {
+            textBlock = { type: 'text', text: '' };
+            blocks.push(textBlock);
+          }
+          return textBlock;
+        };
+        const ensureThinkingBlock = (thinkingSignature: ThinkingSignature): ThinkingContent => {
+          if (!thinkingBlock) {
+            thinkingBlock = {
+              type: 'thinking',
+              thinking: '',
+              thinkingSignature,
+              source: { api: model.api, provider: model.provider, model: model.id },
+            };
+            blocks.push(thinkingBlock);
+          }
+          return thinkingBlock;
+        };
         let responseId: string | undefined;
         let finalReason: FinishReason = 'stop';
         let finalUsage: Usage | undefined;
@@ -196,13 +219,22 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
           if (typeof choice.finish_reason === 'string') finalReason = finish(choice.finish_reason);
           const delta = asRecord(choice.delta);
           if (typeof delta?.content === 'string') {
-            content += delta.content;
-            controller.emit({ type: 'text.delta', contentIndex: 0, delta: delta.content });
+            const previous = ensureTextBlock();
+            textBlock = { ...previous, text: previous.text + delta.content };
+            blocks[blocks.indexOf(previous)] = textBlock;
+            controller.emit({
+              type: 'text.delta',
+              contentIndex: blocks.indexOf(textBlock),
+              delta: delta.content,
+            });
           }
           for (const field of ['reasoning_content', 'reasoning', 'reasoning_text']) {
             if (typeof delta?.[field] === 'string' && delta[field].length > 0) {
-              thinking += delta[field];
-              thinkingSignature ??= field;
+              const signature = field as ThinkingSignature;
+              if (thinkingBlock && thinkingBlock.thinkingSignature !== signature) break;
+              const previous = ensureThinkingBlock(signature);
+              thinkingBlock = { ...previous, thinking: previous.thinking + delta[field] };
+              blocks[blocks.indexOf(previous)] = thinkingBlock;
               break;
             }
           }
@@ -240,19 +272,14 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
           controller.emit({ type: 'tool-call.completed', contentIndex: index, toolCall });
           return toolCall;
         });
-        if (content.length === 0 && thinking.length === 0 && toolCalls.length === 0)
+        if (blocks.length === 0 && toolCalls.length === 0)
           throw new ModelGatewayError(
             'INVALID_RESPONSE',
             'Model provider returned no text or tool call.',
           );
         const response: ModelResponse = {
           model,
-          content: [
-            ...(thinking.length === 0
-              ? []
-              : [{ type: 'thinking' as const, thinking, thinkingSignature }]),
-            ...(content.length === 0 ? [] : [{ type: 'text' as const, text: content }]),
-          ],
+          content: blocks,
           toolCalls,
           finishReason: toolCalls.length > 0 ? 'tool_calls' : finalReason,
           ...(finalUsage === undefined ? {} : { usage: finalUsage }),

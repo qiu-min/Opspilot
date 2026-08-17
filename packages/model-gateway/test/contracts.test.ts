@@ -50,6 +50,28 @@ describe('model gateway contracts', () => {
     expect(validateContext(context).messages).toHaveLength(1);
   });
 
+  it('rejects thinking signatures that could overwrite assistant request fields', () => {
+    for (const thinkingSignature of ['role', 'content', 'tool_calls']) {
+      expect(
+        contextSchema.safeParse({
+          messages: [
+            {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'thinking',
+                  thinking: 'corrupted',
+                  thinkingSignature,
+                  source: { api: 'openai-completions', provider: 'moonshot', model: 'kimi-k3' },
+                },
+              ],
+            },
+          ],
+        }).success,
+      ).toBe(false);
+    }
+  });
+
   it('validates only the tool allowlist, leaving argument semantics to Tool Gateway', () => {
     expect(
       validateModelToolCall(context.tools, {

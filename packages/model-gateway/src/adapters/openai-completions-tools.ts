@@ -1,6 +1,6 @@
 import {
   type Context,
-  type OpenAiCompletionsCompat,
+  type Model,
   type ModelToolCall,
   ModelGatewayError,
   type Tool,
@@ -37,10 +37,7 @@ export function toOpenAiCompletionsTools(tools: readonly Tool[]): readonly OpenA
   }));
 }
 /** 将统一上下文转换为 OpenAI Chat Completions 消息，保留 Provider 要求的推理字段。 */
-export function toOpenAiCompletionsMessages(
-  context: Context,
-  compat: OpenAiCompletionsCompat | undefined,
-): readonly unknown[] {
+export function toOpenAiCompletionsMessages(context: Context, model: Model): readonly unknown[] {
   const messages = context.systemPrompt
     ? [
         {
@@ -56,22 +53,32 @@ export function toOpenAiCompletionsMessages(
     if (message.role === 'assistant') {
       const thinkingBlocks = message.content.filter(
         (block): block is Extract<(typeof message.content)[number], { type: 'thinking' }> =>
-          block.type === 'thinking' && block.thinking.length > 0,
+          block.type === 'thinking' &&
+          block.thinking.length > 0 &&
+          model.compat?.requiresReasoningContentOnAssistantMessages === true &&
+          block.source.api === model.api &&
+          block.source.provider === model.provider &&
+          block.source.model === model.id,
       );
       const reasoning = thinkingBlocks[0];
       const toolCalls = message.toolCalls;
+      const reasoningContent = reasoning
+        ? thinkingBlocks.map((block) => block.thinking).join('\n')
+        : undefined;
       return {
         role: 'assistant',
         content: content || null,
-        ...(reasoning?.thinkingSignature === undefined
-          ? compat?.requiresReasoningContentOnAssistantMessages && toolCalls && toolCalls.length > 0
+        ...(reasoningContent === undefined
+          ? model.compat?.requiresReasoningContentOnAssistantMessages === true &&
+            toolCalls &&
+            toolCalls.length > 0
             ? { reasoning_content: '' }
             : {}
-          : {
-              [reasoning.thinkingSignature]: thinkingBlocks
-                .map((block) => block.thinking)
-                .join('\n'),
-            }),
+          : reasoning.thinkingSignature === 'reasoning_content'
+            ? { reasoning_content: reasoningContent }
+            : reasoning.thinkingSignature === 'reasoning'
+              ? { reasoning: reasoningContent }
+              : { reasoning_text: reasoningContent }),
         ...(toolCalls === undefined
           ? {}
           : {

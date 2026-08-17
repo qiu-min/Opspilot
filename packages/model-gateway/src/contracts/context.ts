@@ -53,18 +53,37 @@ export const textContentSchema = z
   .object({ type: z.literal('text'), text: z.string().max(100_000) })
   .strict();
 
+export const thinkingSignatureSchema = z.enum(['reasoning_content', 'reasoning', 'reasoning_text']);
+export type ThinkingSignature = z.infer<typeof thinkingSignatureSchema>;
+
+export interface ThinkingSource {
+  readonly api: string;
+  readonly provider: string;
+  readonly model: string;
+}
+
+export const thinkingSourceSchema = z
+  .object({
+    api: text(100),
+    provider: text(100),
+    model: text(200),
+  })
+  .strict();
+
 /** 表示 Provider 返回的私有推理内容，仅用于后续请求保持上下文连续性。 */
 export interface ThinkingContent {
   readonly type: 'thinking';
   readonly thinking: string;
-  readonly thinkingSignature?: string;
+  readonly thinkingSignature: ThinkingSignature;
+  readonly source: ThinkingSource;
 }
 
 export const thinkingContentSchema = z
   .object({
     type: z.literal('thinking'),
     thinking: z.string().max(1_000_000),
-    thinkingSignature: z.string().trim().min(1).max(100).optional(),
+    thinkingSignature: thinkingSignatureSchema,
+    source: thinkingSourceSchema,
   })
   .strict();
 
