@@ -1,0 +1,7 @@
+[submodule "docs/pi"]
+	path = docs/pi
+	url = https://github.com/earendil-works/pi.git
+
+[submodule "docs/dg-ai-notes"]
+	path = docs/dg-ai-notes
+	url = https://github.com/buchidonggua/dg-ai-notes.git
