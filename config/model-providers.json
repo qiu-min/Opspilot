@@ -8,12 +8,20 @@
       "timeoutMs": 30000,
       "models": [
         {
-          "id": "kimi-k2.7-code-highspeed",
-          "name": "KIMI K2.7 Code Highspeed",
+          "id": "kimi-k3",
+          "name": "Kimi K3",
           "api": "openai-completions",
           "supportsTools": true,
-          "contextWindow": 256000,
-          "reasoning": true
+          "contextWindow": 1000000,
+          "reasoning": true,
+          "reasoningProtocol": "openai-reasoning-effort",
+          "thinkingLevelMap": {
+            "off": null,
+            "minimal": "low",
+            "low": "low",
+            "medium": "high",
+            "high": "max"
+          }
         }
       ]
     }
