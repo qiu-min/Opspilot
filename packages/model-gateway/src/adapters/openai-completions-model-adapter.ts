@@ -218,7 +218,7 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
           if (!choice) continue;
           if (typeof choice.finish_reason === 'string') finalReason = finish(choice.finish_reason);
           const delta = asRecord(choice.delta);
-          if (typeof delta?.content === 'string') {
+          if (typeof delta?.content === "string" && delta.content.length > 0) { 
             const previous = ensureTextBlock();
             textBlock = { ...previous, text: previous.text + delta.content };
             blocks[blocks.indexOf(previous)] = textBlock;
