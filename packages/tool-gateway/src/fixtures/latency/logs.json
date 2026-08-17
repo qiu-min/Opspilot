@@ -1,0 +1,5 @@
+[
+  {"timestamp":"2026-08-13T12:00:00.000Z","service":"orders-api","level":"INFO","message":"request completed","attributes":{"durationMs":85}},
+  {"timestamp":"2026-08-13T12:07:00.000Z","service":"orders-api","level":"WARN","message":"slow request completed","attributes":{"durationMs":2400,"dependency":"inventory-api"}},
+  {"timestamp":"2026-08-13T12:08:00.000Z","service":"orders-api","level":"WARN","message":"slow request completed","attributes":{"durationMs":3100,"dependency":"inventory-api"}}
+]

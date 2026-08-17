@@ -1,0 +1,4 @@
+[
+  {"service":"checkout-api","metric":"http_error_rate","unit":"percent","samples":[{"timestamp":"2026-08-13T11:00:00.000Z","value":0.4},{"timestamp":"2026-08-13T11:09:00.000Z","value":18.7}]},
+  {"service":"checkout-api","metric":"http_request_rate","unit":"requests_per_second","samples":[{"timestamp":"2026-08-13T11:00:00.000Z","value":120},{"timestamp":"2026-08-13T11:09:00.000Z","value":118}]}
+]

@@ -1,0 +1,6 @@
+[
+  {"timestamp":"2026-08-13T11:00:00.000Z","service":"checkout-api","level":"INFO","message":"request completed","attributes":{"statusCode":200}},
+  {"timestamp":"2026-08-13T11:08:00.000Z","service":"checkout-api","level":"ERROR","message":"payment provider response rejected","attributes":{"statusCode":502,"provider":"payments-api"}},
+  {"timestamp":"2026-08-13T11:09:00.000Z","service":"checkout-api","level":"ERROR","message":"payment provider response rejected","attributes":{"statusCode":502,"provider":"payments-api"}},
+  {"timestamp":"2026-08-13T11:10:00.000Z","service":"checkout-api","level":"WARN","message":"release checkout-api version 2026.08.13.2 enabled","attributes":{"release":"2026.08.13.2"}}
+]

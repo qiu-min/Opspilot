@@ -1,0 +1,5 @@
+[
+  {"service":"billing-api","metric":"db_connection_active","unit":"connections","samples":[{"timestamp":"2026-08-13T10:00:00.000Z","value":62},{"timestamp":"2026-08-13T10:10:00.000Z","value":92},{"timestamp":"2026-08-13T10:12:00.000Z","value":100}]},
+  {"service":"billing-api","metric":"db_connection_idle","unit":"connections","samples":[{"timestamp":"2026-08-13T10:00:00.000Z","value":38},{"timestamp":"2026-08-13T10:12:00.000Z","value":0}]},
+  {"service":"billing-api","metric":"db_connection_max","unit":"connections","samples":[{"timestamp":"2026-08-13T10:00:00.000Z","value":100},{"timestamp":"2026-08-13T10:12:00.000Z","value":100}]}
+]

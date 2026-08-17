@@ -1,0 +1,31 @@
+{
+  "name": "@opspilot/api-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter @opspilot/api build && tsx watch --tsconfig tsconfig.json src/main.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/platform-express": "^11.0.0",
+    "@opspilot/api": "workspace:*",
+    "@opspilot/application": "workspace:*",
+    "@opspilot/db": "workspace:*",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "^11.0.0",
+    "@types/node": "^22.0.0",
+    "@types/supertest": "^6.0.3",
+    "supertest": "^7.1.3",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.10"
+  }
+}

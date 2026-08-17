@@ -1,0 +1,1 @@
+{"service":"billing-api","upstream":["web-checkout"],"downstream":[{"service":"postgresql-primary","relation":"database"}]}

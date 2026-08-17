@@ -1,0 +1,246 @@
+import OpenAI, { APIConnectionTimeoutError, AuthenticationError, RateLimitError } from 'openai';
+import {
+  createModelEventStream,
+  type Context,
+  type FinishReason,
+  type Model,
+  type ModelEventStream,
+  ModelGatewayError,
+  type ModelResponse,
+  toModelGatewayError,
+  type Usage,
+} from '../contracts/index.js';
+import type { ResolvedProvider } from '../provider-config.js';
+import type { ResolvedOptions } from '../thinking.js';
+import {
+  parseOpenAiCompletionsToolCall,
+  toOpenAiCompletionsMessages,
+  toOpenAiCompletionsTools,
+} from './openai-completions-tools.js';
+import type { ModelAdapter } from './model-adapter.js';
+
+export interface OpenAiCompletionsRequest {
+  readonly model: string;
+  readonly messages: readonly unknown[];
+  readonly tools: readonly unknown[];
+  readonly tool_choice: 'auto';
+  readonly stream: true;
+  readonly stream_options: { readonly include_usage: true };
+  readonly response_format?: unknown;
+  readonly temperature?: number;
+  readonly max_tokens?: number;
+  readonly reasoning_effort?: string;
+  readonly reasoning?: { readonly effort: string };
+  readonly thinking?: { readonly type: 'enabled' };
+}
+export interface OpenAiCompletionsClient {
+  readonly chat: {
+    readonly completions: {
+      create(
+        request: OpenAiCompletionsRequest,
+        options?: { signal?: AbortSignal },
+      ): Promise<AsyncIterable<unknown>>;
+    };
+  };
+}
+export type OpenAiCompletionsClientFactory = (
+  provider: ResolvedProvider,
+  baseUrl: string,
+) => OpenAiCompletionsClient;
+const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+function defaultClient(provider: ResolvedProvider, baseUrl: string): OpenAiCompletionsClient {
+  const client = new OpenAI({
+    apiKey: provider.apiKey,
+    baseURL: baseUrl,
+    timeout: provider.timeoutMs,
+    defaultHeaders: provider.headers,
+  });
+  return {
+    chat: {
+      completions: {
+        async create(request, options) {
+          return client.chat.completions.create(request as never, {
+            signal: options?.signal,
+          }) as unknown as Promise<AsyncIterable<unknown>>;
+        },
+      },
+    },
+  };
+}
+function providerError(error: unknown): ModelGatewayError {
+  if (error instanceof ModelGatewayError) return error;
+  const record = asRecord(error);
+  if (error instanceof AuthenticationError || record?.status === 401 || record?.status === 403)
+    return new ModelGatewayError('AUTHENTICATION', 'Model provider authentication failed.');
+  if (error instanceof RateLimitError || record?.status === 429)
+    return new ModelGatewayError('RATE_LIMITED', 'Model provider rate limit exceeded.');
+  if (error instanceof APIConnectionTimeoutError || record?.name === 'AbortError')
+    return new ModelGatewayError('TIMEOUT', 'Model provider request timed out.');
+  return toModelGatewayError(error);
+}
+function usage(value: unknown): Usage | undefined {
+  const item = asRecord(value);
+  if (
+    !item ||
+    typeof item.prompt_tokens !== 'number' ||
+    typeof item.completion_tokens !== 'number' ||
+    typeof item.total_tokens !== 'number'
+  )
+    return undefined;
+  return {
+    inputTokens: item.prompt_tokens,
+    outputTokens: item.completion_tokens,
+    totalTokens: item.total_tokens,
+  };
+}
+function finish(value: unknown): FinishReason {
+  return value === 'tool_calls'
+    ? 'tool_calls'
+    : value === 'length'
+      ? 'length'
+      : value === 'content_filter'
+        ? 'refusal'
+        : 'stop';
+}
+
+function reasoningRequest(options: ResolvedOptions): Partial<OpenAiCompletionsRequest> {
+  const reasoning = options.resolvedReasoning;
+  if (!reasoning) return {};
+  switch (reasoning.protocol) {
+    case 'openai-reasoning-effort':
+      return { reasoning_effort: reasoning.providerValue };
+    case 'openai-reasoning-object':
+      return { reasoning: { effort: reasoning.providerValue } };
+    case 'deepseek-thinking':
+      return {
+        thinking: { type: 'enabled' },
+        reasoning_effort: reasoning.providerValue,
+      };
+  }
+}
+
+export class OpenAiCompletionsModelAdapter implements ModelAdapter {
+  readonly api = 'openai-completions';
+  constructor(private readonly clientFactory: OpenAiCompletionsClientFactory = defaultClient) {}
+  stream(
+    model: Model,
+    context: Context,
+    options: ResolvedOptions,
+    provider: ResolvedProvider,
+  ): ModelEventStream {
+    return createModelEventStream(async (controller) => {
+      controller.emit({ type: 'start', model });
+      try {
+        const client = this.clientFactory(provider, model.baseUrl);
+        const stream = await client.chat.completions.create(
+          {
+            model: model.id,
+            messages: toOpenAiCompletionsMessages(context),
+            tools: toOpenAiCompletionsTools(context.tools ?? []),
+            tool_choice: 'auto',
+            stream: true,
+            stream_options: { include_usage: true },
+            ...(options.responseFormat === undefined
+              ? {}
+              : {
+                  response_format: {
+                    type: 'json_schema',
+                    json_schema: {
+                      name: options.responseFormat.name,
+                      schema: options.responseFormat.schema,
+                      strict: options.responseFormat.strict,
+                    },
+                  },
+                }),
+            ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
+            ...(options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens }),
+            ...reasoningRequest(options),
+          },
+          { signal: options.signal },
+        );
+        let content = '';
+        let responseId: string | undefined;
+        let finalReason: FinishReason = 'stop';
+        let finalUsage: Usage | undefined;
+        const calls = new Map<number, { id?: string; name?: string; arguments: string }>();
+        for await (const chunk of stream) {
+          const record = asRecord(chunk);
+          if (typeof record?.id === 'string') responseId = record.id;
+          const chunkUsage = usage(record?.usage);
+          if (chunkUsage) {
+            finalUsage = chunkUsage;
+            controller.emit({ type: 'usage', usage: chunkUsage });
+          }
+          const choice = Array.isArray(record?.choices) ? asRecord(record.choices[0]) : undefined;
+          if (!choice) continue;
+          if (typeof choice.finish_reason === 'string') finalReason = finish(choice.finish_reason);
+          const delta = asRecord(choice.delta);
+          if (typeof delta?.content === 'string') {
+            content += delta.content;
+            controller.emit({ type: 'text.delta', contentIndex: 0, delta: delta.content });
+          }
+          if (Array.isArray(delta?.tool_calls))
+            for (const rawCall of delta.tool_calls) {
+              const part = asRecord(rawCall);
+              if (!part || typeof part.index !== 'number') continue;
+              const item = calls.get(part.index) ?? { arguments: '' };
+              if (typeof part.id === 'string') item.id = part.id;
+              const functionPart = asRecord(part.function);
+              if (typeof functionPart?.name === 'string') item.name = functionPart.name;
+              if (typeof functionPart?.arguments === 'string') {
+                item.arguments += functionPart.arguments;
+                if (item.id)
+                  controller.emit({
+                    type: 'tool-call.delta',
+                    contentIndex: part.index,
+                    callId: item.id,
+                    delta: functionPart.arguments,
+                  });
+              }
+              calls.set(part.index, item);
+            }
+        }
+        const toolCalls = [...calls.entries()].map(([index, call]) => {
+          if (!call.id || !call.name)
+            throw new ModelGatewayError(
+              'INVALID_TOOL_CALL',
+              'OpenAI tool call stream ended before name or ID.',
+            );
+          const toolCall = parseOpenAiCompletionsToolCall(context.tools, {
+            id: call.id,
+            function: { name: call.name, arguments: call.arguments },
+          });
+          controller.emit({ type: 'tool-call.completed', contentIndex: index, toolCall });
+          return toolCall;
+        });
+        if (content.length === 0 && toolCalls.length === 0)
+          throw new ModelGatewayError(
+            'INVALID_RESPONSE',
+            'Model provider returned no text or tool call.',
+          );
+        const response: ModelResponse = {
+          model,
+          content: content.length === 0 ? [] : [{ type: 'text', text: content }],
+          toolCalls,
+          finishReason: toolCalls.length > 0 ? 'tool_calls' : finalReason,
+          ...(finalUsage === undefined ? {} : { usage: finalUsage }),
+          ...(responseId === undefined ? {} : { responseId }),
+          ...(options.resolvedReasoning === undefined
+            ? {}
+            : {
+                reasoning: {
+                  requested: options.resolvedReasoning.requested,
+                  selected: options.resolvedReasoning.selected,
+                },
+              }),
+        };
+        controller.complete(response);
+      } catch (error) {
+        controller.fail(providerError(error));
+      }
+    });
+  }
+}

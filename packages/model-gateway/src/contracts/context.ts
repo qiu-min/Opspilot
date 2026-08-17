@@ -1,0 +1,142 @@
+import { z } from 'zod';
+import { ModelGatewayError } from './errors.js';
+
+const text = (max: number) => z.string().trim().min(1).max(max);
+const callIdSchema = text(200);
+
+export const toolNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z_][A-Za-z0-9_-]*$/);
+
+export const jsonObjectSchema = z.record(z.string(), z.unknown());
+export type JsonObject = z.infer<typeof jsonObjectSchema>;
+
+export interface Tool<TParameters extends JsonObject = JsonObject> {
+  readonly name: string;
+  readonly description: string;
+  readonly parameters: TParameters;
+}
+
+export const toolSchema = z
+  .object({
+    name: toolNameSchema,
+    description: text(2_000),
+    parameters: jsonObjectSchema.superRefine((value, context) => {
+      if (value.type !== 'object')
+        context.addIssue({
+          code: 'custom',
+          path: ['type'],
+          message: 'Tool parameters.type must be "object".',
+        });
+      if (!Object.hasOwn(value, 'properties') || !jsonObjectSchema.safeParse(value.properties).success)
+        context.addIssue({
+          code: 'custom',
+          path: ['properties'],
+          message: 'Tool parameters.properties must be an object.',
+        });
+    }),
+  })
+  .strict();
+
+export interface TextContent {
+  readonly type: 'text';
+  readonly text: string;
+}
+
+export const textContentSchema = z
+  .object({ type: z.literal('text'), text: z.string().max(100_000) })
+  .strict();
+
+export interface ModelToolCall<TArguments extends JsonObject = JsonObject> {
+  readonly callId: string;
+  readonly name: string;
+  readonly arguments: TArguments;
+}
+
+export const modelToolCallSchema = z
+  .object({ callId: callIdSchema, name: toolNameSchema, arguments: jsonObjectSchema })
+  .strict();
+
+export type Message =
+  | { readonly role: 'system'; readonly content: readonly TextContent[] }
+  | { readonly role: 'user'; readonly content: readonly TextContent[] }
+  | {
+      readonly role: 'assistant';
+      readonly content: readonly TextContent[];
+      readonly toolCalls?: readonly ModelToolCall[];
+    }
+  | {
+      readonly role: 'tool';
+      readonly callId: string;
+      readonly name: string;
+      readonly content: readonly TextContent[];
+      readonly isError: boolean;
+    };
+
+export const messageSchema = z.discriminatedUnion('role', [
+  z
+    .object({ role: z.literal('system'), content: z.array(textContentSchema).min(1).max(100) })
+    .strict(),
+  z
+    .object({ role: z.literal('user'), content: z.array(textContentSchema).min(1).max(100) })
+    .strict(),
+  z
+    .object({
+      role: z.literal('assistant'),
+      content: z.array(textContentSchema).max(100),
+      toolCalls: z.array(modelToolCallSchema).max(128).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      role: z.literal('tool'),
+      callId: callIdSchema,
+      name: toolNameSchema,
+      content: z.array(textContentSchema).min(1).max(100),
+      isError: z.boolean(),
+    })
+    .strict(),
+]);
+
+export interface Context {
+  readonly systemPrompt?: string;
+  readonly messages: readonly Message[];
+  readonly tools?: readonly Tool[];
+}
+
+export const contextSchema = z
+  .object({
+    systemPrompt: z.string().trim().min(1).max(100_000).optional(),
+    messages: z.array(messageSchema).min(1).max(1_000),
+    tools: z.array(toolSchema).max(128).optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const names = (value.tools ?? []).map((tool) => tool.name);
+    if (new Set(names).size !== names.length)
+      context.addIssue({ code: 'custom', path: ['tools'], message: 'Tool names must be unique.' });
+  });
+
+export function validateContext(value: unknown): Context {
+  const parsed = contextSchema.safeParse(value);
+  if (!parsed.success) throw new ModelGatewayError('INVALID_INPUT', 'Invalid model context.', parsed.error);
+  return parsed.data;
+}
+
+export function validateModelToolCall(
+  tools: readonly Tool[] | undefined,
+  call: unknown,
+): ModelToolCall {
+  const parsed = modelToolCallSchema.safeParse(call);
+  if (!parsed.success)
+    throw new ModelGatewayError('INVALID_TOOL_CALL', 'Invalid model tool call.', parsed.error);
+  if (!(tools ?? []).some((tool) => tool.name === parsed.data.name))
+    throw new ModelGatewayError(
+      'INVALID_TOOL_CALL',
+      'Model called a tool that was not declared in the context.',
+    );
+  return parsed.data;
+}

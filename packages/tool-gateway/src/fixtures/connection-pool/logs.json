@@ -1,0 +1,6 @@
+[
+  {"timestamp":"2026-08-13T10:00:00.000Z","service":"billing-api","level":"INFO","message":"request completed","attributes":{"durationMs":42}},
+  {"timestamp":"2026-08-13T10:11:00.000Z","service":"billing-api","level":"WARN","message":"database connection acquisition slow","attributes":{"database":"postgresql-primary","waitMs":850}},
+  {"timestamp":"2026-08-13T10:12:00.000Z","service":"billing-api","level":"ERROR","message":"database connection acquisition timeout","attributes":{"database":"postgresql-primary","pool":"primary","timeoutMs":1000}},
+  {"timestamp":"2026-08-13T10:13:00.000Z","service":"billing-api","level":"ERROR","message":"database connection acquisition timeout","attributes":{"database":"postgresql-primary","pool":"primary","timeoutMs":1000}}
+]
