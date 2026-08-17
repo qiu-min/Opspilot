@@ -12,8 +12,8 @@
           "name": "KIMI K2.7 Code Highspeed",
           "api": "openai-completions",
           "supportsTools": true,
-          "contextWindow": 128000,
-          "reasoning": false
+          "contextWindow": 256000,
+          "reasoning": true
         }
       ]
     }
