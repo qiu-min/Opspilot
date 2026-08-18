@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import type { Model, ModelThinkingLevel, ThinkingLevel } from './model.js';
-import type { AssistantContent, ModelToolCall } from './context.js';
+import type { ModelThinkingLevel, ThinkingLevel } from './model.js';
 
 export interface Usage {
   readonly inputTokens: number;

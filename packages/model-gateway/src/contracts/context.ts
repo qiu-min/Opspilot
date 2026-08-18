@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { ModelGatewayError } from './errors.js';
-import { modelSchema, type Model } from './model.js';
-import type { FinishReason, ReasoningDecision, Usage } from './response.js';
+import { finishReasonSchema, usageSchema, type FinishReason, type ReasoningDecision, type Usage } from './response.js';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const callIdSchema = text(200);
@@ -145,16 +144,9 @@ export const messageSchema = z.discriminatedUnion('role', [
       model: z.string().max(200),
       content: z.array(z.union([textContentSchema, thinkingContentSchema])).max(100),
       toolCalls: z.array(modelToolCallSchema).max(128).optional(),
-      finishReason: z.enum(['stop', 'tool_calls', 'length', 'refusal']),
+      finishReason: finishReasonSchema,
       rawFinishReason: z.string().max(200).optional(),
-      usage: z
-        .object({
-          inputTokens: z.number().int().nonnegative(),
-          outputTokens: z.number().int().nonnegative(),
-          totalTokens: z.number().int().nonnegative(),
-        })
-        .strict()
-        .optional(),
+      usage: usageSchema.optional(),
       responseId: z.string().trim().min(1).max(200).optional(),
       reasoning: z
         .object({

@@ -70,7 +70,7 @@ Gateway 在 Adapter 前验证能力并按 Pi 的规则回退：优先寻找更�
 - `openai-reasoning-object` → `reasoning: { effort }`
 - `deepseek-thinking` → `thinking: { type: 'enabled' }` 与 `reasoning_effort`
 
-未声明或不支持 reasoning 的模型会以稳定错误码拒绝请求，不会猜测 Provider 参数。最终 `ModelResponse.reasoning` 记录请求等级和实际选择等级；不会将模型私有推理作为用户可见文本或 `text.delta` 事件。
+未声明或不支持 reasoning 的模型会以稳定错误码拒绝请求，不会猜测 Provider 参数。最终 `AssistantMessage.reasoning` 记录请求等级和实际选择等级；不会将模型私有推理作为用户可见文本或 `text.delta` 事件。
 
 ## Kimi K3
 

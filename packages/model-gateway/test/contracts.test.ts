@@ -59,11 +59,24 @@ describe('model gateway contracts', () => {
               role: 'assistant',
               content: [
                 {
-                  type: 'thinking',
-                  thinking: 'corrupted',
-                  thinkingSignature,
-                  source: { api: 'openai-completions', provider: 'moonshot', model: 'kimi-k3' },
-                },
+                  role: 'assistant',
+                  api: 'openai-completions',
+                  provider: 'moonshot',
+                  model: 'kimi-k3',
+                  finishReason: 'stop',
+                  content: [
+                    {
+                      type: 'thinking',
+                      thinking: 'corrupted',
+                      thinkingSignature,
+                      source: {
+                        api: 'openai-completions',
+                        provider: 'moonshot',
+                        model: 'kimi-k3'
+                      }
+                    }
+                  ]
+                }
               ],
             },
           ],

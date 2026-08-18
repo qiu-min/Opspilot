@@ -7,7 +7,7 @@ import {
   validateContext,
   validateModel,
   validateOptions,
-  AssistantMessage,
+  type AssistantMessage,
 } from './contracts/index.js';
 import {
   type ModelGatewayConfig,
