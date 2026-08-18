@@ -107,6 +107,8 @@ describe('OpenAI Chat Completions adapter', () => {
     await expect(result.result()).resolves.toMatchObject({
       content: [{ text: 'Checking logs' }],
       toolCalls: [{ callId: 'call_1', name: 'query_logs' }],
+      finishReason: 'tool_calls',
+      rawFinishReason: 'tool_calls',
       usage: { totalTokens: 6 },
     });
     expect(received.map((event) => event.type)).toEqual([
@@ -456,6 +458,86 @@ describe('OpenAI Chat Completions adapter', () => {
     expect(response.content.find((block) => block.type === 'thinking')).toMatchObject({
       thinking: 'same',
       thinkingSignature: 'reasoning_content',
+    });
+  });
+
+  it('preserves raw finish reason when normalizing provider finish reason', async () => {
+    const adapter = new OpenAiCompletionsModelAdapter(() => ({
+      chat: {
+        completions: {
+          async create() {
+            return stream({
+              choices: [
+                {
+                  delta: { content: 'blocked' },
+                  finish_reason: 'content_filter',
+                },
+              ],
+            });
+          },
+        },
+      },
+    }));
+
+    const result = await adapter
+      .stream(model, context, {}, provider)
+      .result();
+
+    expect(result).toMatchObject({
+      finishReason: 'refusal',
+      rawFinishReason: 'content_filter',
+    });
+  });
+
+  it('rejects unknown provider finish reasons', async () => {
+    const adapter = new OpenAiCompletionsModelAdapter(() => ({
+      chat: {
+        completions: {
+          async create() {
+            return stream({
+              choices: [
+                {
+                  delta: { content: 'answer' },
+                  finish_reason: 'some_new_reason',
+                },
+              ],
+            });
+          },
+        },
+      },
+    }));
+
+    const result = adapter.stream(model, context, {}, provider);
+
+    await expect(result.result()).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+      message: 'Unknown provider finish reason: some_new_reason',
+    });
+  });
+
+  it('rejects a stream that ends without a finish reason', async () => {
+    const adapter = new OpenAiCompletionsModelAdapter(() => ({
+      chat: {
+        completions: {
+          async create() {
+            return stream({
+              choices: [
+                {
+                  delta: { content: 'answer' },
+                  finish_reason: null,
+                },
+              ],
+            });
+          },
+        },
+      },
+    }));
+
+    const result = adapter.stream(model, context, {}, provider);
+
+    await expect(result.result()).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+      message: 'Model provider stream ended without a finish reason.',
     });
   });
 });
