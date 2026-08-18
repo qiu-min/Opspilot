@@ -1,7 +1,7 @@
-import type { ModelToolCall } from './context.js';
+import type { AssistantMessage, ModelToolCall } from './context.js';
 import { ModelGatewayError, toModelGatewayError } from './errors.js';
 import type { Model } from './model.js';
-import type { ModelResponse, Usage } from './response.js';
+import type { Usage } from './response.js';
 
 export type ModelStreamEvent =
   | { readonly type: 'start'; readonly model: Model }
@@ -18,16 +18,16 @@ export type ModelStreamEvent =
       readonly toolCall: ModelToolCall;
     }
   | { readonly type: 'usage'; readonly usage: Usage }
-  | { readonly type: 'done'; readonly response: ModelResponse }
+  | { readonly type: 'done'; readonly response: AssistantMessage }
   | { readonly type: 'error'; readonly error: ModelGatewayError };
 
 export interface ModelEventStream extends AsyncIterable<ModelStreamEvent> {
-  result(): Promise<ModelResponse>;
+  result(): Promise<AssistantMessage>;
 }
 
 export type StreamController = {
   emit(event: ModelStreamEvent): void;
-  complete(response: ModelResponse): void;
+  complete(response: AssistantMessage): void;
   fail(error: ModelGatewayError): void;
 };
 
@@ -35,9 +35,9 @@ class BufferedStream implements ModelEventStream, StreamController {
   private queue: ModelStreamEvent[] = [];
   private waiters: ((value: IteratorResult<ModelStreamEvent>) => void)[] = [];
   private closed = false;
-  private resolve!: (response: ModelResponse) => void;
+  private resolve!: (response: AssistantMessage) => void;
   private reject!: (error: ModelGatewayError) => void;
-  private completion = new Promise<ModelResponse>((resolve, reject) => {
+  private completion = new Promise<AssistantMessage>((resolve, reject) => {
     this.resolve = resolve;
     this.reject = reject;
   });
@@ -54,7 +54,7 @@ class BufferedStream implements ModelEventStream, StreamController {
     else this.queue.push(event);
   }
 
-  complete(response: ModelResponse) {
+  complete(response: AssistantMessage) {
     if (this.closed) return;
     this.emit({ type: 'done', response });
     this.closed = true;

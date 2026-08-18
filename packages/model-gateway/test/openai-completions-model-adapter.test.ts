@@ -150,6 +150,10 @@ describe('OpenAI Chat Completions adapter', () => {
             role: 'assistant',
             content: [],
             toolCalls: [{ callId: 'call_1', name: 'query_logs', arguments: {} }],
+            finishReason: 'tool_calls',
+            rawFinishReason: 'tool_calls',
+            usage: { inputTokens: 4, outputTokens: 2, totalTokens: 6 },
+            model: model,
           },
           {
             role: 'tool',
@@ -296,6 +300,10 @@ describe('OpenAI Chat Completions adapter', () => {
                 },
               ],
               toolCalls: [{ callId: 'call_1', name: 'query_logs', arguments: {} }],
+              finishReason: 'tool_calls',
+              rawFinishReason: 'tool_calls',
+              usage: { inputTokens: 4, outputTokens: 2, totalTokens: 6 },
+              model: model,
             },
             {
               role: 'tool',
@@ -416,6 +424,10 @@ describe('OpenAI Chat Completions adapter', () => {
             },
           ],
           toolCalls: [{ callId: 'call_1', name: 'query_logs', arguments: {} }],
+          finishReason: 'tool_calls' as const,
+          rawFinishReason: 'tool_calls',
+          usage: { inputTokens: 4, outputTokens: 2, totalTokens: 6 },
+          model: model,
         },
       ],
     };

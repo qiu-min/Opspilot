@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { ModelGatewayError } from './errors.js';
+import { modelSchema, type Model } from './model.js';
+import type { FinishReason, ReasoningDecision, Usage } from './response.js';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const callIdSchema = text(200);
@@ -99,26 +101,37 @@ export const modelToolCallSchema = z
   .object({ callId: callIdSchema, name: toolNameSchema, arguments: jsonObjectSchema })
   .strict();
 
+export interface UserMessage {
+  readonly role: 'user';
+  readonly content: readonly TextContent[];
+}
+
+export interface AssistantMessage {
+  readonly role: 'assistant';
+  readonly model: Model;
+  readonly content: readonly AssistantContent[];
+  readonly toolCalls?: readonly ModelToolCall[];
+  readonly finishReason: FinishReason;
+  readonly rawFinishReason?: string;
+  readonly usage?: Usage;
+  readonly responseId?: string;
+  readonly reasoning?: ReasoningDecision;
+}
+
+export interface ToolResultMessage {
+  readonly role: 'tool';
+  readonly callId: string;
+  readonly name: string;
+  readonly content: readonly TextContent[];
+  readonly isError: boolean;
+}
+
 export type Message =
-  | { readonly role: 'system'; readonly content: readonly TextContent[] }
-  | { readonly role: 'user'; readonly content: readonly TextContent[] }
-  | {
-      readonly role: 'assistant';
-      readonly content: readonly AssistantContent[];
-      readonly toolCalls?: readonly ModelToolCall[];
-    }
-  | {
-      readonly role: 'tool';
-      readonly callId: string;
-      readonly name: string;
-      readonly content: readonly TextContent[];
-      readonly isError: boolean;
-    };
+  | UserMessage
+  | AssistantMessage
+  | ToolResultMessage
 
 export const messageSchema = z.discriminatedUnion('role', [
-  z
-    .object({ role: z.literal('system'), content: z.array(textContentSchema).min(1).max(100) })
-    .strict(),
   z
     .object({ role: z.literal('user'), content: z.array(textContentSchema).min(1).max(100) })
     .strict(),
@@ -127,6 +140,25 @@ export const messageSchema = z.discriminatedUnion('role', [
       role: z.literal('assistant'),
       content: z.array(z.union([textContentSchema, thinkingContentSchema])).max(100),
       toolCalls: z.array(modelToolCallSchema).max(128).optional(),
+      model: modelSchema,
+      finishReason: z.enum(['stop', 'tool_calls', 'length', 'refusal']),
+      rawFinishReason: z.string().max(200).optional(),
+      usage: z
+        .object({
+          inputTokens: z.number().int().nonnegative(),
+          outputTokens: z.number().int().nonnegative(),
+          totalTokens: z.number().int().nonnegative(),
+        })
+        .strict()
+        .optional(),
+      responseId: z.string().trim().min(1).max(200).optional(),
+      reasoning: z
+        .object({
+          requested: z.enum(['minimal', 'low', 'medium', 'high']),
+          selected: z.enum(['off', 'minimal', 'low', 'medium', 'high']),
+        })
+        .strict()
+        .optional(),
     })
     .strict(),
   z

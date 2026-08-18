@@ -4,10 +4,10 @@ import {
   type ModelEventStream,
   ModelGatewayError,
   type Options,
-  type ModelResponse,
   validateContext,
   validateModel,
   validateOptions,
+  AssistantMessage,
 } from './contracts/index.js';
 import {
   type ModelGatewayConfig,
@@ -69,7 +69,7 @@ class Registry implements ModelGateway {
       );
     return adapter.stream(model, context, resolveThinking(model, options), provider);
   }
-  complete(model: Model, context: Context, options?: Options): Promise<ModelResponse> {
+  complete(model: Model, context: Context, options?: Options): Promise<AssistantMessage> {
     return this.stream(model, context, options).result();
   }
 }
