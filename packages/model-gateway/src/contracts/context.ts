@@ -108,7 +108,9 @@ export interface UserMessage {
 
 export interface AssistantMessage {
   readonly role: 'assistant';
-  readonly model: Model;
+  readonly api: string;
+  readonly provider: string;
+  readonly model: string;
   readonly content: readonly AssistantContent[];
   readonly toolCalls?: readonly ModelToolCall[];
   readonly finishReason: FinishReason;
@@ -138,9 +140,11 @@ export const messageSchema = z.discriminatedUnion('role', [
   z
     .object({
       role: z.literal('assistant'),
+      api: z.string().max(100),
+      provider: z.string().max(100),
+      model: z.string().max(200),
       content: z.array(z.union([textContentSchema, thinkingContentSchema])).max(100),
       toolCalls: z.array(modelToolCallSchema).max(128).optional(),
-      model: modelSchema,
       finishReason: z.enum(['stop', 'tool_calls', 'length', 'refusal']),
       rawFinishReason: z.string().max(200).optional(),
       usage: z

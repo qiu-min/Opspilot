@@ -302,7 +302,9 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
         
         const response: AssistantMessage = {
           role: 'assistant',
-          model,
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
           content: blocks,
           toolCalls,
           finishReason: toolCalls.length > 0 ? 'tool_calls' : finalReason,

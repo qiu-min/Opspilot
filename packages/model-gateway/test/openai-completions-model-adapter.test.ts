@@ -153,7 +153,9 @@ describe('OpenAI Chat Completions adapter', () => {
             finishReason: 'tool_calls',
             rawFinishReason: 'tool_calls',
             usage: { inputTokens: 4, outputTokens: 2, totalTokens: 6 },
-            model: model,
+            api: model.api,
+            provider: model.provider,
+            model: model.id,
           },
           {
             role: 'tool',
@@ -303,7 +305,9 @@ describe('OpenAI Chat Completions adapter', () => {
               finishReason: 'tool_calls',
               rawFinishReason: 'tool_calls',
               usage: { inputTokens: 4, outputTokens: 2, totalTokens: 6 },
-              model: model,
+              api: model.api,
+              provider: model.provider,
+              model: model.id,
             },
             {
               role: 'tool',
@@ -427,7 +431,9 @@ describe('OpenAI Chat Completions adapter', () => {
           finishReason: 'tool_calls' as const,
           rawFinishReason: 'tool_calls',
           usage: { inputTokens: 4, outputTokens: 2, totalTokens: 6 },
-          model: model,
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
         },
       ],
     };

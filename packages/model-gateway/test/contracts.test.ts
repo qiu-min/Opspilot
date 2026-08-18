@@ -94,7 +94,10 @@ describe('model gateway contracts', () => {
       controller.emit({ type: 'start', model });
       controller.emit({ type: 'text.delta', contentIndex: 0, delta: 'hello' });
       controller.complete({
-        model,
+        role: 'assistant',
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
         content: [{ type: 'text', text: 'hello' }],
         toolCalls: [],
         finishReason: 'stop',
