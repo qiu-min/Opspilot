@@ -100,14 +100,27 @@ function usage(value: unknown): Usage | undefined {
     totalTokens: item.total_tokens,
   };
 }
-function finish(value: unknown): FinishReason {
-  return value === 'tool_calls'
-    ? 'tool_calls'
-    : value === 'length'
-      ? 'length'
-      : value === 'content_filter'
-        ? 'refusal'
-        : 'stop';
+function finish(value: string): FinishReason {
+  switch (value) {
+    case 'stop':
+      return 'stop';
+
+    case 'tool_calls':
+    case 'function_call':
+      return 'tool_calls';
+
+    case 'length':
+      return 'length';
+
+    case 'content_filter':
+      return 'refusal';
+
+    default:
+      throw new ModelGatewayError(
+        'INVALID_RESPONSE',
+        `Unknown provider finish reason: ${value}`,
+      );
+  }
 }
 
 function reasoningRequest(options: ResolvedOptions): Partial<OpenAiCompletionsRequest> {
@@ -203,7 +216,8 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
           return thinkingBlock;
         };
         let responseId: string | undefined;
-        let finalReason: FinishReason = 'stop';
+        let finalReason: FinishReason | undefined;
+        let rawFinishReason: string | undefined;
         let finalUsage: Usage | undefined;
         const calls = new Map<number, { id?: string; name?: string; arguments: string }>();
         for await (const chunk of stream) {
@@ -216,7 +230,10 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
           }
           const choice = Array.isArray(record?.choices) ? asRecord(record.choices[0]) : undefined;
           if (!choice) continue;
-          if (typeof choice.finish_reason === 'string') finalReason = finish(choice.finish_reason);
+          if (typeof choice.finish_reason === 'string') {
+            rawFinishReason = choice.finish_reason;
+            finalReason = finish(choice.finish_reason);
+          }
           const delta = asRecord(choice.delta);
           if (typeof delta?.content === "string" && delta.content.length > 0) { 
             const previous = ensureTextBlock();
@@ -259,6 +276,11 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
               calls.set(part.index, item);
             }
         }
+        if (finalReason === undefined)
+          throw new ModelGatewayError(
+            'INVALID_RESPONSE',
+            'Model provider stream ended without a finish reason.',
+          );
         const toolCalls = [...calls.entries()].map(([index, call]) => {
           if (!call.id || !call.name)
             throw new ModelGatewayError(
@@ -277,11 +299,13 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
             'INVALID_RESPONSE',
             'Model provider returned no text or tool call.',
           );
+        
         const response: ModelResponse = {
           model,
           content: blocks,
           toolCalls,
           finishReason: toolCalls.length > 0 ? 'tool_calls' : finalReason,
+          ...(rawFinishReason === undefined ? {} : { rawFinishReason }),
           ...(finalUsage === undefined ? {} : { usage: finalUsage }),
           ...(responseId === undefined ? {} : { responseId }),
           ...(options.resolvedReasoning === undefined
