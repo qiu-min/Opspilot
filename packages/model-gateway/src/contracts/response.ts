@@ -24,13 +24,3 @@ export interface ReasoningDecision {
   readonly selected: ModelThinkingLevel;
 }
 
-export interface ModelResponse {
-  readonly model: Model;
-  readonly content: readonly AssistantContent[];
-  readonly toolCalls: readonly ModelToolCall[];
-  readonly finishReason: FinishReason;
-  readonly rawFinishReason?: string;
-  readonly usage?: Usage;
-  readonly responseId?: string;
-  readonly reasoning?: ReasoningDecision;
-}

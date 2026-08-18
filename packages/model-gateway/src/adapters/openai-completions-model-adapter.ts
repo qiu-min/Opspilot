@@ -6,12 +6,12 @@ import {
   type Model,
   type ModelEventStream,
   ModelGatewayError,
-  type ModelResponse,
   type TextContent,
   type ThinkingContent,
   type ThinkingSignature,
   toModelGatewayError,
   type Usage,
+  type AssistantMessage,
 } from '../contracts/index.js';
 import type { ResolvedProvider } from '../provider-config.js';
 import type { ResolvedOptions } from '../thinking.js';
@@ -300,7 +300,8 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
             'Model provider returned no text or tool call.',
           );
         
-        const response: ModelResponse = {
+        const response: AssistantMessage = {
+          role: 'assistant',
           model,
           content: blocks,
           toolCalls,
