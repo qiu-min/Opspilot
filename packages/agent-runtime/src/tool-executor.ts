@@ -1,4 +1,4 @@
-import type{ ModelToolCall, ToolResultMessage } from '@opspilot/model-gateway';
+import { validateToolArguments, type ModelToolCall, type ToolResultMessage } from '@opspilot/model-gateway';
 import { type AgentTool } from './types.js';
 
 export async function executeToolCall(
@@ -24,9 +24,12 @@ export async function executeToolCall(
     }
 
     try {
+        
+        const args = validateToolArguments(tool, toolCall);
+
         const result = await tool.execute(
             toolCall.callId,
-            toolCall.arguments,
+            args,
             signal,
         );
 
@@ -38,7 +41,7 @@ export async function executeToolCall(
             isError: false,
         };
     }catch (error) {
-        
+
         const message =error instanceof Error ? error.message : String(error);
             
         return {
