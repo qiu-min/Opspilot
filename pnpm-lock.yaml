@@ -379,6 +379,9 @@ importers:
 
   packages/agent-runtime:
     devDependencies:
+      '@opspilot/model-gateway':
+        specifier: workspace:*
+        version: link:../model-gateway
       typescript:
         specifier: ^5.7.0
         version: 5.7.2
