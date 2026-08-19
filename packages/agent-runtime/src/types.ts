@@ -3,18 +3,15 @@ import type {
   JsonObject,
   Model,
   ModelEventStream,
-  ModelGateway,
-  ModelToolCall,
   Options,
   TextContent,
   Tool,
 } from '@opspilot/model-gateway';
 
 export interface AgentToolResult {
-  content: TextContent[];
-  isError?: boolean;
+  readonly content: readonly TextContent[];
 }
-    
+
 export interface AgentTool extends Tool {
   execute(
     callId: string,
@@ -24,7 +21,7 @@ export interface AgentTool extends Tool {
 }
 
 export interface AgentContext {
-  readonly systemPrompt: string;
+  readonly systemPrompt?: string;
   readonly messages: Context['messages'];
   readonly tools?: readonly AgentTool[];
 }

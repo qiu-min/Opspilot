@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@opspilot/model-gateway": "workspace:*",
     "typescript": "^5.7.0",
     "vitest": "^4.1.10"
   }
