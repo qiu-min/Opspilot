@@ -37,6 +37,7 @@ export interface OpenAiCompletionsRequest {
   readonly reasoning?: { readonly effort: string };
   readonly thinking?: { readonly type: 'enabled' };
 }
+
 export interface OpenAiCompletionsClient {
   readonly chat: {
     readonly completions: {
@@ -47,6 +48,7 @@ export interface OpenAiCompletionsClient {
     };
   };
 }
+
 export type OpenAiCompletionsClientFactory = (
   provider: ResolvedProvider,
   baseUrl: string,
@@ -148,6 +150,7 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
     options: ResolvedOptions,
     provider: ResolvedProvider,
   ): ModelEventStream {
+
     return createModelEventStream(async (controller) => {
       controller.emit({ type: 'start', model });
       try {

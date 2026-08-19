@@ -9,18 +9,22 @@ import {
   validateOptions,
   type AssistantMessage,
 } from './contracts/index.js';
+
 import {
   type ModelGatewayConfig,
   type ResolvedProvider,
   resolveProviders,
 } from './provider-config.js';
+
 import { OpenAiCompletionsModelAdapter } from './adapters/openai-completions-model-adapter.js';
 import type { ModelAdapter } from './adapters/model-adapter.js';
 import type { ModelGateway } from './model-gateway.js';
 import { resolveThinking } from './thinking.js';
+
 class Registry implements ModelGateway {
   private readonly providers: Map<string, ResolvedProvider>;
   private readonly adapters: Map<string, ModelAdapter>;
+
   constructor(config: ModelGatewayConfig, adapters: readonly ModelAdapter[]) {
     this.providers = new Map(resolveProviders(config).map((provider) => [provider.id, provider]));
     this.adapters = new Map(adapters.map((adapter) => [adapter.api, adapter]));
@@ -32,19 +36,23 @@ class Registry implements ModelGateway {
             `No model adapter is registered for API "${model.api}".`,
           );
   }
+
   getProviders() {
     return [...this.providers.values()].map(
       ({ apiKey: _apiKey, headers: _headers, timeoutMs: _timeoutMs, ...provider }) => provider,
     );
   }
+
   getModels(providerId?: string): readonly Model[] {
     return providerId
       ? (this.providers.get(providerId)?.models ?? [])
       : [...this.providers.values()].flatMap((provider) => provider.models);
   }
+
   getModel(providerId: string, modelId: string): Model | undefined {
     return this.providers.get(providerId)?.models.find((model) => model.id === modelId);
   }
+
   stream(rawModel: Model, rawContext: Context, rawOptions?: Options): ModelEventStream {
     const modelInput = validateModel(rawModel);
     const context = validateContext(rawContext);
@@ -69,6 +77,7 @@ class Registry implements ModelGateway {
       );
     return adapter.stream(model, context, resolveThinking(model, options), provider);
   }
+  
   complete(model: Model, context: Context, options?: Options): Promise<AssistantMessage> {
     return this.stream(model, context, options).result();
   }
