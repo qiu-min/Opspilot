@@ -441,6 +441,9 @@ importers:
 
   packages/model-gateway:
     dependencies:
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
       openai:
         specifier: ^7.4.0
         version: 7.4.0(zod@4.4.3)
