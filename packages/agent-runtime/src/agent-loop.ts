@@ -5,7 +5,8 @@ import type {
   AgentMessage,
   StreamFn,
 } from './types.js';
-import type { Context, Message } from '@opspilot/model-gateway';
+import type { Context, Message, ToolResultMessage } from '@opspilot/model-gateway';
+import { executeToolCall } from './tool-executor.js';
 
 /**
  * 启动一次 Agent 运行并发出生命周期事件。
@@ -39,24 +40,67 @@ export async function runAgentLoop(
     await emit({ type: 'message_end', message: prompt });
   }
 
-  const assistantMessage = await streamAssistantResponse(
-    currentContext,
-    config,
-    streamFn,
-    emit,
-    signal,
-  );
-  currentContext.messages.push(assistantMessage);
-  newMessages.push(assistantMessage);
-
-  await emit({ type: 'turn_end', message: assistantMessage, toolResults: [] });
-
-  await emit({
-    type: 'agent_end',
-    messages: newMessages,
-  });
+  await runLoop(currentContext, newMessages, config, streamFn, emit, signal);
 
   return newMessages;
+}
+
+/**
+ * 执行模型回合、工具调用和后续回合，直到 Agent 正常结束。
+ * @param context 当前运行中维护的完整消息上下文。
+ * @param newMessages 本次运行新增的消息集合。
+ * @param config 当前运行的模型和循环配置。
+ * @param streamFn 创建模型事件流的函数。
+ * @param emit 接收 AgentEvent 的事件接收器。
+ * @param signal 用于取消模型请求和工具执行的信号。
+ */
+async function runLoop(
+  context: AgentContext,
+  newMessages: AgentMessage[],
+  config: AgentLoopConfig,
+  streamFn: StreamFn,
+  emit: AgentEventSink,
+  signal?: AbortSignal,
+): Promise<void> {
+  const maxTurns = config.maxTurns ?? 20;
+
+  for (let turn = 0; turn < maxTurns; turn += 1) {
+    const assistantMessage = await streamAssistantResponse(context, config, streamFn, emit, signal);
+    context.messages.push(assistantMessage);
+    newMessages.push(assistantMessage);
+
+    const toolCalls = assistantMessage.toolCalls ?? [];
+    const toolResults: ToolResultMessage[] = [];
+
+    if (assistantMessage.finishReason === 'tool_calls' && toolCalls.length > 0) {
+      for (const toolCall of toolCalls) {
+        await emit({ type: 'tool_execution_start', toolCall });
+
+        const result = await executeToolCall(toolCall, context.tools ?? [], signal);
+
+        await emit({ type: 'tool_execution_end', toolCall, result });
+        toolResults.push(result);
+        context.messages.push(result);
+        newMessages.push(result);
+      }
+    }
+
+    await emit({
+      type: 'turn_end',
+      message: assistantMessage,
+      toolResults,
+    });
+
+    const shouldContinue = assistantMessage.finishReason === 'tool_calls' && toolCalls.length > 0;
+    if (!shouldContinue || turn + 1 >= maxTurns) {
+      await emit({ type: 'agent_end', messages: newMessages });
+      return;
+    }
+
+    await emit({ type: 'turn_start' });
+  }
+
+  await emit({ type: 'agent_end', messages: newMessages });
 }
 
 /**
