@@ -33,6 +33,25 @@ export interface AgentContext {
   readonly tools?: readonly AgentTool[];
 }
 
+export interface AgentState {
+  readonly systemPrompt?: string;
+  readonly model: Model;
+  readonly tools: readonly AgentTool[];
+  readonly messages: readonly AgentMessage[];
+  readonly isRunning: boolean;
+}
+
+export interface AgentOptions {
+  readonly model: Model;
+  readonly streamFn: StreamFn;
+  readonly systemPrompt?: string;
+  readonly tools?: readonly AgentTool[];
+  readonly messages?: readonly AgentMessage[];
+  readonly transformContext?: AgentLoopConfig['transformContext'];
+  readonly convertToLlm?: AgentLoopConfig['convertToLlm'];
+  readonly shouldStopAfterTurn?: AgentLoopConfig['shouldStopAfterTurn'];
+}
+
 export interface ShouldStopAfterTurnContext {
   readonly message: AssistantMessage;
   readonly toolResults: readonly ToolResultMessage[];
@@ -43,6 +62,8 @@ export interface ShouldStopAfterTurnContext {
 export type StreamFn = (model: Model, context: Context, options?: Options) => ModelEventStream;
 
 export type AgentEventSink = (event: AgentEvent) => void | Promise<void>;
+
+export type AgentEventListener = AgentEventSink;
 
 export interface AgentLoopConfig {
   readonly model: Model;
