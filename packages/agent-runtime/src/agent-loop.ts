@@ -127,8 +127,12 @@ async function streamAssistantResponse(
   emit: AgentEventSink,
   signal?: AbortSignal,
 ) {
+  const sourceMessages = context.messages;
+  const transformedMessages = config.transformContext
+    ? await config.transformContext(sourceMessages, signal)
+    : sourceMessages;
   const convertToLlm = config.convertToLlm ?? defaultConvertToLlm;
-  const llmMessages = await convertToLlm(context.messages);
+  const llmMessages = await convertToLlm(transformedMessages);
   const llmContext: Context = {
     systemPrompt: context.systemPrompt,
     messages: [...llmMessages],
