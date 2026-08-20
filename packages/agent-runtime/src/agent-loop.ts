@@ -62,9 +62,7 @@ async function runLoop(
   emit: AgentEventSink,
   signal?: AbortSignal,
 ): Promise<void> {
-  const maxTurns = config.maxTurns ?? 20;
-
-  for (let turn = 0; turn < maxTurns; turn += 1) {
+  while (true) {
     const assistantMessage = await streamAssistantResponse(context, config, streamFn, emit, signal);
     context.messages.push(assistantMessage);
     newMessages.push(assistantMessage);
@@ -91,16 +89,25 @@ async function runLoop(
       toolResults,
     });
 
+    const shouldStop = await config.shouldStopAfterTurn?.({
+      message: assistantMessage,
+      toolResults,
+      context,
+      newMessages,
+    });
+    if (shouldStop) {
+      await emit({ type: 'agent_end', messages: newMessages });
+      return;
+    }
+
     const shouldContinue = assistantMessage.finishReason === 'tool_calls' && toolCalls.length > 0;
-    if (!shouldContinue || turn + 1 >= maxTurns) {
+    if (!shouldContinue) {
       await emit({ type: 'agent_end', messages: newMessages });
       return;
     }
 
     await emit({ type: 'turn_start' });
   }
-
-  await emit({ type: 'agent_end', messages: newMessages });
 }
 
 /**

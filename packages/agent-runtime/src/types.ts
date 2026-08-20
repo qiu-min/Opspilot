@@ -1,4 +1,5 @@
 import type {
+  AssistantMessage,
   Context,
   JsonObject,
   Message,
@@ -32,13 +33,22 @@ export interface AgentContext {
   readonly tools?: readonly AgentTool[];
 }
 
+export interface ShouldStopAfterTurnContext {
+  readonly message: AssistantMessage;
+  readonly toolResults: readonly ToolResultMessage[];
+  readonly context: AgentContext;
+  readonly newMessages: readonly AgentMessage[];
+}
+
 export type StreamFn = (model: Model, context: Context, options?: Options) => ModelEventStream;
 
 export type AgentEventSink = (event: AgentEvent) => void | Promise<void>;
 
 export interface AgentLoopConfig {
   readonly model: Model;
-  readonly maxTurns?: number;
+  readonly shouldStopAfterTurn?: (
+    context: ShouldStopAfterTurnContext,
+  ) => boolean | Promise<boolean>;
 }
 
 export type MessageUpdateModelEvent = Extract<

@@ -13,7 +13,14 @@ import {
 } from '@opspilot/model-gateway';
 
 import { runAgentLoop } from '../src/index.js';
-import type { AgentContext, AgentEvent, AgentMessage, AgentTool, StreamFn } from '../src/index.js';
+import type {
+  AgentContext,
+  AgentEvent,
+  AgentMessage,
+  AgentTool,
+  ShouldStopAfterTurnContext,
+  StreamFn,
+} from '../src/index.js';
 
 const model: Model = {
   provider: 'test-provider',
@@ -143,12 +150,20 @@ describe('runAgentLoop tool loop', () => {
     const streamFn = createSequentialStreamFn([createAssistantStream(assistant, 'done')], contexts);
     const events: AgentEvent[] = [];
     const context = createContext();
+    const shouldStopAfterTurn = vi.fn(() => false);
 
-    const result = await runAgentLoop([prompt], context, config, streamFn, (event) => {
-      events.push(event);
-    });
+    const result = await runAgentLoop(
+      [prompt],
+      context,
+      { ...config, shouldStopAfterTurn },
+      streamFn,
+      (event) => {
+        events.push(event);
+      },
+    );
 
     expect(contexts).toHaveLength(1);
+    expect(shouldStopAfterTurn).toHaveBeenCalledTimes(1);
     expect(result).toEqual([prompt, assistant]);
     expect(events.map((event) => event.type)).toEqual([
       'agent_start',
@@ -219,6 +234,54 @@ describe('runAgentLoop tool loop', () => {
     expect(events[9]).toEqual({ type: 'turn_start' });
   });
 
+  it('stops after a complete tool turn when policy requests it', async () => {
+    const prompt = createPrompt();
+    const call = {
+      callId: 'call_policy',
+      name: 'query_logs',
+      arguments: { service: 'api' },
+    };
+    const execute = createExecuteSpy();
+    const tool = createTextTool('query_logs', 'logs found', execute);
+    const assistant = createAssistantMessage('tool_calls', [call]);
+    const contexts: Context[] = [];
+    const context = createContext([tool]);
+    const events: AgentEvent[] = [];
+    const streamFn = createSequentialStreamFn([createAssistantStream(assistant)], contexts);
+    const shouldStopAfterTurn = vi.fn((_context: ShouldStopAfterTurnContext) => true);
+
+    const result = await runAgentLoop(
+      [prompt],
+      context,
+      { ...config, shouldStopAfterTurn },
+      streamFn,
+      (event) => {
+        events.push(event);
+      },
+    );
+
+    const toolResult = result[2];
+    const hookContext = shouldStopAfterTurn.mock.calls[0]?.[0];
+    expect(contexts).toHaveLength(1);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(hookContext?.message).toBe(assistant);
+    expect(hookContext?.toolResults[0]).toBe(toolResult);
+    expect(hookContext?.context.messages).toEqual([
+      ...historicalMessages,
+      prompt,
+      assistant,
+      toolResult,
+    ]);
+    expect(hookContext?.newMessages).toBe(result);
+    expect(hookContext?.newMessages).toEqual([prompt, assistant, toolResult]);
+    expect(events.map((event) => event.type).slice(-4)).toEqual([
+      'tool_execution_start',
+      'tool_execution_end',
+      'turn_end',
+      'agent_end',
+    ]);
+  });
+
   it('executes multiple tool calls in order within one turn', async () => {
     const prompt = createPrompt();
     const call1 = {
@@ -272,11 +335,12 @@ describe('runAgentLoop tool loop', () => {
     const tool = createTextTool('query_logs', 'should not run', execute);
     const assistant = createAssistantMessage('length', [call]);
     const events: AgentEvent[] = [];
+    const shouldStopAfterTurn = vi.fn((_context: ShouldStopAfterTurnContext) => false);
 
     await runAgentLoop(
       [createPrompt()],
       createContext([tool]),
-      config,
+      { ...config, shouldStopAfterTurn },
       createSequentialStreamFn([createAssistantStream(assistant)], []),
       (event) => {
         events.push(event);
@@ -284,6 +348,7 @@ describe('runAgentLoop tool loop', () => {
     );
 
     expect(execute).not.toHaveBeenCalled();
+    expect(shouldStopAfterTurn).toHaveBeenCalledTimes(1);
     expect(events.map((event) => event.type).slice(-2)).toEqual(['turn_end', 'agent_end']);
   });
 
@@ -297,11 +362,12 @@ describe('runAgentLoop tool loop', () => {
     const tool = createTextTool('query_logs', 'should not run', execute);
     const assistant = createAssistantMessage('refusal', [call]);
     const events: AgentEvent[] = [];
+    const shouldStopAfterTurn = vi.fn((_context: ShouldStopAfterTurnContext) => false);
 
     await runAgentLoop(
       [createPrompt()],
       createContext([tool]),
-      config,
+      { ...config, shouldStopAfterTurn },
       createSequentialStreamFn([createAssistantStream(assistant)], []),
       (event) => {
         events.push(event);
@@ -309,41 +375,8 @@ describe('runAgentLoop tool loop', () => {
     );
 
     expect(execute).not.toHaveBeenCalled();
+    expect(shouldStopAfterTurn).toHaveBeenCalledTimes(1);
     expect(events.map((event) => event.type).slice(-2)).toEqual(['turn_end', 'agent_end']);
-  });
-
-  it('stops after maxTurns without making a third model call', async () => {
-    const call = {
-      callId: 'call_repeat',
-      name: 'query_logs',
-      arguments: { service: 'api' },
-    };
-    const execute = createExecuteSpy();
-    const tool = createTextTool('query_logs', 'logs found', execute);
-    const assistant1 = createAssistantMessage('tool_calls', [call]);
-    const assistant2 = createAssistantMessage('tool_calls', [call]);
-    const contexts: Context[] = [];
-    const streamFn = createSequentialStreamFn(
-      [createAssistantStream(assistant1), createAssistantStream(assistant2)],
-      contexts,
-    );
-    const events: AgentEvent[] = [];
-
-    const result = await runAgentLoop(
-      [createPrompt()],
-      createContext([tool]),
-      { ...config, maxTurns: 2 },
-      streamFn,
-      (event) => {
-        events.push(event);
-      },
-    );
-
-    expect(contexts).toHaveLength(2);
-    expect(execute).toHaveBeenCalledTimes(2);
-    expect(events.filter((event) => event.type === 'turn_end')).toHaveLength(2);
-    expect(events.filter((event) => event.type === 'agent_end')).toHaveLength(1);
-    expect(result).toHaveLength(5);
   });
 
   it('keeps the caller context unchanged while the loop context grows', async () => {
