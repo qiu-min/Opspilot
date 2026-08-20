@@ -12,7 +12,7 @@ import {
   type ModelToolCall,
 } from '@opspilot/model-gateway';
 
-import { runAgentLoop } from '../src/index.js';
+import { defaultConvertToLlm, runAgentLoop } from '../src/index.js';
 import type {
   AgentContext,
   AgentEvent,
@@ -194,12 +194,23 @@ describe('runAgentLoop tool loop', () => {
       [createAssistantStream(assistant1), createAssistantStream(assistant2)],
       contexts,
     );
+    const convertedInputs: AgentMessage[][] = [];
+    const convertToLlm = vi.fn((messages: readonly AgentMessage[]) => {
+      convertedInputs.push([...messages]);
+      return defaultConvertToLlm(messages);
+    });
     const events: AgentEvent[] = [];
     const context = createContext([tool]);
 
-    const result = await runAgentLoop([prompt], context, config, streamFn, (event) => {
-      events.push(event);
-    });
+    const result = await runAgentLoop(
+      [prompt],
+      context,
+      { ...config, convertToLlm },
+      streamFn,
+      (event) => {
+        events.push(event);
+      },
+    );
 
     const toolResult = {
       role: 'tool' as const,
@@ -209,6 +220,9 @@ describe('runAgentLoop tool loop', () => {
       isError: false,
     };
     expect(contexts).toHaveLength(2);
+    expect(convertToLlm).toHaveBeenCalledTimes(2);
+    expect(convertedInputs[0]).toEqual([...historicalMessages, prompt]);
+    expect(convertedInputs[1]).toEqual([...historicalMessages, prompt, assistant1, toolResult]);
     expect(contexts[1]?.messages).toEqual([...historicalMessages, prompt, assistant1, toolResult]);
     expect(execute).toHaveBeenCalledTimes(1);
     expect(result).toEqual([prompt, assistant1, toolResult, assistant2]);

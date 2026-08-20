@@ -46,6 +46,9 @@ export type AgentEventSink = (event: AgentEvent) => void | Promise<void>;
 
 export interface AgentLoopConfig {
   readonly model: Model;
+  readonly convertToLlm?: (
+    messages: readonly AgentMessage[],
+  ) => readonly Message[] | Promise<readonly Message[]>;
   readonly shouldStopAfterTurn?: (
     context: ShouldStopAfterTurnContext,
   ) => boolean | Promise<boolean>;

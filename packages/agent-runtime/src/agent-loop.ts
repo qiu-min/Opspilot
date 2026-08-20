@@ -5,8 +5,9 @@ import type {
   AgentMessage,
   StreamFn,
 } from './types.js';
-import type { Context, Message, ToolResultMessage } from '@opspilot/model-gateway';
+import type { Context, ToolResultMessage } from '@opspilot/model-gateway';
 import { executeToolCall } from './tool-executor.js';
+import { defaultConvertToLlm } from './convert-to-llm.js';
 
 /**
  * 启动一次 Agent 运行并发出生命周期事件。
@@ -63,6 +64,7 @@ async function runLoop(
   signal?: AbortSignal,
 ): Promise<void> {
   while (true) {
+    //signal?.throwIfAborted();
     const assistantMessage = await streamAssistantResponse(context, config, streamFn, emit, signal);
     context.messages.push(assistantMessage);
     newMessages.push(assistantMessage);
@@ -111,27 +113,6 @@ async function runLoop(
 }
 
 /**
- * 判断 Agent 消息是否属于 model-gateway 的标准消息。
- * @param message 待判断的 Agent 消息。
- */
-function isModelMessage(message: AgentMessage): message is Message {
-  if (typeof message !== 'object' || message === null || !('role' in message)) return false;
-  return message.role === 'user' || message.role === 'assistant' || message.role === 'tool';
-}
-
-/**
- * 将 Agent 消息转换为模型网关可消费的标准消息。
- * @param messages 当前 Agent 运行上下文中的消息。
- */
-function toModelMessages(messages: readonly AgentMessage[]): Message[] {
-  return messages.map((message) => {
-    if (!isModelMessage(message))
-      throw new Error('Custom AgentMessage cannot be sent to model-gateway yet.');
-    return message;
-  });
-}
-
-/**
  * 消费模型事件并映射为 Agent 消息生命周期事件。
  * @param context 当前 Agent 的系统提示词、消息和工具上下文。
  * @param config 当前回合使用的模型配置。
@@ -146,15 +127,14 @@ async function streamAssistantResponse(
   emit: AgentEventSink,
   signal?: AbortSignal,
 ) {
-  const stream = streamFn(
-    config.model,
-    {
-      systemPrompt: context.systemPrompt,
-      messages: toModelMessages(context.messages),
-      tools: context.tools,
-    } satisfies Context,
-    { signal },
-  );
+  const convertToLlm = config.convertToLlm ?? defaultConvertToLlm;
+  const llmMessages = await convertToLlm(context.messages);
+  const llmContext: Context = {
+    systemPrompt: context.systemPrompt,
+    messages: [...llmMessages],
+    tools: context.tools,
+  };
+  const stream = streamFn(config.model, llmContext, { signal });
 
   for await (const event of stream) {
     switch (event.type) {

@@ -2,4 +2,5 @@
 export interface AgentRuntimeBoundary {}
 
 export * from './agent-loop.js';
+export * from './convert-to-llm.js';
 export * from './types.js';
