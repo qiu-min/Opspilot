@@ -1,7 +1,7 @@
 import type {
-  AssistantMessage,
   Context,
   JsonObject,
+  Message,
   Model,
   ModelEventStream,
   ModelStreamEvent,
@@ -17,28 +17,24 @@ export interface AgentToolResult {
 }
 
 export interface AgentTool extends Tool {
-  execute(
-    callId: string,
-    args: JsonObject,
-    signal?: AbortSignal,
-  ): Promise<AgentToolResult>;
+  execute(callId: string, args: JsonObject, signal?: AbortSignal): Promise<AgentToolResult>;
 }
+
+/** 预留给业务包通过 declaration merging 扩展 Agent 消息。 */
+export interface CustomAgentMessages {}
+
+/** Agent Runtime 内部流转的标准消息或业务扩展消息。 */
+export type AgentMessage = Message | CustomAgentMessages[keyof CustomAgentMessages];
 
 export interface AgentContext {
   readonly systemPrompt?: string;
-  readonly messages: Context['messages'];
+  messages: AgentMessage[];
   readonly tools?: readonly AgentTool[];
 }
 
-export type StreamFn = (
-  model: Model,
-  context: Context,
-  options?: Options,
-) => ModelEventStream;
+export type StreamFn = (model: Model, context: Context, options?: Options) => ModelEventStream;
 
-export type AgentEventSink = (
-  event: AgentEvent,
-) => void | Promise<void>;
+export type AgentEventSink = (event: AgentEvent) => void | Promise<void>;
 
 export interface AgentLoopConfig {
   readonly model: Model;
@@ -48,11 +44,7 @@ export interface AgentLoopConfig {
 export type MessageUpdateModelEvent = Extract<
   ModelStreamEvent,
   {
-    type:
-      | 'text.delta'
-      | 'tool-call.delta'
-      | 'tool-call.completed'
-      | 'usage';
+    type: 'text.delta' | 'tool-call.delta' | 'tool-call.completed' | 'usage';
   }
 >;
 
@@ -63,7 +55,7 @@ export type AgentEvent =
     }
   | {
       readonly type: 'agent_end';
-      readonly messages: Context['messages'];
+      readonly messages: readonly AgentMessage[];
     }
 
   // 单个 Turn 生命周期
@@ -72,13 +64,14 @@ export type AgentEvent =
     }
   | {
       readonly type: 'turn_end';
-      readonly message: AssistantMessage;
+      readonly message: AgentMessage;
       readonly toolResults: readonly ToolResultMessage[];
     }
 
   // 模型消息生命周期
   | {
       readonly type: 'message_start';
+      readonly message?: AgentMessage;
     }
   | {
       readonly type: 'message_update';
@@ -86,7 +79,7 @@ export type AgentEvent =
     }
   | {
       readonly type: 'message_end';
-      readonly message: AssistantMessage;
+      readonly message: AgentMessage;
     }
 
   // 工具执行生命周期
