@@ -63,53 +63,83 @@ async function runLoop(
   emit: AgentEventSink,
   signal?: AbortSignal,
 ): Promise<void> {
+  const initialSteeringMessages = await config.getSteeringMessages?.(signal);
+  let pendingMessages: AgentMessage[] = [...(initialSteeringMessages ?? [])];
+  let firstTurn = true;
+
   while (true) {
-    //signal?.throwIfAborted();
-    const assistantMessage = await streamAssistantResponse(context, config, streamFn, emit, signal);
-    context.messages.push(assistantMessage);
-    newMessages.push(assistantMessage);
+    let hasMoreToolCalls = true;
 
-    const toolCalls = assistantMessage.toolCalls ?? [];
-    const toolResults: ToolResultMessage[] = [];
-
-    if (assistantMessage.finishReason === 'tool_calls' && toolCalls.length > 0) {
-      for (const toolCall of toolCalls) {
-        await emit({ type: 'tool_execution_start', toolCall });
-
-        const result = await executeToolCall(toolCall, context.tools ?? [], signal);
-
-        await emit({ type: 'tool_execution_end', toolCall, result });
-        toolResults.push(result);
-        context.messages.push(result);
-        newMessages.push(result);
+    while (hasMoreToolCalls || pendingMessages.length > 0) {
+      if (firstTurn) {
+        firstTurn = false;
+      } else {
+        await emit({ type: 'turn_start' });
       }
+
+      for (const pendingMessage of pendingMessages) {
+        context.messages.push(pendingMessage);
+        newMessages.push(pendingMessage);
+        await emit({ type: 'message_start', message: pendingMessage });
+        await emit({ type: 'message_end', message: pendingMessage });
+      }
+      pendingMessages = [];
+
+      //signal?.throwIfAborted();
+      const assistantMessage = await streamAssistantResponse(
+        context,
+        config,
+        streamFn,
+        emit,
+        signal,
+      );
+      context.messages.push(assistantMessage);
+      newMessages.push(assistantMessage);
+
+      const toolCalls = assistantMessage.toolCalls ?? [];
+      const toolResults: ToolResultMessage[] = [];
+
+      if (assistantMessage.finishReason === 'tool_calls' && toolCalls.length > 0) {
+        for (const toolCall of toolCalls) {
+          await emit({ type: 'tool_execution_start', toolCall });
+
+          const result = await executeToolCall(toolCall, context.tools ?? [], signal);
+
+          await emit({ type: 'tool_execution_end', toolCall, result });
+          toolResults.push(result);
+          context.messages.push(result);
+          newMessages.push(result);
+        }
+      }
+
+      await emit({
+        type: 'turn_end',
+        message: assistantMessage,
+        toolResults,
+      });
+
+      const shouldStop = await config.shouldStopAfterTurn?.({
+        message: assistantMessage,
+        toolResults,
+        context,
+        newMessages,
+      });
+      if (shouldStop) {
+        await emit({ type: 'agent_end', messages: newMessages });
+        return;
+      }
+
+      hasMoreToolCalls = assistantMessage.finishReason === 'tool_calls' && toolCalls.length > 0;
+      const steeringMessages = await config.getSteeringMessages?.(signal);
+      pendingMessages = [...(steeringMessages ?? [])];
     }
 
-    await emit({
-      type: 'turn_end',
-      message: assistantMessage,
-      toolResults,
-    });
-
-    const shouldStop = await config.shouldStopAfterTurn?.({
-      message: assistantMessage,
-      toolResults,
-      context,
-      newMessages,
-    });
-    if (shouldStop) {
-      await emit({ type: 'agent_end', messages: newMessages });
-      return;
-    }
-
-    const shouldContinue = assistantMessage.finishReason === 'tool_calls' && toolCalls.length > 0;
-    if (!shouldContinue) {
-      await emit({ type: 'agent_end', messages: newMessages });
-      return;
-    }
-
-    await emit({ type: 'turn_start' });
+    const followUpMessages = await config.getFollowUpMessages?.(signal);
+    pendingMessages = [...(followUpMessages ?? [])];
+    if (pendingMessages.length === 0) break;
   }
+
+  await emit({ type: 'agent_end', messages: newMessages });
 }
 
 /**
