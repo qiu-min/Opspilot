@@ -20,6 +20,12 @@ type MutableAgentState = {
   pendingToolCalls: ModelToolCall[];
 };
 
+type ActiveRun = {
+  readonly abortController: AbortController;
+  readonly promise: Promise<void>;
+  readonly resolve: () => void;
+};
+
 /**
  * 有状态的 Agent 包装器，负责保存会话历史并调用底层 Agent Loop。
  */
@@ -33,7 +39,7 @@ export class Agent {
   private readonly steeringQueue: AgentMessage[] = [];
   private readonly followUpQueue: AgentMessage[] = [];
   private readonly listeners = new Set<AgentEventListener>();
-  private abortController?: AbortController;
+  private activeRun?: ActiveRun;
 
   /** 创建一个保存自身消息历史的 Agent。
    * @param options Agent 模型、流函数、初始上下文和 Loop hooks。
@@ -86,44 +92,28 @@ export class Agent {
    * @returns 本次运行新增的完整消息列表。
    */
   async prompt(input: AgentMessage | readonly AgentMessage[]): Promise<readonly AgentMessage[]> {
-    if (this._state.isRunning) throw new Error('Agent is already running.');
-
     const prompts = Array.isArray(input) ? [...input] : [input];
-    const controller = new AbortController();
-    this.abortController = controller;
-    this._state.isRunning = true;
-
-    try {
-      const context = {
-        systemPrompt: this._state.systemPrompt,
-        messages: [...this._state.messages],
-        tools: [...this._state.tools],
-      };
-      const newMessages = await runAgentLoop(
-        prompts,
-        context,
-        this.createLoopConfig(),
-        this.streamFn,
-        async (event) => {
-          await this.processEvents(event);
-        },
-        controller.signal,
-      );
-
-      this._state.messages.push(...newMessages);
-      return newMessages;
-    } finally {
-      this._state.isRunning = false;
-      this._state.streamingText = undefined;
-      this._state.pendingToolCalls.length = 0;
-      this.abortController = undefined;
-    }
+    return await this.runPromptMessages(prompts);
   }
 
   /** 请求当前模型或工具调用通过已有 AbortSignal 结束。
    */
   abort(): void {
-    this.abortController?.abort();
+    this.activeRun?.abortController.abort();
+  }
+
+  /** 返回当前运行的取消信号；空闲时没有活动信号。
+   * @returns 当前 ActiveRun 的 AbortSignal，或 undefined。
+   */
+  get signal(): AbortSignal | undefined {
+    return this.activeRun?.abortController.signal;
+  }
+
+  /** 等待当前运行完成并完成生命周期清理；空闲时立即完成。
+   * @returns 在 Agent 进入空闲状态后完成的 Promise。
+   */
+  async waitForIdle(): Promise<void> {
+    await (this.activeRun?.promise ?? Promise.resolve());
   }
 
   /** 将一条或多条消息按原顺序加入 steering 队列。
@@ -168,7 +158,7 @@ export class Agent {
   /** 清空 Agent 会话历史；运行中不能重置。
    */
   reset(): void {
-    if (this._state.isRunning) throw new Error('Cannot reset while Agent is running.');
+    if (this.activeRun) throw new Error('Cannot reset while Agent is running.');
     this._state.messages.length = 0;
     this._state.streamingText = undefined;
     this._state.pendingToolCalls.length = 0;
@@ -206,6 +196,71 @@ export class Agent {
       getFollowUpMessages: () => this.drainFollowUpQueue(),
       shouldStopAfterTurn: this.shouldStopAfterTurn,
     };
+  }
+
+  /** 启动一次 prompt run，并在成功后提交本次新增消息。
+   * @param prompts 已归一化的本次运行消息列表。
+   * @returns 本次运行新增的完整消息列表。
+   */
+  private async runPromptMessages(
+    prompts: readonly AgentMessage[],
+  ): Promise<readonly AgentMessage[]> {
+    return await this.runWithLifecycle(async (signal) => {
+      const context = {
+        systemPrompt: this._state.systemPrompt,
+        messages: [...this._state.messages],
+        tools: [...this._state.tools],
+      };
+      const newMessages = await runAgentLoop(
+        prompts,
+        context,
+        this.createLoopConfig(),
+        this.streamFn,
+        async (event) => {
+          await this.processEvents(event);
+        },
+        signal,
+      );
+
+      this._state.messages.push(...newMessages);
+      return newMessages;
+    });
+  }
+
+  /** 承担一次 Agent Run 的并发、取消、状态和清理边界。
+   * @param executor 接收本次运行 AbortSignal 并执行具体工作的函数。
+   * @returns executor 成功返回的结果，异常保持原样传播。
+   */
+  private async runWithLifecycle<T>(
+    executor: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    if (this.activeRun) throw new Error('Agent is already running.');
+
+    const abortController = new AbortController();
+    let resolveRun!: () => void;
+    const promise = new Promise<void>((resolve) => {
+      resolveRun = resolve;
+    });
+    const activeRun: ActiveRun = {
+      abortController,
+      promise,
+      resolve: resolveRun,
+    };
+
+    this.activeRun = activeRun;
+    this._state.isRunning = true;
+    this._state.streamingText = undefined;
+    this._state.pendingToolCalls.length = 0;
+
+    try {
+      return await executor(abortController.signal);
+    } finally {
+      this._state.isRunning = false;
+      this._state.streamingText = undefined;
+      this._state.pendingToolCalls.length = 0;
+      this.activeRun = undefined;
+      activeRun.resolve();
+    }
   }
 
   /** 先更新实时状态，再按订阅顺序等待所有监听器处理一个事件。
