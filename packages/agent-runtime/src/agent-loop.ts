@@ -48,21 +48,23 @@ export async function runAgentLoop(
 
 /**
  * 执行模型回合、工具调用和后续回合，直到 Agent 正常结束。
- * @param context 当前运行中维护的完整消息上下文。
+ * @param initialContext 当前运行开始时的消息上下文。
  * @param newMessages 本次运行新增的消息集合。
- * @param config 当前运行的模型和循环配置。
+ * @param initialConfig 当前运行开始时的模型和循环配置。
  * @param streamFn 创建模型事件流的函数。
  * @param emit 接收 AgentEvent 的事件接收器。
  * @param signal 用于取消模型请求和工具执行的信号。
  */
 async function runLoop(
-  context: AgentContext,
+  initialContext: AgentContext,
   newMessages: AgentMessage[],
-  config: AgentLoopConfig,
+  initialConfig: AgentLoopConfig,
   streamFn: StreamFn,
   emit: AgentEventSink,
   signal?: AbortSignal,
 ): Promise<void> {
+  let currentContext = initialContext;
+  let config = initialConfig;
   const initialSteeringMessages = await config.getSteeringMessages?.(signal);
   let pendingMessages: AgentMessage[] = [...(initialSteeringMessages ?? [])];
   let firstTurn = true;
@@ -78,7 +80,7 @@ async function runLoop(
       }
 
       for (const pendingMessage of pendingMessages) {
-        context.messages.push(pendingMessage);
+        currentContext.messages.push(pendingMessage);
         newMessages.push(pendingMessage);
         await emit({ type: 'message_start', message: pendingMessage });
         await emit({ type: 'message_end', message: pendingMessage });
@@ -87,13 +89,13 @@ async function runLoop(
 
       //signal?.throwIfAborted();
       const assistantMessage = await streamAssistantResponse(
-        context,
+        currentContext,
         config,
         streamFn,
         emit,
         signal,
       );
-      context.messages.push(assistantMessage);
+      currentContext.messages.push(assistantMessage);
       newMessages.push(assistantMessage);
 
       const toolCalls = assistantMessage.toolCalls ?? [];
@@ -103,11 +105,11 @@ async function runLoop(
         for (const toolCall of toolCalls) {
           await emit({ type: 'tool_execution_start', toolCall });
 
-          const result = await executeToolCall(toolCall, context.tools ?? [], signal);
+          const result = await executeToolCall(toolCall, currentContext.tools ?? [], signal);
 
           await emit({ type: 'tool_execution_end', toolCall, result });
           toolResults.push(result);
-          context.messages.push(result);
+          currentContext.messages.push(result);
           newMessages.push(result);
         }
       }
@@ -118,10 +120,29 @@ async function runLoop(
         toolResults,
       });
 
+      const nextTurnUpdate = await config.prepareNextTurn?.(
+        {
+          message: assistantMessage,
+          toolResults,
+          context: currentContext,
+          newMessages,
+        },
+        signal,
+      );
+      if (nextTurnUpdate?.context !== undefined) {
+        currentContext = nextTurnUpdate.context;
+      }
+      if (nextTurnUpdate?.model !== undefined) {
+        config = {
+          ...config,
+          model: nextTurnUpdate.model,
+        };
+      }
+
       const shouldStop = await config.shouldStopAfterTurn?.({
         message: assistantMessage,
         toolResults,
-        context,
+        context: currentContext,
         newMessages,
       });
       if (shouldStop) {

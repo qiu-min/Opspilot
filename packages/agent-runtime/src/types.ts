@@ -49,6 +49,7 @@ export interface AgentOptions {
   readonly messages?: readonly AgentMessage[];
   readonly transformContext?: AgentLoopConfig['transformContext'];
   readonly convertToLlm?: AgentLoopConfig['convertToLlm'];
+  readonly prepareNextTurn?: AgentLoopConfig['prepareNextTurn'];
   readonly shouldStopAfterTurn?: AgentLoopConfig['shouldStopAfterTurn'];
 }
 
@@ -57,6 +58,18 @@ export interface ShouldStopAfterTurnContext {
   readonly toolResults: readonly ToolResultMessage[];
   readonly context: AgentContext;
   readonly newMessages: readonly AgentMessage[];
+}
+
+export interface PrepareNextTurnContext {
+  readonly message: AssistantMessage;
+  readonly toolResults: readonly ToolResultMessage[];
+  readonly context: AgentContext;
+  readonly newMessages: readonly AgentMessage[];
+}
+
+export interface AgentLoopTurnUpdate {
+  readonly context?: AgentContext;
+  readonly model?: Model;
 }
 
 export type StreamFn = (model: Model, context: Context, options?: Options) => ModelEventStream;
@@ -74,6 +87,10 @@ export interface AgentLoopConfig {
   readonly convertToLlm?: (
     messages: readonly AgentMessage[],
   ) => readonly Message[] | Promise<readonly Message[]>;
+  readonly prepareNextTurn?: (
+    context: PrepareNextTurnContext,
+    signal?: AbortSignal,
+  ) => AgentLoopTurnUpdate | undefined | Promise<AgentLoopTurnUpdate | undefined>;
   readonly getSteeringMessages?: (
     signal?: AbortSignal,
   ) => readonly AgentMessage[] | Promise<readonly AgentMessage[]>;

@@ -19,6 +19,7 @@ export class Agent {
   private readonly tools: readonly AgentTool[];
   private readonly transformContext: AgentOptions['transformContext'];
   private readonly convertToLlm: AgentOptions['convertToLlm'];
+  private readonly prepareNextTurn: AgentOptions['prepareNextTurn'];
   private readonly shouldStopAfterTurn: AgentOptions['shouldStopAfterTurn'];
   private readonly messages: AgentMessage[];
   private readonly steeringQueue: AgentMessage[] = [];
@@ -37,6 +38,7 @@ export class Agent {
     this.tools = [...(options.tools ?? [])];
     this.transformContext = options.transformContext;
     this.convertToLlm = options.convertToLlm;
+    this.prepareNextTurn = options.prepareNextTurn;
     this.shouldStopAfterTurn = options.shouldStopAfterTurn;
     this.messages = [...(options.messages ?? [])];
   }
@@ -181,6 +183,7 @@ export class Agent {
       model: this.model,
       transformContext: this.transformContext,
       convertToLlm: this.convertToLlm,
+      prepareNextTurn: this.prepareNextTurn,
       getSteeringMessages: () => this.drainSteeringQueue(),
       getFollowUpMessages: () => this.drainFollowUpQueue(),
       shouldStopAfterTurn: this.shouldStopAfterTurn,
