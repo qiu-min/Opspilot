@@ -74,6 +74,12 @@ export interface AgentLoopConfig {
   readonly convertToLlm?: (
     messages: readonly AgentMessage[],
   ) => readonly Message[] | Promise<readonly Message[]>;
+  readonly getSteeringMessages?: (
+    signal?: AbortSignal,
+  ) => readonly AgentMessage[] | Promise<readonly AgentMessage[]>;
+  readonly getFollowUpMessages?: (
+    signal?: AbortSignal,
+  ) => readonly AgentMessage[] | Promise<readonly AgentMessage[]>;
   readonly shouldStopAfterTurn?: (
     context: ShouldStopAfterTurnContext,
   ) => boolean | Promise<boolean>;

@@ -2,6 +2,7 @@ import { runAgentLoop } from './agent-loop.js';
 import type {
   AgentEvent,
   AgentEventListener,
+  AgentLoopConfig,
   AgentMessage,
   AgentOptions,
   AgentState,
@@ -20,6 +21,8 @@ export class Agent {
   private readonly convertToLlm: AgentOptions['convertToLlm'];
   private readonly shouldStopAfterTurn: AgentOptions['shouldStopAfterTurn'];
   private readonly messages: AgentMessage[];
+  private readonly steeringQueue: AgentMessage[] = [];
+  private readonly followUpQueue: AgentMessage[] = [];
   private readonly listeners = new Set<AgentEventListener>();
   private isRunning = false;
   private abortController?: AbortController;
@@ -83,12 +86,7 @@ export class Agent {
       const newMessages = await runAgentLoop(
         prompts,
         context,
-        {
-          model: this.model,
-          transformContext: this.transformContext,
-          convertToLlm: this.convertToLlm,
-          shouldStopAfterTurn: this.shouldStopAfterTurn,
-        },
+        this.createLoopConfig(),
         this.streamFn,
         async (event) => {
           await this.emit(event);
@@ -110,11 +108,83 @@ export class Agent {
     this.abortController?.abort();
   }
 
+  /** 将一条或多条消息按原顺序加入 steering 队列。
+   * @param message 要尽快影响当前任务后续执行的消息或消息列表。
+   */
+  steer(message: AgentMessage | readonly AgentMessage[]): void {
+    const messages = Array.isArray(message) ? message : [message];
+    this.steeringQueue.push(...messages);
+  }
+
+  /** 将一条或多条消息按原顺序加入 follow-up 队列。
+   * @param message 要在当前工作自然结束后继续处理的消息或消息列表。
+   */
+  followUp(message: AgentMessage | readonly AgentMessage[]): void {
+    const messages = Array.isArray(message) ? message : [message];
+    this.followUpQueue.push(...messages);
+  }
+
+  /** 清空 steering 队列中的所有消息。 */
+  clearSteeringQueue(): void {
+    this.steeringQueue.length = 0;
+  }
+
+  /** 清空 follow-up 队列中的所有消息。 */
+  clearFollowUpQueue(): void {
+    this.followUpQueue.length = 0;
+  }
+
+  /** 同时清空 steering 和 follow-up 队列。 */
+  clearAllQueues(): void {
+    this.clearSteeringQueue();
+    this.clearFollowUpQueue();
+  }
+
+  /** 判断两个队列中是否至少有一条等待处理的消息。
+   * @returns 任一队列非空时返回 true，否则返回 false。
+   */
+  hasQueuedMessages(): boolean {
+    return this.steeringQueue.length > 0 || this.followUpQueue.length > 0;
+  }
+
   /** 清空 Agent 会话历史；运行中不能重置。
    */
   reset(): void {
     if (this.isRunning) throw new Error('Cannot reset while Agent is running.');
     this.messages.length = 0;
+    this.clearAllQueues();
+  }
+
+  /** 取出并清空当前 steering 队列，返回独立数组避免暴露内部存储。
+   * @returns 当前队列中的全部消息，保持入队顺序。
+   */
+  private drainSteeringQueue(): AgentMessage[] {
+    const messages = [...this.steeringQueue];
+    this.steeringQueue.length = 0;
+    return messages;
+  }
+
+  /** 取出并清空当前 follow-up 队列，返回独立数组避免暴露内部存储。
+   * @returns 当前队列中的全部消息，保持入队顺序。
+   */
+  private drainFollowUpQueue(): AgentMessage[] {
+    const messages = [...this.followUpQueue];
+    this.followUpQueue.length = 0;
+    return messages;
+  }
+
+  /** 创建一次运行使用的 Loop 配置，并连接两个消息队列的消费回调。
+   * @returns 包含模型、现有 hooks 和队列 drain callback 的 Loop 配置。
+   */
+  private createLoopConfig(): AgentLoopConfig {
+    return {
+      model: this.model,
+      transformContext: this.transformContext,
+      convertToLlm: this.convertToLlm,
+      getSteeringMessages: () => this.drainSteeringQueue(),
+      getFollowUpMessages: () => this.drainFollowUpQueue(),
+      shouldStopAfterTurn: this.shouldStopAfterTurn,
+    };
   }
 
   /** 按订阅顺序等待所有监听器处理一个事件。
