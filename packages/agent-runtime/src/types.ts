@@ -39,6 +39,8 @@ export interface AgentState {
   readonly tools: readonly AgentTool[];
   readonly messages: readonly AgentMessage[];
   readonly isRunning: boolean;
+  readonly streamingText?: string;
+  readonly pendingToolCalls: readonly ModelToolCall[];
 }
 
 export interface AgentOptions {

@@ -1,0 +1,288 @@
+import { describe, expect, it } from 'vitest';
+import {
+  createModelEventStream,
+  ModelGatewayError,
+  type AssistantMessage,
+  type FinishReason,
+  type JsonObject,
+  type Model,
+  type ModelEventStream,
+  type ModelToolCall,
+} from '@opspilot/model-gateway';
+
+import { Agent } from '../src/index.js';
+import type { AgentMessage, AgentTool, StreamFn } from '../src/index.js';
+
+const model: Model = {
+  provider: 'test-provider',
+  id: 'test-model',
+  name: 'Test Model',
+  api: 'test-api',
+  baseUrl: 'https://model.example.test/v1',
+  reasoning: false,
+};
+
+/** 创建测试用的用户消息。
+ * @param text 消息文本。
+ * @returns 一条 Agent 用户消息。
+ */
+function userMessage(text: string): AgentMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text }],
+  };
+}
+
+/** 创建模型返回的 assistant 消息。
+ * @param finishReason 本次模型响应的结束原因。
+ * @param toolCalls 本次模型请求执行的工具调用列表。
+ * @returns 一条标准 assistant 消息。
+ */
+function assistantMessage(
+  finishReason: FinishReason = 'stop',
+  toolCalls?: readonly ModelToolCall[],
+): AssistantMessage {
+  return {
+    role: 'assistant',
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    content: [],
+    finishReason,
+    ...(toolCalls === undefined ? {} : { toolCalls }),
+  };
+}
+
+/** 创建带文本增量的 assistant 事件流。
+ * @param message 模型最终返回的 assistant 消息。
+ * @param deltas 依次发送的文本增量。
+ * @returns 可被 Agent 消费的模型事件流。
+ */
+function assistantStream(message: AssistantMessage, deltas: readonly string[] = []): ModelEventStream {
+  return createModelEventStream(async (controller) => {
+    controller.emit({ type: 'start', model });
+    for (const delta of deltas) {
+      controller.emit({ type: 'text.delta', contentIndex: 0, delta });
+    }
+    controller.complete(message);
+  });
+}
+
+/** 创建按顺序返回模型流的函数。
+ * @param streams 各次模型调用对应的事件流。
+ * @returns 按调用顺序消费事件流的 StreamFn。
+ */
+function sequentialStreamFn(streams: readonly ModelEventStream[]): StreamFn {
+  let index = 0;
+  return () => {
+    const stream = streams[index];
+    index += 1;
+    if (stream === undefined) throw new Error('Unexpected extra model call.');
+    return stream;
+  };
+}
+
+/** 创建固定文本结果的运行时工具。
+ * @param name 工具名称。
+ * @param text 工具返回的文本。
+ * @returns 可被 Agent Loop 执行的测试工具。
+ */
+function textTool(name: string, text: string): AgentTool {
+  return {
+    name,
+    description: `Test tool ${name}`,
+    parameters: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+    execute: async (_callId: string, _args: JsonObject, _signal?: AbortSignal) => ({
+      content: [{ type: 'text', text }],
+    }),
+  };
+}
+
+describe('Agent real-time state', () => {
+  it('initializes the mutable state from Agent options', () => {
+    const history = [userMessage('history')];
+    const tool = textTool('query_logs', 'logs');
+    const agent = new Agent({
+      model,
+      messages: history,
+      tools: [tool],
+      streamFn: sequentialStreamFn([]),
+    });
+
+    expect(agent.state.messages).toEqual(history);
+    expect(agent.state.tools).toEqual([tool]);
+    expect(agent.state.model).toBe(model);
+    expect(agent.state.isRunning).toBe(false);
+    expect(agent.state.streamingText).toBeUndefined();
+    expect(agent.state.pendingToolCalls).toEqual([]);
+  });
+
+  it('updates streamingText before notifying listeners and clears it at assistant end', async () => {
+    const assistant = assistantMessage();
+    const observedText: string[] = [];
+    let runningAtStart = false;
+    let textAtEnd: string | undefined;
+    const agent = new Agent({
+      model,
+      streamFn: sequentialStreamFn([assistantStream(assistant, ['hello', ' world'])]),
+    });
+
+    agent.subscribe((event) => {
+      if (event.type === 'agent_start') runningAtStart = agent.state.isRunning;
+      if (event.type === 'message_update' && event.event.type === 'text.delta') {
+        observedText.push(agent.state.streamingText ?? '');
+      }
+      if (event.type === 'message_end' && event.message === assistant) {
+        textAtEnd = agent.state.streamingText;
+      }
+    });
+
+    await agent.prompt(userMessage('initial'));
+
+    expect(runningAtStart).toBe(true);
+    expect(observedText).toEqual(['hello', 'hello world']);
+    expect(textAtEnd).toBeUndefined();
+    expect(agent.state.streamingText).toBeUndefined();
+  });
+
+  it('updates pendingToolCalls before tool listeners and removes them on completion', async () => {
+    const call: ModelToolCall = {
+      callId: 'call_1',
+      name: 'query_logs',
+      arguments: {},
+    };
+    const tool = textTool('query_logs', 'logs found');
+    const assistant1 = assistantMessage('tool_calls' as FinishReason, [call]);
+    const assistant2 = assistantMessage();
+    let pendingAtStart: readonly ModelToolCall[] = [];
+    let pendingAtEnd: readonly ModelToolCall[] = [];
+    const agent = new Agent({
+      model,
+      tools: [tool],
+      streamFn: sequentialStreamFn([assistantStream(assistant1), assistantStream(assistant2)]),
+    });
+
+    agent.subscribe((event) => {
+      if (event.type === 'tool_execution_start') pendingAtStart = agent.state.pendingToolCalls;
+      if (event.type === 'tool_execution_end') pendingAtEnd = agent.state.pendingToolCalls;
+    });
+
+    await agent.prompt(userMessage('initial'));
+
+    expect(pendingAtStart).toEqual([call]);
+    expect(pendingAtEnd).toEqual([]);
+    expect(agent.state.pendingToolCalls).toEqual([]);
+  });
+
+  it('keeps messages uncommitted during events and commits them only after success', async () => {
+    const history = userMessage('history');
+    const prompt = userMessage('initial');
+    const call: ModelToolCall = {
+      callId: 'call_1',
+      name: 'query_logs',
+      arguments: {},
+    };
+    const tool = textTool('query_logs', 'logs found');
+    const assistant1 = assistantMessage('tool_calls' as FinishReason, [call]);
+    const assistant2 = assistantMessage();
+    const messagesDuringRun: AgentMessage[][] = [];
+    const agent = new Agent({
+      model,
+      messages: [history],
+      tools: [tool],
+      streamFn: sequentialStreamFn([assistantStream(assistant1), assistantStream(assistant2)]),
+    });
+
+    agent.subscribe((event) => {
+      if (
+        (event.type === 'message_end' && event.message === assistant1) ||
+        event.type === 'tool_execution_end'
+      ) {
+        messagesDuringRun.push([...agent.state.messages]);
+      }
+    });
+
+    const result = await agent.prompt(prompt);
+
+    expect(messagesDuringRun).toEqual([[history], [history]]);
+    expect(result).toHaveLength(4);
+    expect(agent.state.messages).toEqual([history, ...result]);
+  });
+
+  it('does not commit messages and clears transient state when a run fails', async () => {
+    const history = userMessage('history');
+    const failure = new ModelGatewayError('PROVIDER_FAILURE', 'model failed');
+    const agent = new Agent({
+      model,
+      messages: [history],
+      streamFn: () =>
+        createModelEventStream(async (controller) => {
+          controller.emit({ type: 'start', model });
+          controller.emit({ type: 'text.delta', contentIndex: 0, delta: 'partial' });
+          controller.fail(failure);
+        }),
+    });
+
+    await expect(agent.prompt(userMessage('failed'))).rejects.toBe(failure);
+
+    expect(agent.state.messages).toEqual([history]);
+    expect(agent.state.isRunning).toBe(false);
+    expect(agent.state.streamingText).toBeUndefined();
+    expect(agent.state.pendingToolCalls).toEqual([]);
+  });
+
+  it('reset clears transcript, queues and transient state', async () => {
+    const history = userMessage('history');
+    const agent = new Agent({
+      model,
+      messages: [history],
+      streamFn: sequentialStreamFn([assistantStream(assistantMessage())]),
+    });
+
+    await agent.prompt(userMessage('run once'));
+    agent.steer(userMessage('steering'));
+    agent.followUp(userMessage('follow-up'));
+    agent.reset();
+
+    expect(agent.state.messages).toEqual([]);
+    expect(agent.hasQueuedMessages()).toBe(false);
+    expect(agent.state.streamingText).toBeUndefined();
+    expect(agent.state.pendingToolCalls).toEqual([]);
+    expect(agent.state.isRunning).toBe(false);
+  });
+
+  it('returns snapshots that cannot mutate internal arrays', async () => {
+    const tool = textTool('query_logs', 'logs');
+    const call: ModelToolCall = {
+      callId: 'call_1',
+      name: 'query_logs',
+      arguments: {},
+    };
+    const assistant1 = assistantMessage('tool_calls' as FinishReason, [call]);
+    const assistant2 = assistantMessage();
+    const agent = new Agent({
+      model,
+      tools: [tool],
+      streamFn: sequentialStreamFn([assistantStream(assistant1), assistantStream(assistant2)]),
+    });
+
+    agent.subscribe((event) => {
+      if (event.type === 'tool_execution_start') {
+        const snapshot = agent.state;
+        (snapshot.messages as AgentMessage[]).push(userMessage('fake'));
+        (snapshot.tools as AgentTool[]).length = 0;
+        (snapshot.pendingToolCalls as ModelToolCall[]).length = 0;
+
+        expect(agent.state.messages).toEqual([]);
+        expect(agent.state.tools).toEqual([tool]);
+        expect(agent.state.pendingToolCalls).toEqual([call]);
+      }
+    });
+
+    await agent.prompt(userMessage('initial'));
+  });
+});

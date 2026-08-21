@@ -1,4 +1,5 @@
 import { runAgentLoop } from './agent-loop.js';
+import type { ModelToolCall } from '@opspilot/model-gateway';
 import type {
   AgentEvent,
   AgentEventListener,
@@ -9,38 +10,49 @@ import type {
   AgentTool,
 } from './types.js';
 
+type MutableAgentState = {
+  systemPrompt?: string;
+  model: AgentOptions['model'];
+  tools: AgentTool[];
+  messages: AgentMessage[];
+  isRunning: boolean;
+  streamingText?: string;
+  pendingToolCalls: ModelToolCall[];
+};
+
 /**
  * 有状态的 Agent 包装器，负责保存会话历史并调用底层 Agent Loop。
  */
 export class Agent {
-  private readonly model: AgentOptions['model'];
   private readonly streamFn: AgentOptions['streamFn'];
-  private readonly systemPrompt: AgentOptions['systemPrompt'];
-  private readonly tools: readonly AgentTool[];
   private readonly transformContext: AgentOptions['transformContext'];
   private readonly convertToLlm: AgentOptions['convertToLlm'];
   private readonly prepareNextTurn: AgentOptions['prepareNextTurn'];
   private readonly shouldStopAfterTurn: AgentOptions['shouldStopAfterTurn'];
-  private readonly messages: AgentMessage[];
+  private readonly _state: MutableAgentState;
   private readonly steeringQueue: AgentMessage[] = [];
   private readonly followUpQueue: AgentMessage[] = [];
   private readonly listeners = new Set<AgentEventListener>();
-  private isRunning = false;
   private abortController?: AbortController;
 
   /** 创建一个保存自身消息历史的 Agent。
    * @param options Agent 模型、流函数、初始上下文和 Loop hooks。
    */
   constructor(options: AgentOptions) {
-    this.model = options.model;
     this.streamFn = options.streamFn;
-    this.systemPrompt = options.systemPrompt;
-    this.tools = [...(options.tools ?? [])];
     this.transformContext = options.transformContext;
     this.convertToLlm = options.convertToLlm;
     this.prepareNextTurn = options.prepareNextTurn;
     this.shouldStopAfterTurn = options.shouldStopAfterTurn;
-    this.messages = [...(options.messages ?? [])];
+    this._state = {
+      systemPrompt: options.systemPrompt,
+      model: options.model,
+      tools: [...(options.tools ?? [])],
+      messages: [...(options.messages ?? [])],
+      isRunning: false,
+      streamingText: undefined,
+      pendingToolCalls: [],
+    };
   }
 
   /** 返回 Agent 状态的浅快照，避免调用方修改内部数组。
@@ -48,11 +60,13 @@ export class Agent {
    */
   get state(): AgentState {
     return {
-      systemPrompt: this.systemPrompt,
-      model: this.model,
-      tools: [...this.tools],
-      messages: [...this.messages],
-      isRunning: this.isRunning,
+      systemPrompt: this._state.systemPrompt,
+      model: this._state.model,
+      tools: [...this._state.tools],
+      messages: [...this._state.messages],
+      isRunning: this._state.isRunning,
+      streamingText: this._state.streamingText,
+      pendingToolCalls: [...this._state.pendingToolCalls],
     };
   }
 
@@ -72,18 +86,18 @@ export class Agent {
    * @returns 本次运行新增的完整消息列表。
    */
   async prompt(input: AgentMessage | readonly AgentMessage[]): Promise<readonly AgentMessage[]> {
-    if (this.isRunning) throw new Error('Agent is already running.');
+    if (this._state.isRunning) throw new Error('Agent is already running.');
 
     const prompts = Array.isArray(input) ? [...input] : [input];
     const controller = new AbortController();
     this.abortController = controller;
-    this.isRunning = true;
+    this._state.isRunning = true;
 
     try {
       const context = {
-        systemPrompt: this.systemPrompt,
-        messages: [...this.messages],
-        tools: [...this.tools],
+        systemPrompt: this._state.systemPrompt,
+        messages: [...this._state.messages],
+        tools: [...this._state.tools],
       };
       const newMessages = await runAgentLoop(
         prompts,
@@ -91,15 +105,17 @@ export class Agent {
         this.createLoopConfig(),
         this.streamFn,
         async (event) => {
-          await this.emit(event);
+          await this.processEvents(event);
         },
         controller.signal,
       );
 
-      this.messages.push(...newMessages);
+      this._state.messages.push(...newMessages);
       return newMessages;
     } finally {
-      this.isRunning = false;
+      this._state.isRunning = false;
+      this._state.streamingText = undefined;
+      this._state.pendingToolCalls.length = 0;
       this.abortController = undefined;
     }
   }
@@ -152,8 +168,10 @@ export class Agent {
   /** 清空 Agent 会话历史；运行中不能重置。
    */
   reset(): void {
-    if (this.isRunning) throw new Error('Cannot reset while Agent is running.');
-    this.messages.length = 0;
+    if (this._state.isRunning) throw new Error('Cannot reset while Agent is running.');
+    this._state.messages.length = 0;
+    this._state.streamingText = undefined;
+    this._state.pendingToolCalls.length = 0;
     this.clearAllQueues();
   }
 
@@ -180,7 +198,7 @@ export class Agent {
    */
   private createLoopConfig(): AgentLoopConfig {
     return {
-      model: this.model,
+      model: this._state.model,
       transformContext: this.transformContext,
       convertToLlm: this.convertToLlm,
       prepareNextTurn: this.prepareNextTurn,
@@ -190,10 +208,48 @@ export class Agent {
     };
   }
 
-  /** 按订阅顺序等待所有监听器处理一个事件。
+  /** 先更新实时状态，再按订阅顺序等待所有监听器处理一个事件。
    * @param event 要转发的 AgentEvent。
    */
-  private async emit(event: AgentEvent): Promise<void> {
+  private async processEvents(event: AgentEvent): Promise<void> {
+    switch (event.type) {
+      case 'agent_start':
+        this._state.isRunning = true;
+        break;
+      case 'message_start':
+        if (event.message === undefined) this._state.streamingText = '';
+        break;
+      case 'message_update':
+        if (event.event.type === 'text.delta') {
+          this._state.streamingText = `${this._state.streamingText ?? ''}${event.event.delta}`;
+        }
+        break;
+      case 'message_end':
+        if (event.message.role === 'assistant') this._state.streamingText = undefined;
+        break;
+      case 'tool_execution_start':
+        if (
+          !this._state.pendingToolCalls.some(
+            (toolCall) => toolCall.callId === event.toolCall.callId,
+          )
+        ) {
+          this._state.pendingToolCalls.push(event.toolCall);
+        }
+        break;
+      case 'tool_execution_end':
+        this._state.pendingToolCalls = this._state.pendingToolCalls.filter(
+          (toolCall) => toolCall.callId !== event.toolCall.callId,
+        );
+        break;
+      case 'agent_end':
+        this._state.streamingText = undefined;
+        this._state.pendingToolCalls.length = 0;
+        break;
+      case 'turn_start':
+      case 'turn_end':
+        break;
+    }
+
     for (const listener of this.listeners) {
       await listener(event);
     }
