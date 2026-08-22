@@ -1,5 +1,4 @@
 import type { AssistantMessage, ModelToolCall } from './context.js';
-import { ModelGatewayError, toModelGatewayError } from './errors.js';
 import type { Model } from './model.js';
 import type { Usage } from './response.js';
 
@@ -32,7 +31,11 @@ export type ModelStreamEvent =
     }
   | { readonly type: 'usage'; readonly usage: Usage; readonly partial: AssistantMessage }
   | { readonly type: 'done'; readonly response: AssistantMessage }
-  | { readonly type: 'error'; readonly error: ModelGatewayError };
+  | {
+      readonly type: 'error';
+      readonly reason: 'error' | 'aborted';
+      readonly error: AssistantMessage;
+    };
 
 export interface ModelEventStream extends AsyncIterable<ModelStreamEvent> {
   result(): Promise<AssistantMessage>;
@@ -41,7 +44,7 @@ export interface ModelEventStream extends AsyncIterable<ModelStreamEvent> {
 export type StreamController = {
   emit(event: ModelStreamEvent): void;
   complete(response: AssistantMessage): void;
-  fail(error: ModelGatewayError): void;
+  error(response: AssistantMessage): void;
 };
 
 class BufferedStream implements ModelEventStream, StreamController {
@@ -49,7 +52,7 @@ class BufferedStream implements ModelEventStream, StreamController {
   private waiters: ((value: IteratorResult<ModelStreamEvent>) => void)[] = [];
   private closed = false;
   private resolve!: (response: AssistantMessage) => void;
-  private reject!: (error: ModelGatewayError) => void;
+  private reject!: (error: unknown) => void;
   private completion = new Promise<AssistantMessage>((resolve, reject) => {
     this.resolve = resolve;
     this.reject = reject;
@@ -57,7 +60,14 @@ class BufferedStream implements ModelEventStream, StreamController {
 
   constructor(producer: (controller: StreamController) => Promise<void>) {
     void this.completion.catch(() => undefined);
-    void producer(this).catch((error) => this.fail(toModelGatewayError(error)));
+    void producer(this).catch((error: unknown) => {
+      // Provider errors are converted by the Adapter; this branch only rejects for an
+      // unexpected implementation error that escaped the Adapter boundary.
+      if (this.closed) return;
+      this.closed = true;
+      this.reject(error);
+      this.finish();
+    });
   }
 
   emit(event: ModelStreamEvent) {
@@ -75,11 +85,13 @@ class BufferedStream implements ModelEventStream, StreamController {
     this.finish();
   }
 
-  fail(error: ModelGatewayError) {
+  error(response: AssistantMessage) {
     if (this.closed) return;
-    this.emit({ type: 'error', error });
+    if (response.finishReason !== 'error' && response.finishReason !== 'aborted')
+      throw new Error('Stream error response must have finishReason error or aborted.');
+    this.emit({ type: 'error', reason: response.finishReason, error: response });
     this.closed = true;
-    this.reject(error);
+    this.resolve(response);
     this.finish();
   }
 
@@ -110,5 +122,7 @@ class BufferedStream implements ModelEventStream, StreamController {
 export function createModelEventStream(
   producer: (controller: StreamController) => Promise<void>,
 ): ModelEventStream {
+  // Provider/模型失败由 Adapter 封装为 terminal AssistantMessage，result() 仍然 resolve；
+  // 配置、输入和未预期的编程错误可以继续通过普通异常 reject。
   return new BufferedStream(producer);
 }

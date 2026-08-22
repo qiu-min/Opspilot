@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  isModelGatewayError,
   loadModelGatewayConfig,
   modelGatewayConfigSchema,
   resolveProviders,
@@ -46,8 +45,8 @@ describe('provider configuration', () => {
     const dir = await mkdtemp(join(tmpdir(), 'opspilot-'));
     const path = join(dir, 'providers.json');
     await writeFile(path, '{');
-    await expect(loadModelGatewayConfig(path)).rejects.toSatisfy((error: unknown) =>
-      isModelGatewayError(error, 'CONFIGURATION'),
+    await expect(loadModelGatewayConfig(path)).rejects.toThrow(
+      `Unable to read model gateway configuration: ${path}`,
     );
   });
   it('requires exactly one credential source', () => {

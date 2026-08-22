@@ -58,6 +58,23 @@ function stream(...items: unknown[]): AsyncIterable<unknown> {
     yield* items;
   })();
 }
+
+/** 创建一个在请求创建阶段失败的测试 Adapter。
+ * @param error 模拟 Provider 抛出的异常。
+ * @returns 使用固定失败客户端的 OpenAI Adapter。
+ */
+function failingAdapter(error: unknown): OpenAiCompletionsModelAdapter {
+  return new OpenAiCompletionsModelAdapter(() => ({
+    chat: {
+      completions: {
+        async create() {
+          throw error;
+        },
+      },
+    },
+  }));
+}
+
 describe('OpenAI Chat Completions adapter', () => {
   it('normalizes text, tool calls, usage, and sends the configured endpoint', async () => {
     const requests: OpenAiCompletionsRequest[] = [];
@@ -427,10 +444,8 @@ describe('OpenAI Chat Completions adapter', () => {
       },
     }));
     await expect(
-      adapter.stream(k3Model, context, { temperature: 0.2 }, provider).result(),
-    ).rejects.toMatchObject({
-      code: 'UNSUPPORTED_CAPABILITY',
-    });
+      Promise.resolve().then(() => adapter.stream(k3Model, context, { temperature: 0.2 }, provider)),
+    ).rejects.toThrow('does not support temperature');
     expect(invoked).toBe(false);
   });
 
@@ -586,7 +601,7 @@ describe('OpenAI Chat Completions adapter', () => {
     });
   });
 
-  it('rejects unknown provider finish reasons', async () => {
+  it('converts unknown provider finish reasons into an error AssistantMessage', async () => {
     const adapter = new OpenAiCompletionsModelAdapter(() => ({
       chat: {
         completions: {
@@ -606,13 +621,13 @@ describe('OpenAI Chat Completions adapter', () => {
 
     const result = adapter.stream(model, context, {}, provider);
 
-    await expect(result.result()).rejects.toMatchObject({
-      code: 'INVALID_RESPONSE',
-      message: 'Unknown provider finish reason: some_new_reason',
+    await expect(result.result()).resolves.toMatchObject({
+      finishReason: 'error',
+      errorMessage: 'Unknown provider finish reason: some_new_reason',
     });
   });
 
-  it('rejects a stream that ends without a finish reason', async () => {
+  it('converts a stream without a finish reason into an error AssistantMessage', async () => {
     const adapter = new OpenAiCompletionsModelAdapter(() => ({
       chat: {
         completions: {
@@ -632,9 +647,94 @@ describe('OpenAI Chat Completions adapter', () => {
 
     const result = adapter.stream(model, context, {}, provider);
 
-    await expect(result.result()).rejects.toMatchObject({
-      code: 'INVALID_RESPONSE',
-      message: 'Model provider stream ended without a finish reason.',
+    await expect(result.result()).resolves.toMatchObject({
+      finishReason: 'error',
+      errorMessage: 'Model provider stream ended without a finish reason.',
+    });
+  });
+
+  it('converts authentication and rate-limit Provider failures into terminal messages', async () => {
+    for (const error of [
+      Object.assign(new Error('unauthorized'), { status: 401 }),
+      Object.assign(new Error('limited'), { status: 429 }),
+    ]) {
+      const result = failingAdapter(error).stream(model, context, {}, provider);
+      const events = [];
+      for await (const event of result) events.push(event);
+      const response = await result.result();
+      expect(response).toMatchObject({ finishReason: 'error' });
+      expect(events.at(-1)).toMatchObject({ type: 'error', reason: 'error', error: response });
+    }
+  });
+
+  it('keeps timeout failures as error rather than aborted', async () => {
+    const timeout = Object.assign(new Error('timeout'), { name: 'APIConnectionTimeoutError' });
+    const response = await failingAdapter(timeout).stream(model, context, {}, provider).result();
+    expect(response).toMatchObject({
+      finishReason: 'error',
+      errorMessage: 'Model provider request timed out.',
+    });
+  });
+
+  it('encodes an aborted request as an aborted terminal message', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const response = await failingAdapter(new Error('aborted'))
+      .stream(model, context, { signal: controller.signal }, provider)
+      .result();
+    expect(response).toMatchObject({ finishReason: 'aborted' });
+  });
+
+  it('preserves partial content when the Provider stream fails midway', async () => {
+    const adapter = new OpenAiCompletionsModelAdapter(() => ({
+      chat: {
+        completions: {
+          async create() {
+            return (async function* () {
+              yield { choices: [{ delta: { content: 'partial text' }, finish_reason: null }] };
+              throw new Error('socket closed');
+            })();
+          },
+        },
+      },
+    }));
+    const response = await adapter.stream(model, context, {}, provider).result();
+    expect(response).toMatchObject({
+      finishReason: 'error',
+      content: [{ type: 'text', text: 'partial text' }],
+      errorMessage: 'socket closed',
+    });
+  });
+
+  it('converts an invalid final tool call into an error terminal message', async () => {
+    const adapter = new OpenAiCompletionsModelAdapter(() => ({
+      chat: {
+        completions: {
+          async create() {
+            return stream({
+              choices: [
+                {
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: 'call_1',
+                        function: { name: 'query_logs', arguments: '{invalid' },
+                      },
+                    ],
+                  },
+                  finish_reason: 'tool_calls',
+                },
+              ],
+            });
+          },
+        },
+      },
+    }));
+    const response = await adapter.stream(model, context, {}, provider).result();
+    expect(response).toMatchObject({
+      finishReason: 'error',
+      errorMessage: 'OpenAI tool arguments must be valid JSON.',
     });
   });
 });

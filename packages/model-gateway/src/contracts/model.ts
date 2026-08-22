@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { ModelGatewayError } from './errors.js';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 
@@ -86,6 +85,6 @@ export const modelSchema = z
 
 export function validateModel(value: unknown): Model {
   const parsed = modelSchema.safeParse(value);
-  if (!parsed.success) throw new ModelGatewayError('INVALID_INPUT', 'Invalid model.', parsed.error);
+  if (!parsed.success) throw new Error('Invalid model.', { cause: parsed.error });
   return parsed.data;
 }

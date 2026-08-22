@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createModelGateway, type ModelAdapter } from '../src/index.js';
+import { createModelEventStream, createModelGateway, type ModelAdapter } from '../src/index.js';
 
 const config = {
   providers: [
@@ -43,8 +43,31 @@ describe('model gateway registry', () => {
     ).toThrow(/No model adapter/);
     const gateway = createModelGateway(config);
     const model = gateway.getModel('moonshot', 'kimi')!;
-    expect(() => gateway.stream({ ...model, provider: 'unknown' }, context)).toThrowError(
-      expect.objectContaining({ code: 'CONFIGURATION' }),
+    expect(() => gateway.stream({ ...model, provider: 'unknown' }, context)).toThrow(
+      'Unknown model provider: unknown',
+    );
+  });
+
+  it('resolves a terminal model failure from complete()', async () => {
+    const model = createModelGateway(config).getModel('moonshot', 'kimi')!;
+    const failure = {
+      role: 'assistant' as const,
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      content: [],
+      finishReason: 'error' as const,
+      errorMessage: 'Provider failed.',
+    };
+    const adapter: ModelAdapter = {
+      api: 'openai-completions',
+      stream() {
+        return createModelEventStream(async (controller) => controller.error(failure));
+      },
+    };
+    const gateway = createModelGateway(config, [adapter]);
+    await expect(gateway.complete(gateway.getModel('moonshot', 'kimi')!, context)).resolves.toBe(
+      failure,
     );
   });
 });

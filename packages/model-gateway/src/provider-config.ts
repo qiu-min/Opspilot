@@ -2,7 +2,6 @@ import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import {
   type Model,
-  ModelGatewayError,
   modelApiSchema,
   openAiCompletionsCompatSchema,
   reasoningProtocolSchema,
@@ -103,8 +102,7 @@ export function resolveProviders(config: ModelGatewayConfig): readonly ResolvedP
   return config.providers.map((provider) => {
     const apiKey = provider.apiKey ?? process.env[provider.apiKeyEnv!];
     if (!apiKey)
-      throw new ModelGatewayError(
-        'CONFIGURATION',
+      throw new Error(
         `Environment variable ${provider.apiKeyEnv} is not set for provider ${provider.id}.`,
       );
     return {
@@ -141,18 +139,10 @@ export async function loadModelGatewayConfig(
   try {
     raw = JSON.parse(await readFile(path, 'utf8'));
   } catch (error) {
-    throw new ModelGatewayError(
-      'CONFIGURATION',
-      `Unable to read model gateway configuration: ${path}`,
-      error,
-    );
+    throw new Error(`Unable to read model gateway configuration: ${path}`, { cause: error });
   }
   const parsed = modelGatewayConfigSchema.safeParse(raw);
   if (!parsed.success)
-    throw new ModelGatewayError(
-      'CONFIGURATION',
-      'Model gateway configuration is invalid.',
-      parsed.error,
-    );
+    throw new Error('Model gateway configuration is invalid.', { cause: parsed.error });
   return parsed.data;
 }

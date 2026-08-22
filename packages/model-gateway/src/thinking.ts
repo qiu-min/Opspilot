@@ -1,4 +1,3 @@
-import { ModelGatewayError } from './contracts/errors.js';
 import type { Model, ModelThinkingLevel, ThinkingLevel } from './contracts/model.js';
 import type { Options } from './contracts/options.js';
 
@@ -37,25 +36,18 @@ export function clampThinkingLevel(model: Model, requested: ThinkingLevel): Mode
     const candidate = levels[index]!;
     if (supported.includes(candidate)) return candidate;
   }
-  throw new ModelGatewayError(
-    'UNSUPPORTED_CAPABILITY',
-    `Model ${model.provider}/${model.id} has no supported reasoning level.`,
-  );
+  throw new Error(`Model ${model.provider}/${model.id} has no supported reasoning level.`);
 }
 
 export function resolveThinking(model: Model, options: Options): ResolvedOptions {
   if (options.reasoning === undefined) return options;
   if (!model.reasoning)
-    throw new ModelGatewayError(
-      'UNSUPPORTED_CAPABILITY',
-      `Model ${model.provider}/${model.id} does not support reasoning.`,
-    );
+    throw new Error(`Model ${model.provider}/${model.id} does not support reasoning.`);
 
   const selected = clampThinkingLevel(model, options.reasoning);
   const providerValue = model.thinkingLevelMap?.[selected];
   if (typeof providerValue !== 'string' || model.reasoningProtocol === undefined)
-    throw new ModelGatewayError(
-      'CONFIGURATION',
+    throw new Error(
       `Model ${model.provider}/${model.id} lacks a reasoning mapping for ${selected}.`,
     );
 

@@ -120,7 +120,7 @@ Provider 私有字段，例如 reasoning_effort、max_completion_tokens 和 Deep
 type FinishReason = 'pending' | 'stop' | 'tool_calls' | 'length' | 'refusal';
 ~~~
 
-`pending` 只表示流式生成中的 AssistantMessage；`ModelEventStream.result()` 返回的最终消息不会使用该值。
+`pending` 只表示流式生成中的 AssistantMessage；`error` 和 `aborted` 表示模型调用已经进入终止协议。`ModelEventStream.result()` 对所有这三类终止消息都 resolve。
 
 Token 用量统一为 inputTokens、outputTokens 和 totalTokens。对应契约见 src/contracts/context.ts 与 src/contracts/response.ts。
 
@@ -158,7 +158,11 @@ type ModelStreamEvent =
     }
   | { type: 'usage'; usage: Usage; partial: AssistantMessage }
   | { type: 'done'; response: AssistantMessage }
-  | { type: 'error'; error: ModelGatewayError };
+  | {
+      type: 'error';
+      reason: 'error' | 'aborted';
+      error: AssistantMessage;
+    };
 ~~~
 
 正常生命周期为：
@@ -182,26 +186,15 @@ for await (const event of stream) {
 const message = await stream.result();
 ~~~
 
-底层失败时，流会发送 error，同时 result() reject 并关闭流；不会为了满足返回类型而伪造 AssistantMessage。对应契约见 src/contracts/events.ts。
+底层失败时，流会发送 `error` 并关闭流；`result()` resolve 同一个失败 AssistantMessage。对应契约见 src/contracts/events.ts。
 
-### Error：稳定错误码
+### Error：流终止语义
 
-错误统一为 ModelGatewayError，错误码包括：
+Provider 或模型流失败会封装为带有 `finishReason: 'error' | 'aborted'` 的 AssistantMessage，并通过 `error` 事件发出；`result()` 仍然 resolve 该消息。配置、输入校验和未预期的编程错误仍然可以抛出普通 `Error`。
 
-~~~text
-CONFIGURATION
-INVALID_INPUT
-INVALID_RESPONSE
-INVALID_TOOL_CALL
-UNSUPPORTED_CAPABILITY
-AUTHENTICATION
-RATE_LIMITED
-TIMEOUT
-MODEL_REFUSAL
-PROVIDER_FAILURE
-~~~
+稳定的 Provider 错误文案由 Adapter 负责格式化，不再暴露自定义错误码协议。
 
-上层应根据稳定错误码处理失败，而不是依赖某个 Provider 的错误文本或 HTTP 响应格式。对应契约见 src/contracts/errors.ts。
+上层应根据 `finishReason` 和 `errorMessage` 处理模型调用失败，而不是依赖某个 Provider 的异常类型或 HTTP 响应格式。
 
 ## ModelGateway API
 
@@ -255,11 +248,11 @@ Gateway 在 Adapter 前验证能力并按 Pi 的规则回退：优先寻找更�
 - `openai-reasoning-object` → `reasoning: { effort }`
 - `deepseek-thinking` → `thinking: { type: 'enabled' }` 与 `reasoning_effort`
 
-未声明或不支持 reasoning 的模型会以稳定错误码拒绝请求，不会猜测 Provider 参数。最终 `AssistantMessage.reasoning` 记录请求等级和实际选择等级；不会将模型私有推理作为用户可见文本或 `text.delta` 事件。
+未声明或不支持 reasoning 的模型会以清晰的普通 `Error` 拒绝请求，不会猜测 Provider 参数。最终 `AssistantMessage.reasoning` 记录请求等级和实际选择等级；不会将模型私有推理作为用户可见文本或 `text.delta` 事件。
 
 ## Kimi K3
 
-K3 通过同一个 `openai-completions` Adapter 和模型级 `compat` 配置接入。它使用顶层 `reasoning_effort`，并将 `maxTokens` 映射为 `max_completion_tokens`；显式传入 `temperature` 会得到 `UNSUPPORTED_CAPABILITY`。多轮工具调用协议要求的 `reasoning_content` 会以带来源信息的 `ThinkingContent` 保留在内存上下文中，仅允许回传给产生它的同一 Provider、API 与模型；它既不是用户可见文本，也不会产生 `text.delta`、记录日志或跨 Provider 发送。
+K3 通过同一个 `openai-completions` Adapter 和模型级 `compat` 配置接入。它使用顶层 `reasoning_effort`，并将 `maxTokens` 映射为 `max_completion_tokens`；显式传入 `temperature` 会抛出普通 `Error`。多轮工具调用协议要求的 `reasoning_content` 会以带来源信息的 `ThinkingContent` 保留在内存上下文中，仅允许回传给产生它的同一 Provider、API 与模型；它既不是用户可见文本，也不会产生 `text.delta`、记录日志或跨 Provider 发送。
 
 ## Provider 配置
 
@@ -284,7 +277,7 @@ K3 通过同一个 `openai-completions` Adapter 和模型级 `compat` 配置接�
 }
 ```
 
-临时测试可使用 `apiKey`，但 `apiKey` 与 `apiKeyEnv` 必须二选一。配置加载时环境变量不存在会报告 `CONFIGURATION`。
+临时测试可使用 `apiKey`，但 `apiKey` 与 `apiKeyEnv` 必须二选一。配置加载时环境变量不存在会抛出普通 `Error`。
 
 ## 扩展协议
 
@@ -305,7 +298,6 @@ src/contracts/
   options.ts    # Options 与结构化输出
   response.ts   # 标准响应与用量
   events.ts     # 标准流事件
-  errors.ts     # 稳定错误码
 src/thinking.ts # ThinkingLevel 能力、回退和解析
 src/adapters/   # Provider 协议翻译
 ```

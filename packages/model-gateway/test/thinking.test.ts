@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   clampThinkingLevel,
   getSupportedThinkingLevels,
-  isModelGatewayError,
   type Model,
 } from '../src/index.js';
 import { resolveThinking } from '../src/thinking.js';
@@ -65,11 +64,8 @@ describe('ThinkingLevel', () => {
     ).toBe('medium');
   });
   it('rejects reasoning requests for models without the capability', () => {
-    try {
-      resolveThinking({ ...model, reasoning: false }, { reasoning: 'high' });
-      throw new Error('Expected reasoning validation to fail.');
-    } catch (error) {
-      expect(isModelGatewayError(error, 'UNSUPPORTED_CAPABILITY')).toBe(true);
-    }
+    expect(() => resolveThinking({ ...model, reasoning: false }, { reasoning: 'high' })).toThrow(
+      'does not support reasoning',
+    );
   });
 });

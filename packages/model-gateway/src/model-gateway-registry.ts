@@ -2,7 +2,6 @@ import {
   type Context,
   type Model,
   type ModelEventStream,
-  ModelGatewayError,
   type Options,
   validateContext,
   validateModel,
@@ -31,10 +30,7 @@ class Registry implements ModelGateway {
     for (const provider of this.providers.values())
       for (const model of provider.models)
         if (!this.adapters.has(model.api))
-          throw new ModelGatewayError(
-            'CONFIGURATION',
-            `No model adapter is registered for API "${model.api}".`,
-          );
+          throw new Error(`No model adapter is registered for API "${model.api}".`);
   }
 
   getProviders() {
@@ -59,22 +55,13 @@ class Registry implements ModelGateway {
     const options = validateOptions(rawOptions);
     const provider = this.providers.get(modelInput.provider);
     if (!provider)
-      throw new ModelGatewayError(
-        'CONFIGURATION',
-        `Unknown model provider: ${modelInput.provider}`,
-      );
+      throw new Error(`Unknown model provider: ${modelInput.provider}`);
     const model = this.getModel(provider.id, modelInput.id);
     if (!model || model.api !== modelInput.api || model.baseUrl !== modelInput.baseUrl)
-      throw new ModelGatewayError(
-        'CONFIGURATION',
-        'Request model is not registered for its provider.',
-      );
+      throw new Error('Request model is not registered for its provider.');
     const adapter = this.adapters.get(model.api);
     if (!adapter)
-      throw new ModelGatewayError(
-        'CONFIGURATION',
-        `No model adapter is registered for API "${model.api}".`,
-      );
+      throw new Error(`No model adapter is registered for API "${model.api}".`);
     return adapter.stream(model, context, resolveThinking(model, options), provider);
   }
   

@@ -5,11 +5,9 @@ import {
   type FinishReason,
   type Model,
   type ModelEventStream,
-  ModelGatewayError,
   type TextContent,
   type ThinkingContent,
   type ThinkingSignature,
-  toModelGatewayError,
   type Usage,
   type AssistantMessage,
 } from '../contracts/index.js';
@@ -77,16 +75,21 @@ function defaultClient(provider: ResolvedProvider, baseUrl: string): OpenAiCompl
     },
   };
 }
-function providerError(error: unknown): ModelGatewayError {
-  if (error instanceof ModelGatewayError) return error;
+function formatProviderError(error: unknown): string {
   const record = asRecord(error);
   if (error instanceof AuthenticationError || record?.status === 401 || record?.status === 403)
-    return new ModelGatewayError('AUTHENTICATION', 'Model provider authentication failed.');
+    return 'Model provider authentication failed.';
   if (error instanceof RateLimitError || record?.status === 429)
-    return new ModelGatewayError('RATE_LIMITED', 'Model provider rate limit exceeded.');
-  if (error instanceof APIConnectionTimeoutError || record?.name === 'AbortError')
-    return new ModelGatewayError('TIMEOUT', 'Model provider request timed out.');
-  return toModelGatewayError(error);
+    return 'Model provider rate limit exceeded.';
+  if (error instanceof APIConnectionTimeoutError || record?.name === 'APIConnectionTimeoutError')
+    return 'Model provider request timed out.';
+  if (error instanceof Error && error.message.length > 0)
+    return error.message;
+  return 'Model provider request failed.';
+}
+function isAbortError(error: unknown): boolean {
+  const record = asRecord(error);
+  return record?.name === 'AbortError' || record?.code === 'ABORT_ERR';
 }
 function usage(value: unknown): Usage | undefined {
   const item = asRecord(value);
@@ -103,7 +106,7 @@ function usage(value: unknown): Usage | undefined {
     totalTokens: item.total_tokens,
   };
 }
-function finish(value: string): Exclude<FinishReason, 'pending'> {
+function finish(value: string): Exclude<FinishReason, 'pending' | 'error' | 'aborted'> {
   switch (value) {
     case 'stop':
       return 'stop';
@@ -119,10 +122,7 @@ function finish(value: string): Exclude<FinishReason, 'pending'> {
       return 'refusal';
 
     default:
-      throw new ModelGatewayError(
-        'INVALID_RESPONSE',
-        `Unknown provider finish reason: ${value}`,
-      );
+      throw new Error(`Unknown provider finish reason: ${value}`);
   }
 }
 
@@ -151,6 +151,8 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
     options: ResolvedOptions,
     provider: ResolvedProvider,
   ): ModelEventStream {
+    if (options.temperature !== undefined && model.compat?.supportsTemperature === false)
+      throw new Error(`Model ${model.provider}/${model.id} does not support temperature.`);
 
     return createModelEventStream(async (controller) => {
       type StreamingBlock = TextContent | ThinkingContent;
@@ -158,7 +160,7 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
       let textBlock: TextContent | undefined;
       let thinkingBlock: ThinkingContent | undefined;
       let responseId: string | undefined;
-      let finalReason: Exclude<FinishReason, 'pending'> | undefined;
+      let finalReason: Exclude<FinishReason, 'pending' | 'error' | 'aborted'> | undefined;
       let rawFinishReason: string | undefined;
       let finalUsage: Usage | undefined;
       const calls = new Map<number, { id?: string; name?: string; arguments: string }>();
@@ -201,6 +203,17 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
               }),
         };
       };
+
+      /** 将当前 Adapter 状态封装成模型失败终止消息。
+       * @param error Provider 或响应解析阶段捕获的异常。
+       * @param aborted 是否由调用方 AbortSignal 主动终止。
+       * @returns 保留已有输出并带有终止原因的 assistant 消息。
+       */
+      const createFailureMessage = (error: unknown, aborted: boolean): AssistantMessage => ({
+        ...createPartial(),
+        finishReason: aborted ? 'aborted' : 'error',
+        errorMessage: formatProviderError(error),
+      });
 
       /** 确保文本内容块存在并返回其当前值。
        * @returns 当前累计文本内容块。
@@ -256,14 +269,7 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
                 }),
             ...(options.temperature === undefined
               ? {}
-              : model.compat?.supportsTemperature === false
-                ? (() => {
-                    throw new ModelGatewayError(
-                      'UNSUPPORTED_CAPABILITY',
-                      `Model ${model.provider}/${model.id} does not support temperature.`,
-                    );
-                  })()
-                : { temperature: options.temperature }),
+              : { temperature: options.temperature }),
             ...(options.maxTokens === undefined
               ? {}
               : model.compat?.maxTokensField === 'max_completion_tokens'
@@ -340,16 +346,10 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
             }
         }
         if (finalReason === undefined)
-          throw new ModelGatewayError(
-            'INVALID_RESPONSE',
-            'Model provider stream ended without a finish reason.',
-          );
+          throw new Error('Model provider stream ended without a finish reason.');
         const toolCalls = [...calls.entries()].map(([index, call]) => {
           if (!call.id || !call.name)
-            throw new ModelGatewayError(
-              'INVALID_TOOL_CALL',
-              'OpenAI tool call stream ended before name or ID.',
-            );
+            throw new Error('OpenAI tool call stream ended before name or ID.');
           const toolCall = parseOpenAiCompletionsToolCall(context.tools, {
             id: call.id,
             function: { name: call.name, arguments: call.arguments },
@@ -364,10 +364,7 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
           return toolCall;
         });
         if (blocks.length === 0 && toolCalls.length === 0)
-          throw new ModelGatewayError(
-            'INVALID_RESPONSE',
-            'Model provider returned no text or tool call.',
-          );
+          throw new Error('Model provider returned no text or tool call.');
         
         const response: AssistantMessage = {
           role: 'assistant',
@@ -391,7 +388,8 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
         };
         controller.complete(response);
       } catch (error) {
-        controller.fail(providerError(error));
+        const aborted = options.signal?.aborted === true || isAbortError(error);
+        controller.error(createFailureMessage(error, aborted));
       }
     });
   }

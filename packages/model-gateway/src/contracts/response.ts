@@ -15,7 +15,15 @@ export const usageSchema = z
   })
   .strict();
 
-export const finishReasonSchema = z.enum(['pending', 'stop', 'tool_calls', 'length', 'refusal']);
+export const finishReasonSchema = z.enum([
+  'pending',
+  'stop',
+  'tool_calls',
+  'length',
+  'refusal',
+  'error',
+  'aborted',
+]);
 export type FinishReason = z.infer<typeof finishReasonSchema>;
 
 export interface ReasoningDecision {

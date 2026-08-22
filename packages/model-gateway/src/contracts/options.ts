@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { jsonObjectSchema, toolNameSchema } from './context.js';
-import { ModelGatewayError } from './errors.js';
 import { thinkingLevelSchema, type ThinkingLevel } from './model.js';
 
 export interface ResponseFormat {
@@ -33,6 +32,6 @@ export const optionsSchema = z
 export function validateOptions(options: Options | undefined): Options {
   const { signal, ...plain } = options ?? {};
   const parsed = optionsSchema.safeParse(plain);
-  if (!parsed.success) throw new ModelGatewayError('INVALID_INPUT', 'Invalid model options.', parsed.error);
+  if (!parsed.success) throw new Error('Invalid model options.', { cause: parsed.error });
   return signal === undefined ? parsed.data : { ...parsed.data, signal };
 }

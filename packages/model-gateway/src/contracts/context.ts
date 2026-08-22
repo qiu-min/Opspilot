@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { ModelGatewayError } from './errors.js';
 import { finishReasonSchema, usageSchema, type FinishReason, type ReasoningDecision, type Usage } from './response.js';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
@@ -113,6 +112,7 @@ export interface AssistantMessage {
   readonly content: readonly AssistantContent[];
   readonly toolCalls?: readonly ModelToolCall[];
   readonly finishReason: FinishReason;
+  readonly errorMessage?: string;
   readonly rawFinishReason?: string;
   readonly usage?: Usage;
   readonly responseId?: string;
@@ -145,6 +145,7 @@ export const messageSchema = z.discriminatedUnion('role', [
       content: z.array(z.union([textContentSchema, thinkingContentSchema])).max(100),
       toolCalls: z.array(modelToolCallSchema).max(128).optional(),
       finishReason: finishReasonSchema,
+      errorMessage: z.string().max(100_000).optional(),
       rawFinishReason: z.string().max(200).optional(),
       usage: usageSchema.optional(),
       responseId: z.string().trim().min(1).max(200).optional(),
@@ -190,7 +191,7 @@ export const contextSchema = z
 export function validateContext(value: unknown): Context {
   const parsed = contextSchema.safeParse(value);
   if (!parsed.success)
-    throw new ModelGatewayError('INVALID_INPUT', 'Invalid model context.', parsed.error);
+    throw new Error('Invalid model context.', { cause: parsed.error });
   return parsed.data;
 }
 
@@ -200,11 +201,8 @@ export function validateModelToolCall(
 ): ModelToolCall {
   const parsed = modelToolCallSchema.safeParse(call);
   if (!parsed.success)
-    throw new ModelGatewayError('INVALID_TOOL_CALL', 'Invalid model tool call.', parsed.error);
+    throw new Error('Invalid model tool call.', { cause: parsed.error });
   if (!(tools ?? []).some((tool) => tool.name === parsed.data.name))
-    throw new ModelGatewayError(
-      'INVALID_TOOL_CALL',
-      'Model called a tool that was not declared in the context.',
-    );
+    throw new Error('Model called a tool that was not declared in the context.');
   return parsed.data;
 }

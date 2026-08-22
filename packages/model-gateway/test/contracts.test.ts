@@ -3,8 +3,6 @@ import {
   contextSchema,
   createModelEventStream,
   finishReasonSchema,
-  isModelGatewayError,
-  ModelGatewayError,
   modelSchema,
   optionsSchema,
   validateContext,
@@ -38,7 +36,8 @@ const context = {
 describe('model gateway contracts', () => {
   it('accepts pending only for an in-flight assistant message', () => {
     expect(finishReasonSchema.safeParse('pending').success).toBe(true);
-    expect(finishReasonSchema.safeParse('aborted').success).toBe(false);
+    expect(finishReasonSchema.safeParse('error').success).toBe(true);
+    expect(finishReasonSchema.safeParse('aborted').success).toBe(true);
   });
 
   it('validates Model, Context, and Options independently', () => {
@@ -141,13 +140,72 @@ describe('model gateway contracts', () => {
     expect(events.map((event) => event.type)).toEqual(['start', 'text.delta', 'done']);
   });
 
-  it('terminates failures with a stable error event', async () => {
-    const stream = createModelEventStream(async (controller) =>
-      controller.fail(new ModelGatewayError('TIMEOUT', 'Timed out.')),
-    );
+  it('resolves an error terminal message and emits the matching error event', async () => {
+    const errorMessage = {
+      role: 'assistant' as const,
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      content: [],
+      finishReason: 'error' as const,
+      errorMessage: 'Timed out.',
+    };
+    const stream = createModelEventStream(async (controller) => controller.error(errorMessage));
     const events = [];
     for await (const event of stream) events.push(event);
-    await expect(stream.result()).rejects.toMatchObject({ code: 'TIMEOUT' });
-    expect(isModelGatewayError((events.at(-1) as { error: unknown }).error, 'TIMEOUT')).toBe(true);
+    await expect(stream.result()).resolves.toBe(errorMessage);
+    expect(events.at(-1)).toEqual({
+      type: 'error',
+      reason: 'error',
+      error: errorMessage,
+    });
+  });
+
+  it('resolves an aborted terminal message', async () => {
+    const abortedMessage = {
+      role: 'assistant' as const,
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      content: [],
+      finishReason: 'aborted' as const,
+      errorMessage: 'Request aborted.',
+    };
+    const stream = createModelEventStream(async (controller) => controller.error(abortedMessage));
+    const events = [];
+    for await (const event of stream) events.push(event);
+    await expect(stream.result()).resolves.toBe(abortedMessage);
+    expect(events.at(-1)).toMatchObject({ reason: 'aborted', error: abortedMessage });
+  });
+
+  it('keeps the terminal protocol single-shot', async () => {
+    const success = {
+      role: 'assistant' as const,
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      content: [],
+      finishReason: 'stop' as const,
+    };
+    const failure = { ...success, finishReason: 'error' as const, errorMessage: 'failed' };
+    const stream = createModelEventStream(async (controller) => {
+      controller.complete(success);
+      controller.error(failure);
+    });
+    const events = [];
+    for await (const event of stream) events.push(event);
+    expect(events.map((event) => event.type)).toEqual(['done']);
+    await expect(stream.result()).resolves.toBe(success);
+  });
+
+  it('rejects an unexpected producer exception without inventing an error message', async () => {
+    const failure = new Error('programmer failure');
+    const stream = createModelEventStream(async () => {
+      throw failure;
+    });
+    const events = [];
+    for await (const event of stream) events.push(event);
+    expect(events).toEqual([]);
+    await expect(stream.result()).rejects.toBe(failure);
   });
 });

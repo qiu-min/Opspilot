@@ -2,7 +2,6 @@ import {
   type Context,
   type Model,
   type ModelToolCall,
-  ModelGatewayError,
   type Tool,
   type TextContent,
   type ThinkingContent,
@@ -104,16 +103,12 @@ export function parseOpenAiCompletionsToolCall(
     typeof functionValue?.name !== 'string' ||
     typeof functionValue?.arguments !== 'string'
   )
-    throw new ModelGatewayError('INVALID_TOOL_CALL', 'Invalid OpenAI Chat Completions tool call.');
+    throw new Error('Invalid OpenAI Chat Completions tool call.');
   let argumentsValue: unknown;
   try {
     argumentsValue = JSON.parse(functionValue.arguments);
   } catch (error) {
-    throw new ModelGatewayError(
-      'INVALID_TOOL_CALL',
-      'OpenAI tool arguments must be valid JSON.',
-      error,
-    );
+    throw new Error('OpenAI tool arguments must be valid JSON.', { cause: error });
   }
   return validateModelToolCall(tools, {
     callId: record.id,
