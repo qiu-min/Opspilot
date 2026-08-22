@@ -198,7 +198,7 @@ export class Agent {
     };
   }
 
-  /** 启动一次 prompt run，并在成功后提交本次新增消息。
+  /** 启动一次 prompt run，并返回本次新增消息。
    * @param prompts 已归一化的本次运行消息列表。
    * @returns 本次运行新增的完整消息列表。
    */
@@ -222,7 +222,6 @@ export class Agent {
         signal,
       );
 
-      this._state.messages.push(...newMessages);
       return newMessages;
     });
   }
@@ -280,6 +279,7 @@ export class Agent {
         }
         break;
       case 'message_end':
+        this._state.messages.push(event.message);
         if (event.message.role === 'assistant') this._state.streamingText = undefined;
         break;
       case 'tool_execution_start':

@@ -284,7 +284,7 @@ describe('Agent', () => {
     await expect(agent.prompt(userMessage('retry prompt'))).resolves.toHaveLength(2);
   });
 
-  it('does not commit partial messages when a run fails', async () => {
+  it('preserves completed messages when a run fails', async () => {
     const history = [userMessage('history')];
     const failure = new ModelGatewayError('PROVIDER_FAILURE', 'tool failed');
     const agent = new Agent({
@@ -298,7 +298,7 @@ describe('Agent', () => {
 
     await expect(agent.prompt(userMessage('new prompt'))).rejects.toBe(failure);
 
-    expect(agent.state.messages).toEqual(history);
+    expect(agent.state.messages).toEqual([...history, userMessage('new prompt')]);
   });
 
   it('resets messages but keeps configuration and rejects reset while running', async () => {

@@ -235,6 +235,8 @@ describe('runAgentLoop tool loop', () => {
       'message_end',
       'tool_execution_start',
       'tool_execution_end',
+      'message_start',
+      'message_end',
       'turn_end',
       'turn_start',
       'message_start',
@@ -244,8 +246,10 @@ describe('runAgentLoop tool loop', () => {
     ]);
     expect(events[6]).toEqual({ type: 'tool_execution_start', toolCall: call });
     expect(events[7]).toEqual({ type: 'tool_execution_end', toolCall: call, result: toolResult });
-    expect(events[8]).toEqual({ type: 'turn_end', message: assistant1, toolResults: [toolResult] });
-    expect(events[9]).toEqual({ type: 'turn_start' });
+    expect(events[8]).toEqual({ type: 'message_start', message: toolResult });
+    expect(events[9]).toEqual({ type: 'message_end', message: toolResult });
+    expect(events[10]).toEqual({ type: 'turn_end', message: assistant1, toolResults: [toolResult] });
+    expect(events[11]).toEqual({ type: 'turn_start' });
   });
 
   it('stops after a complete tool turn when policy requests it', async () => {
@@ -288,9 +292,11 @@ describe('runAgentLoop tool loop', () => {
     ]);
     expect(hookContext?.newMessages).toBe(result);
     expect(hookContext?.newMessages).toEqual([prompt, assistant, toolResult]);
-    expect(events.map((event) => event.type).slice(-4)).toEqual([
+    expect(events.map((event) => event.type).slice(-6)).toEqual([
       'tool_execution_start',
       'tool_execution_end',
+      'message_start',
+      'message_end',
       'turn_end',
       'agent_end',
     ]);
@@ -327,16 +333,20 @@ describe('runAgentLoop tool loop', () => {
 
     expect(execute1).toHaveBeenCalledTimes(1);
     expect(execute2).toHaveBeenCalledTimes(1);
-    expect(events.slice(6, 12).map((event) => event.type)).toEqual([
+    expect(events.slice(6, 14).map((event) => event.type)).toEqual([
       'tool_execution_start',
       'tool_execution_end',
+      'message_start',
+      'message_end',
       'tool_execution_start',
       'tool_execution_end',
-      'turn_end',
-      'turn_start',
+      'message_start',
+      'message_end',
     ]);
     expect(events[6]).toEqual({ type: 'tool_execution_start', toolCall: call1 });
-    expect(events[8]).toEqual({ type: 'tool_execution_start', toolCall: call2 });
+    expect(events[8]).toEqual({ type: 'message_start', message: expect.any(Object) });
+    expect(events[10]).toEqual({ type: 'tool_execution_start', toolCall: call2 });
+    expect(events[12]).toEqual({ type: 'message_start', message: expect.any(Object) });
   });
 
   it('does not execute tools when finishReason is length', async () => {

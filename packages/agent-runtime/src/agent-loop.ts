@@ -111,6 +111,8 @@ async function runLoop(
           toolResults.push(result);
           currentContext.messages.push(result);
           newMessages.push(result);
+          await emit({ type: 'message_start', message: result });
+          await emit({ type: 'message_end', message: result });
         }
       }
 

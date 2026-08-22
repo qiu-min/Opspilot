@@ -102,6 +102,17 @@ function textTool(name: string, text: string): AgentTool {
   };
 }
 
+/** 创建一个可由测试主动完成的异步通知。
+ * @returns 包含等待 Promise 和完成函数的 deferred 对象。
+ */
+function createDeferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
+  let resolvePromise!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: resolvePromise };
+}
+
 describe('Agent real-time state', () => {
   it('initializes the mutable state from Agent options', () => {
     const history = [userMessage('history')];
@@ -149,6 +160,30 @@ describe('Agent real-time state', () => {
     expect(agent.state.streamingText).toBeUndefined();
   });
 
+  it('commits the prompt message before the model run completes', async () => {
+    const prompt = userMessage('blocked prompt');
+    const started = createDeferred();
+    const release = createDeferred();
+    const agent = new Agent({
+      model,
+      streamFn: () =>
+        createModelEventStream(async (controller) => {
+          controller.emit({ type: 'start', model });
+          started.resolve();
+          await release.promise;
+          controller.complete(assistantMessage());
+        }),
+    });
+
+    const run = agent.prompt(prompt);
+    await started.promise;
+
+    expect(agent.state.messages).toEqual([prompt]);
+
+    release.resolve();
+    await run;
+  });
+
   it('updates pendingToolCalls before tool listeners and removes them on completion', async () => {
     const call: ModelToolCall = {
       callId: 'call_1',
@@ -178,7 +213,7 @@ describe('Agent real-time state', () => {
     expect(agent.state.pendingToolCalls).toEqual([]);
   });
 
-  it('keeps messages uncommitted during events and commits them only after success', async () => {
+  it('commits completed messages during the run without duplicating them', async () => {
     const history = userMessage('history');
     const prompt = userMessage('initial');
     const call: ModelToolCall = {
@@ -198,22 +233,25 @@ describe('Agent real-time state', () => {
     });
 
     agent.subscribe((event) => {
-      if (
-        (event.type === 'message_end' && event.message === assistant1) ||
-        event.type === 'tool_execution_end'
-      ) {
+      if (event.type === 'message_end' && event.message === assistant1) {
+        messagesDuringRun.push([...agent.state.messages]);
+      }
+      if (event.type === 'message_end' && event.message.role === 'tool') {
         messagesDuringRun.push([...agent.state.messages]);
       }
     });
 
     const result = await agent.prompt(prompt);
 
-    expect(messagesDuringRun).toEqual([[history], [history]]);
+    expect(messagesDuringRun).toEqual([
+      [history, prompt, assistant1],
+      [history, prompt, assistant1, result[2]],
+    ]);
     expect(result).toHaveLength(4);
     expect(agent.state.messages).toEqual([history, ...result]);
   });
 
-  it('does not commit messages and clears transient state when a run fails', async () => {
+  it('preserves completed messages and clears transient state when a run fails', async () => {
     const history = userMessage('history');
     const failure = new ModelGatewayError('PROVIDER_FAILURE', 'model failed');
     const agent = new Agent({
@@ -227,9 +265,10 @@ describe('Agent real-time state', () => {
         }),
     });
 
-    await expect(agent.prompt(userMessage('failed'))).rejects.toBe(failure);
+    const prompt = userMessage('failed');
+    await expect(agent.prompt(prompt)).rejects.toBe(failure);
 
-    expect(agent.state.messages).toEqual([history]);
+    expect(agent.state.messages).toEqual([history, prompt]);
     expect(agent.state.isRunning).toBe(false);
     expect(agent.state.streamingText).toBeUndefined();
     expect(agent.state.pendingToolCalls).toEqual([]);
@@ -277,7 +316,7 @@ describe('Agent real-time state', () => {
         (snapshot.tools as AgentTool[]).length = 0;
         (snapshot.pendingToolCalls as ModelToolCall[]).length = 0;
 
-        expect(agent.state.messages).toEqual([]);
+        expect(agent.state.messages).toEqual([userMessage('initial'), assistant1]);
         expect(agent.state.tools).toEqual([tool]);
         expect(agent.state.pendingToolCalls).toEqual([call]);
       }

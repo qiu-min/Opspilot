@@ -148,7 +148,7 @@ describe('Agent run lifecycle', () => {
     expect(agent.signal).toBeUndefined();
   });
 
-  it('propagates model errors and cleans lifecycle without committing messages', async () => {
+  it('propagates model errors and preserves the completed prompt message', async () => {
     const history = userMessage('history');
     const failure = new ModelGatewayError('PROVIDER_FAILURE', 'model failed');
     const agent = new Agent({
@@ -163,28 +163,29 @@ describe('Agent run lifecycle', () => {
 
     await expect(agent.prompt(userMessage('failed'))).rejects.toBe(failure);
 
-    expect(agent.state.messages).toEqual([history]);
+    expect(agent.state.messages).toEqual([history, userMessage('failed')]);
     expect(agent.state.isRunning).toBe(false);
     expect(agent.state.streamingText).toBeUndefined();
     expect(agent.state.pendingToolCalls).toEqual([]);
     expect(agent.signal).toBeUndefined();
   });
 
-  it('cleans lifecycle when a listener rejects without committing messages', async () => {
+  it('cleans lifecycle when a listener rejects after the prompt message commits', async () => {
     const history = userMessage('history');
     const failure = new Error('listener failed');
+    const prompt = userMessage('listener failure');
     const agent = new Agent({
       model,
       messages: [history],
       streamFn: sequentialStreamFn([assistantStream(assistantMessage())]),
     });
-    agent.subscribe(() => {
-      throw failure;
+    agent.subscribe((event) => {
+      if (event.type === 'message_end' && event.message === prompt) throw failure;
     });
 
-    await expect(agent.prompt(userMessage('listener failure'))).rejects.toBe(failure);
+    await expect(agent.prompt(prompt)).rejects.toBe(failure);
 
-    expect(agent.state.messages).toEqual([history]);
+    expect(agent.state.messages).toEqual([history, userMessage('listener failure')]);
     expect(agent.state.isRunning).toBe(false);
     expect(agent.state.streamingText).toBeUndefined();
     expect(agent.state.pendingToolCalls).toEqual([]);
