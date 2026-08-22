@@ -15,11 +15,10 @@ export const usageSchema = z
   })
   .strict();
 
-export const finishReasonSchema = z.enum(['stop', 'tool_calls', 'length', 'refusal']);
+export const finishReasonSchema = z.enum(['pending', 'stop', 'tool_calls', 'length', 'refusal']);
 export type FinishReason = z.infer<typeof finishReasonSchema>;
 
 export interface ReasoningDecision {
   readonly requested: ThinkingLevel;
   readonly selected: ModelThinkingLevel;
 }
-

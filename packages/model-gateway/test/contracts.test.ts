@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   contextSchema,
   createModelEventStream,
+  finishReasonSchema,
   isModelGatewayError,
   ModelGatewayError,
   modelSchema,
@@ -35,6 +36,11 @@ const context = {
 };
 
 describe('model gateway contracts', () => {
+  it('accepts pending only for an in-flight assistant message', () => {
+    expect(finishReasonSchema.safeParse('pending').success).toBe(true);
+    expect(finishReasonSchema.safeParse('aborted').success).toBe(false);
+  });
+
   it('validates Model, Context, and Options independently', () => {
     expect(modelSchema.safeParse(model).success).toBe(true);
     expect(contextSchema.safeParse(context).success).toBe(true);
@@ -104,8 +110,21 @@ describe('model gateway contracts', () => {
 
   it('emits exactly one terminal event and resolves the matching result', async () => {
     const stream = createModelEventStream(async (controller) => {
-      controller.emit({ type: 'start', model });
-      controller.emit({ type: 'text.delta', contentIndex: 0, delta: 'hello' });
+      const partial = {
+        role: 'assistant' as const,
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        content: [],
+        finishReason: 'pending' as const,
+      };
+      controller.emit({ type: 'start', model, partial });
+      controller.emit({
+        type: 'text.delta',
+        contentIndex: 0,
+        delta: 'hello',
+        partial: { ...partial, content: [{ type: 'text' as const, text: 'hello' }] },
+      });
       controller.complete({
         role: 'assistant',
         api: model.api,

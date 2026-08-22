@@ -120,6 +120,20 @@ describe('OpenAI Chat Completions adapter', () => {
       'tool-call.completed',
       'done',
     ]);
+    expect(received[0]).toMatchObject({
+      type: 'start',
+      partial: { finishReason: 'pending', content: [] },
+    });
+    expect(received.find((event) => event.type === 'text.delta')).toMatchObject({
+      partial: { content: [{ type: 'text', text: 'Checking ' }], finishReason: 'pending' },
+    });
+    const textDeltas = received.filter((event) => event.type === 'text.delta');
+    expect(textDeltas[0]?.partial.content[0]).toMatchObject({ text: 'Checking ' });
+    expect(textDeltas[1]?.partial.content[0]).toMatchObject({ text: 'Checking logs' });
+    expect(received.find((event) => event.type === 'usage')).toMatchObject({
+      partial: { usage: { inputTokens: 4, outputTokens: 2, totalTokens: 6 } },
+    });
+    expect(received.at(-1)).toMatchObject({ type: 'done', response: { finishReason: 'tool_calls' } });
     expect(endpoint).toBe('https://moonshot.example/v1');
     expect(requests[0]).toMatchObject({
       model: 'kimi',
@@ -261,9 +275,15 @@ describe('OpenAI Chat Completions adapter', () => {
         { type: 'text', text: 'answer' },
       ],
     });
-    expect(events.map((event) => event.type)).not.toContain('thinking.delta');
+    expect(events.map((event) => event.type)).toContain('thinking.delta');
     const response = await result.result();
     const textDelta = events.find((event) => event.type === 'text.delta');
+    const thinkingDeltas = events.filter((event) => event.type === 'thinking.delta');
+    expect(thinkingDeltas).toHaveLength(2);
+    expect(thinkingDeltas.at(-1)?.partial.content[0]).toMatchObject({
+      type: 'thinking',
+      thinking: 'first second',
+    });
     expect(textDelta).toMatchObject({
       contentIndex: response.content.findIndex((block) => block.type === 'text'),
     });
@@ -272,6 +292,65 @@ describe('OpenAI Chat Completions adapter', () => {
     expect(sent).not.toHaveProperty('max_tokens');
     expect(sent).not.toHaveProperty('reasoning');
     expect(sent).not.toHaveProperty('thinking');
+  });
+
+  it('publishes best-effort partial tool arguments while keeping the final call strict', async () => {
+    const adapter = new OpenAiCompletionsModelAdapter(() => ({
+      chat: {
+        completions: {
+          async create() {
+            return stream(
+              {
+                choices: [
+                  {
+                    delta: {
+                      tool_calls: [
+                        {
+                          index: 0,
+                          id: 'call_1',
+                          function: { name: 'query_logs', arguments: '{"service":"pay' },
+                        },
+                      ],
+                    },
+                    finish_reason: null,
+                  },
+                ],
+              },
+              {
+                choices: [
+                  {
+                    delta: { tool_calls: [{ index: 0, function: { arguments: 'ments"}' } }] },
+                    finish_reason: 'tool_calls',
+                  },
+                ],
+              },
+            );
+          },
+        },
+      },
+    }));
+    const events = [];
+    const result = adapter.stream(model, context, {}, provider);
+    for await (const event of result) events.push(event);
+
+    const partialDeltas = events.filter((event) => event.type === 'tool-call.delta');
+    expect(partialDeltas).toHaveLength(2);
+    expect(partialDeltas[0]).toMatchObject({
+      partial: { toolCalls: [{ callId: 'call_1', name: 'query_logs', arguments: { service: 'pay' } }] },
+    });
+    expect(partialDeltas[1]).toMatchObject({
+      partial: {
+        toolCalls: [{ callId: 'call_1', name: 'query_logs', arguments: { service: 'payments' } }],
+      },
+    });
+    const completed = events.find((event) => event.type === 'tool-call.completed');
+    expect(completed).toMatchObject({
+      partial: { toolCalls: [{ callId: 'call_1', name: 'query_logs', arguments: { service: 'payments' } }] },
+    });
+    await expect(result.result()).resolves.toMatchObject({
+      finishReason: 'tool_calls',
+      toolCalls: [{ callId: 'call_1', name: 'query_logs', arguments: { service: 'payments' } }],
+    });
   });
 
   it('replays K3 reasoning_content with tool calls and omits empty tool declarations', async () => {

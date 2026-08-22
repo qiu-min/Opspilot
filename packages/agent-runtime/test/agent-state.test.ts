@@ -60,9 +60,17 @@ function assistantMessage(
  */
 function assistantStream(message: AssistantMessage, deltas: readonly string[] = []): ModelEventStream {
   return createModelEventStream(async (controller) => {
-    controller.emit({ type: 'start', model });
+    const initial: AssistantMessage = { ...message, content: [], finishReason: 'pending' };
+    controller.emit({ type: 'start', model, partial: initial });
+    let text = '';
     for (const delta of deltas) {
-      controller.emit({ type: 'text.delta', contentIndex: 0, delta });
+      text += delta;
+      controller.emit({
+        type: 'text.delta',
+        contentIndex: 0,
+        delta,
+        partial: { ...initial, content: [{ type: 'text', text }] },
+      });
     }
     controller.complete(message);
   });
@@ -128,15 +136,15 @@ describe('Agent real-time state', () => {
     expect(agent.state.tools).toEqual([tool]);
     expect(agent.state.model).toBe(model);
     expect(agent.state.isRunning).toBe(false);
-    expect(agent.state.streamingText).toBeUndefined();
+    expect(agent.state.streamingMessage).toBeUndefined();
     expect(agent.state.pendingToolCalls).toEqual([]);
   });
 
-  it('updates streamingText before notifying listeners and clears it at assistant end', async () => {
+  it('updates streamingMessage before notifying listeners and clears it at assistant end', async () => {
     const assistant = assistantMessage();
-    const observedText: string[] = [];
+    const observedMessages: AgentMessage[] = [];
     let runningAtStart = false;
-    let textAtEnd: string | undefined;
+    let messageAtEnd: AgentMessage | undefined;
     const agent = new Agent({
       model,
       streamFn: sequentialStreamFn([assistantStream(assistant, ['hello', ' world'])]),
@@ -145,19 +153,106 @@ describe('Agent real-time state', () => {
     agent.subscribe((event) => {
       if (event.type === 'agent_start') runningAtStart = agent.state.isRunning;
       if (event.type === 'message_update' && event.event.type === 'text.delta') {
-        observedText.push(agent.state.streamingText ?? '');
+        observedMessages.push(agent.state.streamingMessage as AgentMessage);
       }
       if (event.type === 'message_end' && event.message === assistant) {
-        textAtEnd = agent.state.streamingText;
+        messageAtEnd = agent.state.streamingMessage;
       }
     });
 
     await agent.prompt(userMessage('initial'));
 
     expect(runningAtStart).toBe(true);
-    expect(observedText).toEqual(['hello', 'hello world']);
-    expect(textAtEnd).toBeUndefined();
-    expect(agent.state.streamingText).toBeUndefined();
+    expect(
+      observedMessages.map((message) => (message.role === 'assistant' ? message.content : undefined)),
+    ).toEqual([
+      [{ type: 'text', text: 'hello' }],
+      [{ type: 'text', text: 'hello world' }],
+    ]);
+    expect(messageAtEnd).toBeUndefined();
+    expect(agent.state.streamingMessage).toBeUndefined();
+  });
+
+  it('tracks cumulative thinking and partial tool calls as one streaming message', async () => {
+    const call: ModelToolCall = { callId: 'call_1', name: 'query_logs', arguments: { service: 'payments' } };
+    const startPartial = assistantMessage('pending');
+    const thinkingSource = {
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+    };
+    const firstThinking: AssistantMessage = {
+      ...startPartial,
+      content: [
+        {
+          type: 'thinking',
+          thinking: 'first ',
+          thinkingSignature: 'reasoning',
+          source: thinkingSource,
+        },
+      ],
+    };
+    const secondThinking: AssistantMessage = {
+      ...firstThinking,
+      content: [
+        {
+          type: 'thinking',
+          thinking: 'first second',
+          thinkingSignature: 'reasoning',
+          source: thinkingSource,
+        },
+      ],
+    };
+    const partialToolCall: AssistantMessage = {
+      ...secondThinking,
+      toolCalls: [{ callId: call.callId, name: call.name, arguments: { service: 'pay' } }],
+    };
+    const finalMessage = assistantMessage('stop', [call]);
+    const observed: AgentMessage[] = [];
+    const agent = new Agent({
+      model,
+      streamFn: () =>
+        createModelEventStream(async (controller) => {
+          controller.emit({ type: 'start', model, partial: startPartial });
+          controller.emit({
+            type: 'thinking.delta',
+            contentIndex: 0,
+            delta: 'first ',
+            partial: firstThinking,
+          });
+          controller.emit({
+            type: 'thinking.delta',
+            contentIndex: 0,
+            delta: 'second',
+            partial: secondThinking,
+          });
+          controller.emit({
+            type: 'tool-call.delta',
+            contentIndex: 1,
+            callId: call.callId,
+            delta: '{"service":"pay',
+            partial: partialToolCall,
+          });
+          controller.complete(finalMessage);
+        }),
+    });
+
+    agent.subscribe((event) => {
+      if (
+        (event.type === 'message_start' || event.type === 'message_update') &&
+        event.message.role === 'assistant'
+      )
+        observed.push(agent.state.streamingMessage as AgentMessage);
+    });
+
+    await agent.prompt(userMessage('initial'));
+
+    expect(observed[0]).toEqual(startPartial);
+    expect(observed[1]).toEqual(firstThinking);
+    expect(observed[2]).toEqual(secondThinking);
+    expect(observed[3]).toEqual(partialToolCall);
+    expect(agent.state.streamingMessage).toBeUndefined();
+    expect(agent.state.messages).toEqual([userMessage('initial'), finalMessage]);
   });
 
   it('commits the prompt message before the model run completes', async () => {
@@ -168,7 +263,7 @@ describe('Agent real-time state', () => {
       model,
       streamFn: () =>
         createModelEventStream(async (controller) => {
-          controller.emit({ type: 'start', model });
+          controller.emit({ type: 'start', model, partial: assistantMessage('pending') });
           started.resolve();
           await release.promise;
           controller.complete(assistantMessage());
@@ -259,8 +354,14 @@ describe('Agent real-time state', () => {
       messages: [history],
       streamFn: () =>
         createModelEventStream(async (controller) => {
-          controller.emit({ type: 'start', model });
-          controller.emit({ type: 'text.delta', contentIndex: 0, delta: 'partial' });
+          const partial = assistantMessage('pending');
+          controller.emit({ type: 'start', model, partial });
+          controller.emit({
+            type: 'text.delta',
+            contentIndex: 0,
+            delta: 'partial',
+            partial: { ...partial, content: [{ type: 'text', text: 'partial' }] },
+          });
           controller.fail(failure);
         }),
     });
@@ -270,7 +371,7 @@ describe('Agent real-time state', () => {
 
     expect(agent.state.messages).toEqual([history, prompt]);
     expect(agent.state.isRunning).toBe(false);
-    expect(agent.state.streamingText).toBeUndefined();
+    expect(agent.state.streamingMessage).toBeUndefined();
     expect(agent.state.pendingToolCalls).toEqual([]);
   });
 
@@ -289,7 +390,7 @@ describe('Agent real-time state', () => {
 
     expect(agent.state.messages).toEqual([]);
     expect(agent.hasQueuedMessages()).toBe(false);
-    expect(agent.state.streamingText).toBeUndefined();
+    expect(agent.state.streamingMessage).toBeUndefined();
     expect(agent.state.pendingToolCalls).toEqual([]);
     expect(agent.state.isRunning).toBe(false);
   });

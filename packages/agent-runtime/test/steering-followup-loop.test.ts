@@ -65,7 +65,11 @@ function assistantMessage(
  */
 function assistantStream(message: AssistantMessage): ModelEventStream {
   return createModelEventStream(async (controller) => {
-    controller.emit({ type: 'start', model });
+    controller.emit({
+      type: 'start',
+      model,
+      partial: { ...message, content: [], finishReason: 'pending' },
+    });
     controller.complete(message);
   });
 }
@@ -278,7 +282,10 @@ describe('steering and follow-up loop', () => {
     );
     expect(events[steeringStart - 1]).toEqual({ type: 'turn_start' });
     expect(steeringEnd).toBe(steeringStart + 1);
-    expect(events[steeringEnd + 1]).toEqual({ type: 'message_start' });
+    expect(events[steeringEnd + 1]).toMatchObject({
+      type: 'message_start',
+      message: { role: 'assistant', finishReason: 'pending' },
+    });
   });
 
   it('keeps multiple steering and follow-up messages FIFO in context and newMessages', async () => {

@@ -20,6 +20,7 @@ import {
   toOpenAiCompletionsMessages,
   toOpenAiCompletionsTools,
 } from './openai-completions-tools.js';
+import { parseStreamingJson } from '../utils/parse-streaming-json.js';
 import type { ModelAdapter } from './model-adapter.js';
 
 export interface OpenAiCompletionsRequest {
@@ -102,7 +103,7 @@ function usage(value: unknown): Usage | undefined {
     totalTokens: item.total_tokens,
   };
 }
-function finish(value: string): FinishReason {
+function finish(value: string): Exclude<FinishReason, 'pending'> {
   switch (value) {
     case 'stop':
       return 'stop';
@@ -152,7 +153,84 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
   ): ModelEventStream {
 
     return createModelEventStream(async (controller) => {
-      controller.emit({ type: 'start', model });
+      type StreamingBlock = TextContent | ThinkingContent;
+      const blocks: StreamingBlock[] = [];
+      let textBlock: TextContent | undefined;
+      let thinkingBlock: ThinkingContent | undefined;
+      let responseId: string | undefined;
+      let finalReason: Exclude<FinishReason, 'pending'> | undefined;
+      let rawFinishReason: string | undefined;
+      let finalUsage: Usage | undefined;
+      const calls = new Map<number, { id?: string; name?: string; arguments: string }>();
+      const completedCalls = new Map<number, NonNullable<AssistantMessage['toolCalls']>[number]>();
+
+      /** 创建当前 Provider 响应的独立半成品快照。
+       * @returns 包含累计内容、工具调用、用量和响应 ID 的 pending assistant 消息。
+       */
+      const createPartial = (): AssistantMessage => {
+        const content = blocks.map((block) =>
+          block.type === 'text' ? { ...block } : { ...block, source: { ...block.source } },
+        );
+        const toolCalls = [...calls.entries()]
+          .sort(([left], [right]) => left - right)
+          .filter(([, call]) => call.id !== undefined && call.name !== undefined)
+          .map(([index, call]) =>
+            completedCalls.get(index) ?? {
+              callId: call.id as string,
+              name: call.name as string,
+              arguments: parseStreamingJson(call.arguments),
+            },
+          );
+        return {
+          role: 'assistant',
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          content,
+          ...(toolCalls.length === 0 ? {} : { toolCalls }),
+          finishReason: 'pending',
+          ...(finalUsage === undefined ? {} : { usage: { ...finalUsage } }),
+          ...(responseId === undefined ? {} : { responseId }),
+          ...(options.resolvedReasoning === undefined
+            ? {}
+            : {
+                reasoning: {
+                  requested: options.resolvedReasoning.requested,
+                  selected: options.resolvedReasoning.selected,
+                },
+              }),
+        };
+      };
+
+      /** 确保文本内容块存在并返回其当前值。
+       * @returns 当前累计文本内容块。
+       */
+      const ensureTextBlock = (): TextContent => {
+        if (!textBlock) {
+          textBlock = { type: 'text', text: '' };
+          blocks.push(textBlock);
+        }
+        return textBlock;
+      };
+
+      /** 确保推理内容块存在并返回其当前值。
+       * @param thinkingSignature 当前 Provider 使用的推理字段标识。
+       * @returns 当前累计推理内容块。
+       */
+      const ensureThinkingBlock = (thinkingSignature: ThinkingSignature): ThinkingContent => {
+        if (!thinkingBlock) {
+          thinkingBlock = {
+            type: 'thinking',
+            thinking: '',
+            thinkingSignature,
+            source: { api: model.api, provider: model.provider, model: model.id },
+          };
+          blocks.push(thinkingBlock);
+        }
+        return thinkingBlock;
+      };
+
+      controller.emit({ type: 'start', model, partial: createPartial() });
       try {
         const client = this.clientFactory(provider, model.baseUrl);
         const stream = await client.chat.completions.create(
@@ -195,41 +273,13 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
           },
           { signal: options.signal },
         );
-        type StreamingBlock = TextContent | ThinkingContent;
-        const blocks: StreamingBlock[] = [];
-        let textBlock: TextContent | undefined;
-        let thinkingBlock: ThinkingContent | undefined;
-        const ensureTextBlock = (): TextContent => {
-          if (!textBlock) {
-            textBlock = { type: 'text', text: '' };
-            blocks.push(textBlock);
-          }
-          return textBlock;
-        };
-        const ensureThinkingBlock = (thinkingSignature: ThinkingSignature): ThinkingContent => {
-          if (!thinkingBlock) {
-            thinkingBlock = {
-              type: 'thinking',
-              thinking: '',
-              thinkingSignature,
-              source: { api: model.api, provider: model.provider, model: model.id },
-            };
-            blocks.push(thinkingBlock);
-          }
-          return thinkingBlock;
-        };
-        let responseId: string | undefined;
-        let finalReason: FinishReason | undefined;
-        let rawFinishReason: string | undefined;
-        let finalUsage: Usage | undefined;
-        const calls = new Map<number, { id?: string; name?: string; arguments: string }>();
         for await (const chunk of stream) {
           const record = asRecord(chunk);
           if (typeof record?.id === 'string') responseId = record.id;
           const chunkUsage = usage(record?.usage);
           if (chunkUsage) {
             finalUsage = chunkUsage;
-            controller.emit({ type: 'usage', usage: chunkUsage });
+            controller.emit({ type: 'usage', usage: chunkUsage, partial: createPartial() });
           }
           const choice = Array.isArray(record?.choices) ? asRecord(record.choices[0]) : undefined;
           if (!choice) continue;
@@ -246,6 +296,7 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
               type: 'text.delta',
               contentIndex: blocks.indexOf(textBlock),
               delta: delta.content,
+              partial: createPartial(),
             });
           }
           for (const field of ['reasoning_content', 'reasoning', 'reasoning_text']) {
@@ -255,6 +306,12 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
               const previous = ensureThinkingBlock(signature);
               thinkingBlock = { ...previous, thinking: previous.thinking + delta[field] };
               blocks[blocks.indexOf(previous)] = thinkingBlock;
+              controller.emit({
+                type: 'thinking.delta',
+                contentIndex: blocks.indexOf(thinkingBlock),
+                delta: delta[field],
+                partial: createPartial(),
+              });
               break;
             }
           }
@@ -268,15 +325,18 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
               if (typeof functionPart?.name === 'string') item.name = functionPart.name;
               if (typeof functionPart?.arguments === 'string') {
                 item.arguments += functionPart.arguments;
+                calls.set(part.index, item);
                 if (item.id)
                   controller.emit({
                     type: 'tool-call.delta',
                     contentIndex: part.index,
                     callId: item.id,
                     delta: functionPart.arguments,
+                    partial: createPartial(),
                   });
+              } else {
+                calls.set(part.index, item);
               }
-              calls.set(part.index, item);
             }
         }
         if (finalReason === undefined)
@@ -294,7 +354,13 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
             id: call.id,
             function: { name: call.name, arguments: call.arguments },
           });
-          controller.emit({ type: 'tool-call.completed', contentIndex: index, toolCall });
+          completedCalls.set(index, toolCall);
+          controller.emit({
+            type: 'tool-call.completed',
+            contentIndex: index,
+            toolCall,
+            partial: createPartial(),
+          });
           return toolCall;
         });
         if (blocks.length === 0 && toolCalls.length === 0)

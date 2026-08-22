@@ -77,7 +77,11 @@ function assistantStream(
   streamModel: Model = modelA,
 ): ModelEventStream {
   return createModelEventStream(async (controller) => {
-    controller.emit({ type: 'start', model: streamModel });
+    controller.emit({
+      type: 'start',
+      model: streamModel,
+      partial: { ...message, content: [], finishReason: 'pending' },
+    });
     controller.complete(message);
   });
 }

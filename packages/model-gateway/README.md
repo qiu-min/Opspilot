@@ -117,8 +117,10 @@ Provider 私有字段，例如 reasoning_effort、max_completion_tokens 和 Deep
 完整结果统一为 AssistantMessage，包含 content、toolCalls、finishReason、usage、responseId 和 reasoning 决策信息。结束原因统一为：
 
 ~~~ts
-type FinishReason = 'stop' | 'tool_calls' | 'length' | 'refusal';
+type FinishReason = 'pending' | 'stop' | 'tool_calls' | 'length' | 'refusal';
 ~~~
+
+`pending` 只表示流式生成中的 AssistantMessage；`ModelEventStream.result()` 返回的最终消息不会使用该值。
 
 Token 用量统一为 inputTokens、outputTokens 和 totalTokens。对应契约见 src/contracts/context.ts 与 src/contracts/response.ts。
 
@@ -128,20 +130,33 @@ Token 用量统一为 inputTokens、outputTokens 和 totalTokens。对应契约�
 
 ~~~ts
 type ModelStreamEvent =
-  | { type: 'start'; model: Model }
-  | { type: 'text.delta'; contentIndex: number; delta: string }
+  | { type: 'start'; model: Model; partial: AssistantMessage }
+  | {
+      type: 'text.delta';
+      contentIndex: number;
+      delta: string;
+      partial: AssistantMessage;
+    }
+  | {
+      type: 'thinking.delta';
+      contentIndex: number;
+      delta: string;
+      partial: AssistantMessage;
+    }
   | {
       type: 'tool-call.delta';
       contentIndex: number;
       callId: string;
       delta: string;
+      partial: AssistantMessage;
     }
   | {
       type: 'tool-call.completed';
       contentIndex: number;
       toolCall: ModelToolCall;
+      partial: AssistantMessage;
     }
-  | { type: 'usage'; usage: Usage }
+  | { type: 'usage'; usage: Usage; partial: AssistantMessage }
   | { type: 'done'; response: AssistantMessage }
   | { type: 'error'; error: ModelGatewayError };
 ~~~
@@ -150,7 +165,7 @@ type ModelStreamEvent =
 
 ~~~text
 start
-  → text.delta / tool-call.delta / usage
+  → text.delta / thinking.delta / tool-call.delta / usage
   → tool-call.completed（如果有工具调用）
   → done
 ~~~

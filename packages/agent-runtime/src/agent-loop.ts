@@ -5,7 +5,7 @@ import type {
   AgentMessage,
   StreamFn,
 } from './types.js';
-import type { Context, ToolResultMessage } from '@opspilot/model-gateway';
+import type { AssistantMessage, Context, ToolResultMessage } from '@opspilot/model-gateway';
 import { executeToolCall } from './tool-executor.js';
 import { defaultConvertToLlm } from './convert-to-llm.js';
 
@@ -95,7 +95,6 @@ async function runLoop(
         emit,
         signal,
       );
-      currentContext.messages.push(assistantMessage);
       newMessages.push(assistantMessage);
 
       const toolCalls = assistantMessage.toolCalls ?? [];
@@ -179,7 +178,7 @@ async function streamAssistantResponse(
   streamFn: StreamFn,
   emit: AgentEventSink,
   signal?: AbortSignal,
-) {
+): Promise<AssistantMessage> {
   const sourceMessages = context.messages;
   const transformedMessages = config.transformContext
     ? await config.transformContext(sourceMessages, signal)
@@ -192,19 +191,32 @@ async function streamAssistantResponse(
     tools: context.tools,
   };
   const stream = streamFn(config.model, llmContext, { signal });
+  let partialMessage: AssistantMessage | null = null;
+  let addedPartial = false;
 
   for await (const event of stream) {
     switch (event.type) {
       case 'start':
-        await emit({ type: 'message_start' });
+        partialMessage = event.partial;
+        context.messages.push(partialMessage);
+        addedPartial = true;
+        await emit({ type: 'message_start', message: { ...partialMessage } });
         break;
       case 'text.delta':
+      case 'thinking.delta':
       case 'tool-call.delta':
       case 'tool-call.completed':
       case 'usage':
-        await emit({ type: 'message_update', event });
+        partialMessage = event.partial;
+        if (addedPartial) context.messages[context.messages.length - 1] = partialMessage;
+        await emit({ type: 'message_update', event, message: partialMessage });
         break;
       case 'done':
+        if (addedPartial) context.messages[context.messages.length - 1] = event.response;
+        else {
+          context.messages.push(event.response);
+          await emit({ type: 'message_start', message: { ...event.response } });
+        }
         await emit({
           type: 'message_end',
           message: event.response,

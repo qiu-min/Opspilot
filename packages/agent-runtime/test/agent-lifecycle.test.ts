@@ -52,7 +52,11 @@ function assistantMessage(finishReason: FinishReason = 'stop'): AssistantMessage
  */
 function assistantStream(message: AssistantMessage): ModelEventStream {
   return createModelEventStream(async (controller) => {
-    controller.emit({ type: 'start', model });
+    controller.emit({
+      type: 'start',
+      model,
+      partial: { ...message, content: [], finishReason: 'pending' },
+    });
     controller.complete(message);
   });
 }
@@ -94,7 +98,11 @@ function blockingStream(
   release: { readonly promise: Promise<void> },
 ): ModelEventStream {
   return createModelEventStream(async (controller) => {
-    controller.emit({ type: 'start', model });
+    controller.emit({
+      type: 'start',
+      model,
+      partial: { ...message, content: [], finishReason: 'pending' },
+    });
     started.resolve();
     await release.promise;
     controller.complete(message);
@@ -131,7 +139,7 @@ describe('Agent run lifecycle', () => {
 
     expect(agent.state.isRunning).toBe(false);
     expect(agent.signal).toBeUndefined();
-    expect(agent.state.streamingText).toBeUndefined();
+    expect(agent.state.streamingMessage).toBeUndefined();
     expect(agent.state.pendingToolCalls).toEqual([]);
     expect(agent.state.messages).toEqual([prompt, assistant]);
   });
@@ -156,7 +164,7 @@ describe('Agent run lifecycle', () => {
       messages: [history],
       streamFn: () =>
         createModelEventStream(async (controller) => {
-          controller.emit({ type: 'start', model });
+          controller.emit({ type: 'start', model, partial: assistantMessage('pending') });
           controller.fail(failure);
         }),
     });
@@ -165,7 +173,7 @@ describe('Agent run lifecycle', () => {
 
     expect(agent.state.messages).toEqual([history, userMessage('failed')]);
     expect(agent.state.isRunning).toBe(false);
-    expect(agent.state.streamingText).toBeUndefined();
+    expect(agent.state.streamingMessage).toBeUndefined();
     expect(agent.state.pendingToolCalls).toEqual([]);
     expect(agent.signal).toBeUndefined();
   });
@@ -187,7 +195,7 @@ describe('Agent run lifecycle', () => {
 
     expect(agent.state.messages).toEqual([history, userMessage('listener failure')]);
     expect(agent.state.isRunning).toBe(false);
-    expect(agent.state.streamingText).toBeUndefined();
+    expect(agent.state.streamingMessage).toBeUndefined();
     expect(agent.state.pendingToolCalls).toEqual([]);
     expect(agent.signal).toBeUndefined();
   });
@@ -221,7 +229,7 @@ describe('Agent run lifecycle', () => {
       streamFn: (_model, _context, options) => {
         receivedSignal = options?.signal;
         return createModelEventStream(async (controller) => {
-          controller.emit({ type: 'start', model });
+          controller.emit({ type: 'start', model, partial: assistantMessage('pending') });
           started.resolve();
           await new Promise<void>((resolve) => {
             receivedSignal?.addEventListener('abort', () => resolve(), { once: true });

@@ -4,20 +4,33 @@ import type { Model } from './model.js';
 import type { Usage } from './response.js';
 
 export type ModelStreamEvent =
-  | { readonly type: 'start'; readonly model: Model }
-  | { readonly type: 'text.delta'; readonly contentIndex: number; readonly delta: string }
+  | { readonly type: 'start'; readonly model: Model; readonly partial: AssistantMessage }
+  | {
+      readonly type: 'text.delta';
+      readonly contentIndex: number;
+      readonly delta: string;
+      readonly partial: AssistantMessage;
+    }
+  | {
+      readonly type: 'thinking.delta';
+      readonly contentIndex: number;
+      readonly delta: string;
+      readonly partial: AssistantMessage;
+    }
   | {
       readonly type: 'tool-call.delta';
       readonly contentIndex: number;
       readonly callId: string;
       readonly delta: string;
+      readonly partial: AssistantMessage;
     }
   | {
       readonly type: 'tool-call.completed';
       readonly contentIndex: number;
       readonly toolCall: ModelToolCall;
+      readonly partial: AssistantMessage;
     }
-  | { readonly type: 'usage'; readonly usage: Usage }
+  | { readonly type: 'usage'; readonly usage: Usage; readonly partial: AssistantMessage }
   | { readonly type: 'done'; readonly response: AssistantMessage }
   | { readonly type: 'error'; readonly error: ModelGatewayError };
 

@@ -59,9 +59,15 @@ function assistantMessage(
  */
 function assistantStream(message: AssistantMessage, delta?: string): ModelEventStream {
   return createModelEventStream(async (controller) => {
-    controller.emit({ type: 'start', model });
+    const partial: AssistantMessage = { ...message, content: [], finishReason: 'pending' };
+    controller.emit({ type: 'start', model, partial });
     if (delta !== undefined) {
-      controller.emit({ type: 'text.delta', contentIndex: 0, delta });
+      controller.emit({
+        type: 'text.delta',
+        contentIndex: 0,
+        delta,
+        partial: { ...partial, content: [{ type: 'text', text: delta }] },
+      });
     }
     controller.complete(message);
   });
@@ -221,7 +227,7 @@ describe('Agent', () => {
       model,
       streamFn: (_model, _context, options) =>
         createModelEventStream(async (controller) => {
-          controller.emit({ type: 'start', model });
+          controller.emit({ type: 'start', model, partial: assistantMessage('pending') });
           markStarted?.();
           await new Promise<void>((resolve) => {
             release = resolve;
@@ -245,7 +251,7 @@ describe('Agent', () => {
       streamFn: (_model, _context, options) => {
         receivedSignal = options?.signal;
         return createModelEventStream(async (controller) => {
-          controller.emit({ type: 'start', model });
+          controller.emit({ type: 'start', model, partial: assistantMessage('pending') });
           await new Promise<void>((resolve) => {
             if (receivedSignal?.aborted) {
               resolve();
@@ -326,7 +332,7 @@ describe('Agent', () => {
       model,
       streamFn: () =>
         createModelEventStream(async (controller) => {
-          controller.emit({ type: 'start', model });
+          controller.emit({ type: 'start', model, partial: assistantMessage('pending') });
           markStarted?.();
           await new Promise<void>((resolve) => {
             release = resolve;

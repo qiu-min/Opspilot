@@ -8,7 +8,7 @@
 runAgentLoop
   → 初始化 currentContext / newMessages
   → runLoop
-      → 调用模型
+      → 调用模型并维护 streamingMessage
       → 顺序执行当前 Turn 的 ToolCall
       → 写入 ToolResult
       → turn_end
@@ -90,6 +90,8 @@ turn_end
 ```
 
 如果需要下一 Turn，则发送 `turn_start` 后重复模型调用；自然停止或策略停止后发送 `agent_end`。每个已正常完成的 Turn 恰好发送一次 `turn_end`，每次 Run 恰好发送一次 `agent_end`。
+
+模型流的 `partial` AssistantMessage 会映射为 `message_start` 和 `message_update` 的 `message`，并替换 `currentContext` 中唯一的工作消息；只有 `message_end` 的最终 AssistantMessage 才写入 Agent transcript。Agent 状态通过 `streamingMessage` 暴露当前完整半成品，不自行解析 text、thinking 或 tool-call 增量。
 
 ## 消息转换
 

@@ -89,8 +89,15 @@ function createAssistantMessage(
  */
 function createAssistantStream(message: AssistantMessage, delta?: string): ModelEventStream {
   return createModelEventStream(async (controller) => {
-    controller.emit({ type: 'start', model });
-    if (delta !== undefined) controller.emit({ type: 'text.delta', contentIndex: 0, delta });
+    const partial: AssistantMessage = { ...message, content: [], finishReason: 'pending' };
+    controller.emit({ type: 'start', model, partial });
+    if (delta !== undefined)
+      controller.emit({
+        type: 'text.delta',
+        contentIndex: 0,
+        delta,
+        partial: { ...partial, content: [{ type: 'text', text: delta }] },
+      });
     controller.complete(message);
   });
 }
@@ -436,7 +443,7 @@ describe('runAgentLoop tool loop', () => {
   it('propagates a model stream error without inventing agent_end', async () => {
     const error = new ModelGatewayError('TIMEOUT', 'Timed out.');
     const stream = createModelEventStream(async (controller) => {
-      controller.emit({ type: 'start', model });
+      controller.emit({ type: 'start', model, partial: createAssistantMessage('pending') });
       controller.fail(error);
     });
     const events: AgentEvent[] = [];

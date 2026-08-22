@@ -16,7 +16,7 @@ type MutableAgentState = {
   tools: AgentTool[];
   messages: AgentMessage[];
   isRunning: boolean;
-  streamingText?: string;
+  streamingMessage?: AgentMessage;
   pendingToolCalls: ModelToolCall[];
 };
 
@@ -56,7 +56,7 @@ export class Agent {
       tools: [...(options.tools ?? [])],
       messages: [...(options.messages ?? [])],
       isRunning: false,
-      streamingText: undefined,
+      streamingMessage: undefined,
       pendingToolCalls: [],
     };
   }
@@ -71,7 +71,7 @@ export class Agent {
       tools: [...this._state.tools],
       messages: [...this._state.messages],
       isRunning: this._state.isRunning,
-      streamingText: this._state.streamingText,
+      streamingMessage: this._state.streamingMessage,
       pendingToolCalls: [...this._state.pendingToolCalls],
     };
   }
@@ -87,7 +87,7 @@ export class Agent {
     };
   }
 
-  /** 执行一次 Agent Run，并在成功后提交本次新增消息。
+  /** 执行一次 Agent Run。
    * @param input 本次运行新增的一条或多条 AgentMessage。
    * @returns 本次运行新增的完整消息列表。
    */
@@ -160,7 +160,7 @@ export class Agent {
   reset(): void {
     if (this.activeRun) throw new Error('Cannot reset while Agent is running.');
     this._state.messages.length = 0;
-    this._state.streamingText = undefined;
+    this._state.streamingMessage = undefined;
     this._state.pendingToolCalls.length = 0;
     this.clearAllQueues();
   }
@@ -248,14 +248,14 @@ export class Agent {
 
     this.activeRun = activeRun;
     this._state.isRunning = true;
-    this._state.streamingText = undefined;
+    this._state.streamingMessage = undefined;
     this._state.pendingToolCalls.length = 0;
 
     try {
       return await executor(abortController.signal);
     } finally {
       this._state.isRunning = false;
-      this._state.streamingText = undefined;
+      this._state.streamingMessage = undefined;
       this._state.pendingToolCalls.length = 0;
       this.activeRun = undefined;
       activeRun.resolve();
@@ -271,16 +271,14 @@ export class Agent {
         this._state.isRunning = true;
         break;
       case 'message_start':
-        if (event.message === undefined) this._state.streamingText = '';
+        this._state.streamingMessage = event.message;
         break;
       case 'message_update':
-        if (event.event.type === 'text.delta') {
-          this._state.streamingText = `${this._state.streamingText ?? ''}${event.event.delta}`;
-        }
+        this._state.streamingMessage = event.message;
         break;
       case 'message_end':
+        this._state.streamingMessage = undefined;
         this._state.messages.push(event.message);
-        if (event.message.role === 'assistant') this._state.streamingText = undefined;
         break;
       case 'tool_execution_start':
         if (
@@ -297,7 +295,7 @@ export class Agent {
         );
         break;
       case 'agent_end':
-        this._state.streamingText = undefined;
+        this._state.streamingMessage = undefined;
         this._state.pendingToolCalls.length = 0;
         break;
       case 'turn_start':

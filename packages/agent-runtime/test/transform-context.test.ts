@@ -72,7 +72,11 @@ function createAssistantMessage(
  */
 function createAssistantStream(message: AssistantMessage): ModelEventStream {
   return createModelEventStream(async (controller) => {
-    controller.emit({ type: 'start', model });
+    controller.emit({
+      type: 'start',
+      model,
+      partial: { ...message, content: [], finishReason: 'pending' },
+    });
     controller.complete(message);
   });
 }

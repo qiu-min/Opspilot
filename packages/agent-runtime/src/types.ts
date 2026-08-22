@@ -39,7 +39,7 @@ export interface AgentState {
   readonly tools: readonly AgentTool[];
   readonly messages: readonly AgentMessage[];
   readonly isRunning: boolean;
-  readonly streamingText?: string;
+  readonly streamingMessage?: AgentMessage;
   readonly pendingToolCalls: readonly ModelToolCall[];
 }
 
@@ -107,7 +107,7 @@ export interface AgentLoopConfig {
 export type MessageUpdateModelEvent = Extract<
   ModelStreamEvent,
   {
-    type: 'text.delta' | 'tool-call.delta' | 'tool-call.completed' | 'usage';
+    type: 'text.delta' | 'thinking.delta' | 'tool-call.delta' | 'tool-call.completed' | 'usage';
   }
 >;
 
@@ -134,11 +134,12 @@ export type AgentEvent =
   // 模型消息生命周期
   | {
       readonly type: 'message_start';
-      readonly message?: AgentMessage;
+      readonly message: AgentMessage;
     }
   | {
       readonly type: 'message_update';
       readonly event: MessageUpdateModelEvent;
+      readonly message: AssistantMessage;
     }
   | {
       readonly type: 'message_end';
