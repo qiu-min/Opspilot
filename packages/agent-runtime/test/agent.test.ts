@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createModelEventStream,
-  ModelGatewayError,
   type AssistantMessage,
   type Context,
   type FinishReason,
@@ -246,6 +245,10 @@ describe('Agent', () => {
 
   it('passes the Agent AbortSignal to streamFn and aborts the active run', async () => {
     let receivedSignal: AbortSignal | undefined;
+    const failure: AssistantMessage = {
+      ...assistantMessage('aborted'),
+      errorMessage: 'Request aborted.',
+    };
     const agent = new Agent({
       model,
       streamFn: (_model, _context, options) => {
@@ -259,7 +262,7 @@ describe('Agent', () => {
             }
             receivedSignal?.addEventListener('abort', () => resolve(), { once: true });
           });
-          controller.fail(new ModelGatewayError('PROVIDER_FAILURE', 'aborted'));
+          controller.error(failure);
         });
       },
     });
@@ -268,43 +271,57 @@ describe('Agent', () => {
     while (receivedSignal === undefined) await Promise.resolve();
     agent.abort();
 
-    await expect(run).rejects.toThrow('aborted');
+    await expect(run).resolves.toEqual([userMessage('abort this'), failure]);
     expect(receivedSignal?.aborted).toBe(true);
     expect(agent.state.isRunning).toBe(false);
   });
 
   it('clears running state after failure and allows a later prompt', async () => {
-    const failure = new ModelGatewayError('PROVIDER_FAILURE', 'model failed');
+    const failure: AssistantMessage = {
+      ...assistantMessage('error'),
+      errorMessage: 'model failed',
+    };
     const agent = new Agent({
       model,
       streamFn: sequentialStreamFn([
         createModelEventStream(async (controller) => {
-          controller.fail(failure);
+          controller.error(failure);
         }),
         assistantStream(assistantMessage()),
       ]),
     });
 
-    await expect(agent.prompt(userMessage('failed prompt'))).rejects.toBe(failure);
+    await expect(agent.prompt(userMessage('failed prompt'))).resolves.toEqual([
+      userMessage('failed prompt'),
+      failure,
+    ]);
     expect(agent.state.isRunning).toBe(false);
     await expect(agent.prompt(userMessage('retry prompt'))).resolves.toHaveLength(2);
+    expect(agent.state.errorMessage).toBeUndefined();
   });
 
   it('preserves completed messages when a run fails', async () => {
     const history = [userMessage('history')];
-    const failure = new ModelGatewayError('PROVIDER_FAILURE', 'tool failed');
+    const failure: AssistantMessage = {
+      ...assistantMessage('error'),
+      errorMessage: 'tool failed',
+    };
     const agent = new Agent({
       model,
       messages: history,
       streamFn: () =>
         createModelEventStream(async (controller) => {
-          controller.fail(failure);
+          controller.error(failure);
         }),
     });
 
-    await expect(agent.prompt(userMessage('new prompt'))).rejects.toBe(failure);
+    await expect(agent.prompt(userMessage('new prompt'))).resolves.toEqual([
+      userMessage('new prompt'),
+      failure,
+    ]);
 
-    expect(agent.state.messages).toEqual([...history, userMessage('new prompt')]);
+    expect(agent.state.messages).toEqual([...history, userMessage('new prompt'), failure]);
+    expect(agent.state.errorMessage).toBe('tool failed');
   });
 
   it('resets messages but keeps configuration and rejects reset while running', async () => {

@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createModelEventStream,
-  ModelGatewayError,
   type AssistantMessage,
   type Context,
   type FinishReason,
@@ -440,11 +439,14 @@ describe('runAgentLoop tool loop', () => {
     expect(agentMessage).toBe(message);
   });
 
-  it('propagates a model stream error without inventing agent_end', async () => {
-    const error = new ModelGatewayError('TIMEOUT', 'Timed out.');
+  it('completes the agent lifecycle for a terminal model error', async () => {
+    const failure: AssistantMessage = {
+      ...createAssistantMessage('error'),
+      errorMessage: 'Timed out.',
+    };
     const stream = createModelEventStream(async (controller) => {
       controller.emit({ type: 'start', model, partial: createAssistantMessage('pending') });
-      controller.fail(error);
+      controller.error(failure);
     });
     const events: AgentEvent[] = [];
 
@@ -458,7 +460,92 @@ describe('runAgentLoop tool loop', () => {
           events.push(event);
         },
       ),
-    ).rejects.toBe(error);
-    expect(events.some((event) => event.type === 'agent_end')).toBe(false);
+    ).resolves.toEqual([createPrompt(), failure]);
+    expect(events.map((event) => event.type)).toEqual([
+      'agent_start',
+      'turn_start',
+      'message_start',
+      'message_end',
+      'message_start',
+      'message_end',
+      'turn_end',
+      'agent_end',
+    ]);
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'tool_execution_start' }));
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'tool_execution_end' }));
+  });
+
+  it('completes an error without start and skips later hooks and queues', async () => {
+    const failure: AssistantMessage = {
+      ...createAssistantMessage('aborted'),
+      errorMessage: 'Request aborted.',
+    };
+    const stream = createModelEventStream(async (controller) => controller.error(failure));
+    const getSteeringMessages = vi.fn(() => []);
+    const getFollowUpMessages = vi.fn(() => []);
+    const prepareNextTurn = vi.fn();
+    const shouldStopAfterTurn = vi.fn();
+    const events: AgentEvent[] = [];
+
+    await expect(
+      runAgentLoop(
+        [createPrompt()],
+        createContext(),
+        {
+          ...config,
+          getSteeringMessages,
+          getFollowUpMessages,
+          prepareNextTurn,
+          shouldStopAfterTurn,
+        },
+        () => stream,
+        (event) => {
+          events.push(event);
+        },
+      ),
+    ).resolves.toEqual([createPrompt(), failure]);
+
+    expect(events.map((event) => event.type)).toEqual([
+      'agent_start',
+      'turn_start',
+      'message_start',
+      'message_end',
+      'message_start',
+      'message_end',
+      'turn_end',
+      'agent_end',
+    ]);
+    expect(events[4]).toEqual({ type: 'message_start', message: { ...failure } });
+    expect(events[5]).toEqual({ type: 'message_end', message: failure });
+    expect(getSteeringMessages).toHaveBeenCalledTimes(1);
+    expect(getFollowUpMessages).not.toHaveBeenCalled();
+    expect(prepareNextTurn).not.toHaveBeenCalled();
+    expect(shouldStopAfterTurn).not.toHaveBeenCalled();
+  });
+
+  it('keeps unexpected stream runtime errors rejected', async () => {
+    const failure = new Error('unexpected stream failure');
+    const stream = createModelEventStream(async () => {
+      throw failure;
+    });
+    const events: AgentEvent[] = [];
+
+    await expect(
+      runAgentLoop(
+        [createPrompt()],
+        createContext(),
+        config,
+        () => stream,
+        (event) => {
+          events.push(event);
+        },
+      ),
+    ).rejects.toBe(failure);
+    expect(events.map((event) => event.type)).toEqual([
+      'agent_start',
+      'turn_start',
+      'message_start',
+      'message_end',
+    ]);
   });
 });

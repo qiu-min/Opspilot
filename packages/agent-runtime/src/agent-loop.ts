@@ -97,6 +97,19 @@ async function runLoop(
       );
       newMessages.push(assistantMessage);
 
+      if (
+        assistantMessage.finishReason === 'error' ||
+        assistantMessage.finishReason === 'aborted'
+      ) {
+        await emit({
+          type: 'turn_end',
+          message: assistantMessage,
+          toolResults: [],
+        });
+        await emit({ type: 'agent_end', messages: newMessages });
+        return;
+      }
+
       const toolCalls = assistantMessage.toolCalls ?? [];
       const toolResults: ToolResultMessage[] = [];
 
@@ -194,6 +207,21 @@ async function streamAssistantResponse(
   let partialMessage: AssistantMessage | null = null;
   let addedPartial = false;
 
+  /** 完成最终 assistant 消息的上下文替换和生命周期事件。
+   * @param finalMessage 模型正常完成或失败终止时的最终消息。
+   * @returns 已完成生命周期的最终 assistant 消息。
+   */
+  const finalizeMessage = async (finalMessage: AssistantMessage): Promise<AssistantMessage> => {
+    if (addedPartial) context.messages[context.messages.length - 1] = finalMessage;
+    else {
+      context.messages.push(finalMessage);
+      await emit({ type: 'message_start', message: { ...finalMessage } });
+    }
+
+    await emit({ type: 'message_end', message: finalMessage });
+    return finalMessage;
+  };
+
   for await (const event of stream) {
     switch (event.type) {
       case 'start':
@@ -212,21 +240,11 @@ async function streamAssistantResponse(
         await emit({ type: 'message_update', event, message: partialMessage });
         break;
       case 'done':
-        if (addedPartial) context.messages[context.messages.length - 1] = event.response;
-        else {
-          context.messages.push(event.response);
-          await emit({ type: 'message_start', message: { ...event.response } });
-        }
-        await emit({
-          type: 'message_end',
-          message: event.response,
-        });
-        break;
+        return await finalizeMessage(event.response);
       case 'error':
-        // BufferedStream 会在迭代结束后让 result() 以同一个错误拒绝。
-        break;
+        return await finalizeMessage(event.error);
     }
   }
 
-  return await stream.result();
+  return await finalizeMessage(await stream.result());
 }

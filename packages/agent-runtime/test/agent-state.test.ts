@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   createModelEventStream,
-  ModelGatewayError,
   type AssistantMessage,
   type FinishReason,
   type JsonObject,
@@ -137,6 +136,7 @@ describe('Agent real-time state', () => {
     expect(agent.state.model).toBe(model);
     expect(agent.state.isRunning).toBe(false);
     expect(agent.state.streamingMessage).toBeUndefined();
+    expect(agent.state.errorMessage).toBeUndefined();
     expect(agent.state.pendingToolCalls).toEqual([]);
   });
 
@@ -348,7 +348,11 @@ describe('Agent real-time state', () => {
 
   it('preserves completed messages and clears transient state when a run fails', async () => {
     const history = userMessage('history');
-    const failure = new ModelGatewayError('PROVIDER_FAILURE', 'model failed');
+    const failure: AssistantMessage = {
+      ...assistantMessage('error'),
+      content: [{ type: 'text', text: 'partial' }],
+      errorMessage: 'model failed',
+    };
     const agent = new Agent({
       model,
       messages: [history],
@@ -362,16 +366,17 @@ describe('Agent real-time state', () => {
             delta: 'partial',
             partial: { ...partial, content: [{ type: 'text', text: 'partial' }] },
           });
-          controller.fail(failure);
+          controller.error(failure);
         }),
     });
 
     const prompt = userMessage('failed');
-    await expect(agent.prompt(prompt)).rejects.toBe(failure);
+    await expect(agent.prompt(prompt)).resolves.toEqual([prompt, failure]);
 
-    expect(agent.state.messages).toEqual([history, prompt]);
+    expect(agent.state.messages).toEqual([history, prompt, failure]);
     expect(agent.state.isRunning).toBe(false);
     expect(agent.state.streamingMessage).toBeUndefined();
+    expect(agent.state.errorMessage).toBe('model failed');
     expect(agent.state.pendingToolCalls).toEqual([]);
   });
 
@@ -391,6 +396,7 @@ describe('Agent real-time state', () => {
     expect(agent.state.messages).toEqual([]);
     expect(agent.hasQueuedMessages()).toBe(false);
     expect(agent.state.streamingMessage).toBeUndefined();
+    expect(agent.state.errorMessage).toBeUndefined();
     expect(agent.state.pendingToolCalls).toEqual([]);
     expect(agent.state.isRunning).toBe(false);
   });

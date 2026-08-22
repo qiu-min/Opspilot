@@ -17,6 +17,7 @@ type MutableAgentState = {
   messages: AgentMessage[];
   isRunning: boolean;
   streamingMessage?: AgentMessage;
+  errorMessage?: string;
   pendingToolCalls: ModelToolCall[];
 };
 
@@ -57,6 +58,7 @@ export class Agent {
       messages: [...(options.messages ?? [])],
       isRunning: false,
       streamingMessage: undefined,
+      errorMessage: undefined,
       pendingToolCalls: [],
     };
   }
@@ -72,6 +74,7 @@ export class Agent {
       messages: [...this._state.messages],
       isRunning: this._state.isRunning,
       streamingMessage: this._state.streamingMessage,
+      errorMessage: this._state.errorMessage,
       pendingToolCalls: [...this._state.pendingToolCalls],
     };
   }
@@ -161,6 +164,7 @@ export class Agent {
     if (this.activeRun) throw new Error('Cannot reset while Agent is running.');
     this._state.messages.length = 0;
     this._state.streamingMessage = undefined;
+    this._state.errorMessage = undefined;
     this._state.pendingToolCalls.length = 0;
     this.clearAllQueues();
   }
@@ -249,6 +253,7 @@ export class Agent {
     this.activeRun = activeRun;
     this._state.isRunning = true;
     this._state.streamingMessage = undefined;
+    this._state.errorMessage = undefined;
     this._state.pendingToolCalls.length = 0;
 
     try {
@@ -299,7 +304,14 @@ export class Agent {
         this._state.pendingToolCalls.length = 0;
         break;
       case 'turn_start':
+        break;
       case 'turn_end':
+        if (
+          event.message.role === 'assistant' &&
+          event.message.errorMessage !== undefined
+        ) {
+          this._state.errorMessage = event.message.errorMessage;
+        }
         break;
     }
 

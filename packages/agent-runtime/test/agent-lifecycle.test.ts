@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   createModelEventStream,
-  ModelGatewayError,
   type AssistantMessage,
   type FinishReason,
   type Model,
@@ -156,24 +155,29 @@ describe('Agent run lifecycle', () => {
     expect(agent.signal).toBeUndefined();
   });
 
-  it('propagates model errors and preserves the completed prompt message', async () => {
+  it('completes model error lifecycle and preserves the failure message', async () => {
     const history = userMessage('history');
-    const failure = new ModelGatewayError('PROVIDER_FAILURE', 'model failed');
+    const failure: AssistantMessage = {
+      ...assistantMessage('error'),
+      errorMessage: 'model failed',
+    };
+    const prompt = userMessage('failed');
     const agent = new Agent({
       model,
       messages: [history],
       streamFn: () =>
         createModelEventStream(async (controller) => {
           controller.emit({ type: 'start', model, partial: assistantMessage('pending') });
-          controller.fail(failure);
+          controller.error(failure);
         }),
     });
 
-    await expect(agent.prompt(userMessage('failed'))).rejects.toBe(failure);
+    await expect(agent.prompt(prompt)).resolves.toEqual([prompt, failure]);
 
-    expect(agent.state.messages).toEqual([history, userMessage('failed')]);
+    expect(agent.state.messages).toEqual([history, prompt, failure]);
     expect(agent.state.isRunning).toBe(false);
     expect(agent.state.streamingMessage).toBeUndefined();
+    expect(agent.state.errorMessage).toBe('model failed');
     expect(agent.state.pendingToolCalls).toEqual([]);
     expect(agent.signal).toBeUndefined();
   });
@@ -222,7 +226,10 @@ describe('Agent run lifecycle', () => {
 
   it('aborts the current ActiveRun signal', async () => {
     const started = createDeferred();
-    const failure = new ModelGatewayError('PROVIDER_FAILURE', 'aborted');
+    const failure: AssistantMessage = {
+      ...assistantMessage('aborted'),
+      errorMessage: 'Request aborted.',
+    };
     let receivedSignal: AbortSignal | undefined;
     const agent = new Agent({
       model,
@@ -234,7 +241,7 @@ describe('Agent run lifecycle', () => {
           await new Promise<void>((resolve) => {
             receivedSignal?.addEventListener('abort', () => resolve(), { once: true });
           });
-          controller.fail(failure);
+          controller.error(failure);
         });
       },
     });
@@ -246,12 +253,16 @@ describe('Agent run lifecycle', () => {
 
     expect(signal).toBe(receivedSignal);
     expect(signal?.aborted).toBe(true);
-    await expect(run).rejects.toBe(failure);
+    await expect(run).resolves.toEqual([userMessage('abort'), failure]);
     expect(agent.signal).toBeUndefined();
+    expect(agent.state.errorMessage).toBe('Request aborted.');
   });
 
   it('allows a later prompt after a failed lifecycle', async () => {
-    const failure = new ModelGatewayError('PROVIDER_FAILURE', 'first run failed');
+    const failure: AssistantMessage = {
+      ...assistantMessage('error'),
+      errorMessage: 'first run failed',
+    };
     let attempt = 0;
     const agent = new Agent({
       model,
@@ -259,15 +270,19 @@ describe('Agent run lifecycle', () => {
         attempt += 1;
         if (attempt === 1) {
           return createModelEventStream(async (controller) => {
-            controller.fail(failure);
+            controller.error(failure);
           });
         }
         return assistantStream(assistantMessage());
       },
     });
 
-    await expect(agent.prompt(userMessage('first'))).rejects.toBe(failure);
+    await expect(agent.prompt(userMessage('first'))).resolves.toEqual([
+      userMessage('first'),
+      failure,
+    ]);
     await expect(agent.prompt(userMessage('second'))).resolves.toHaveLength(2);
     expect(agent.state.isRunning).toBe(false);
+    expect(agent.state.errorMessage).toBeUndefined();
   });
 });
