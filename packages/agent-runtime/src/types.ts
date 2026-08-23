@@ -33,6 +33,15 @@ export interface AgentContext {
   readonly tools?: readonly AgentTool[];
 }
 
+export type AgentErrorSource = 'model' | 'runtime';
+
+/** Agent Runtime 层的诊断 metadata，不进入 model-gateway AssistantMessage contract。 */
+export interface AgentErrorInfo {
+  readonly source: AgentErrorSource;
+  readonly reason: 'error' | 'aborted';
+  readonly message: string;
+}
+
 export interface AgentState {
   readonly systemPrompt?: string;
   readonly model: Model;
@@ -41,6 +50,7 @@ export interface AgentState {
   readonly isRunning: boolean;
   readonly streamingMessage?: AgentMessage;
   readonly errorMessage?: string;
+  readonly errorInfo?: AgentErrorInfo;
   readonly pendingToolCalls: readonly ModelToolCall[];
 }
 

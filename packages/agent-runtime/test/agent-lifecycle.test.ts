@@ -178,6 +178,11 @@ describe('Agent run lifecycle', () => {
     expect(agent.state.isRunning).toBe(false);
     expect(agent.state.streamingMessage).toBeUndefined();
     expect(agent.state.errorMessage).toBe('model failed');
+    expect(agent.state.errorInfo).toEqual({
+      source: 'model',
+      reason: 'error',
+      message: 'model failed',
+    });
     expect(agent.state.pendingToolCalls).toEqual([]);
     expect(agent.signal).toBeUndefined();
   });
@@ -284,5 +289,97 @@ describe('Agent run lifecycle', () => {
     await expect(agent.prompt(userMessage('second'))).resolves.toHaveLength(2);
     expect(agent.state.isRunning).toBe(false);
     expect(agent.state.errorMessage).toBeUndefined();
+    expect(agent.state.errorInfo).toBeUndefined();
+  });
+
+  it('converts a transformContext runtime failure into a synthetic assistant lifecycle', async () => {
+    const prompt = userMessage('transform failure');
+    const events: string[] = [];
+    const agent = new Agent({
+      model,
+      transformContext: () => {
+        throw new Error('transform failed');
+      },
+      streamFn: () => {
+        throw new Error('streamFn should not be called');
+      },
+    });
+    agent.subscribe((event) => {
+      events.push(event.type);
+    });
+
+    const result = await agent.prompt(prompt);
+    const failure = result[1];
+
+    expect(result).toHaveLength(2);
+    expect(failure).toMatchObject({
+      role: 'assistant',
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      content: [],
+      finishReason: 'error',
+      errorMessage: 'transform failed',
+    });
+    expect(events.slice(-4)).toEqual([
+      'message_start',
+      'message_end',
+      'turn_end',
+      'agent_end',
+    ]);
+    expect(agent.state.errorInfo).toEqual({
+      source: 'runtime',
+      reason: 'error',
+      message: 'transform failed',
+    });
+    expect(agent.state.isRunning).toBe(false);
+  });
+
+  it('converts a convertToLlm runtime failure into a resolved run', async () => {
+    const prompt = userMessage('convert failure');
+    const agent = new Agent({
+      model,
+      convertToLlm: () => {
+        throw new Error('convert failed');
+      },
+      streamFn: () => {
+        throw new Error('streamFn should not be called');
+      },
+    });
+
+    const result = await agent.prompt(prompt);
+
+    expect(result).toHaveLength(2);
+    expect(result[1]).toMatchObject({
+      role: 'assistant',
+      finishReason: 'error',
+      errorMessage: 'convert failed',
+    });
+    expect(agent.state.errorInfo).toEqual({
+      source: 'runtime',
+      reason: 'error',
+      message: 'convert failed',
+    });
+    expect(agent.state.isRunning).toBe(false);
+  });
+
+  it('reset clears runtime error metadata after a failed run', async () => {
+    const agent = new Agent({
+      model,
+      transformContext: () => {
+        throw new Error('reset failure');
+      },
+      streamFn: () => {
+        throw new Error('streamFn should not be called');
+      },
+    });
+
+    await agent.prompt(userMessage('fail before reset'));
+    expect(agent.state.errorInfo).toBeDefined();
+
+    agent.reset();
+
+    expect(agent.state.errorMessage).toBeUndefined();
+    expect(agent.state.errorInfo).toBeUndefined();
   });
 });

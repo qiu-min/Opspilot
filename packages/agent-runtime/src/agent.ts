@@ -1,14 +1,28 @@
 import { runAgentLoop } from './agent-loop.js';
-import type { ModelToolCall } from '@opspilot/model-gateway';
+import type { AssistantMessage, ModelToolCall } from '@opspilot/model-gateway';
 import type {
   AgentEvent,
   AgentEventListener,
+  AgentErrorInfo,
   AgentLoopConfig,
   AgentMessage,
   AgentOptions,
   AgentState,
   AgentTool,
 } from './types.js';
+
+/** 标记事件监听器异常，避免它被误判为 Agent Runtime fatal error。
+ * @param cause 原始监听器异常。
+ */
+class AgentEventListenerError extends Error {
+  /** 保存原始监听器异常，供生命周期边界原样抛出。
+   * @param cause 原始监听器异常。
+   */
+  constructor(readonly cause: unknown) {
+    super('Agent event listener failed.');
+    this.name = 'AgentEventListenerError';
+  }
+}
 
 type MutableAgentState = {
   systemPrompt?: string;
@@ -18,6 +32,7 @@ type MutableAgentState = {
   isRunning: boolean;
   streamingMessage?: AgentMessage;
   errorMessage?: string;
+  errorInfo?: AgentErrorInfo;
   pendingToolCalls: ModelToolCall[];
 };
 
@@ -59,6 +74,7 @@ export class Agent {
       isRunning: false,
       streamingMessage: undefined,
       errorMessage: undefined,
+      errorInfo: undefined,
       pendingToolCalls: [],
     };
   }
@@ -75,6 +91,8 @@ export class Agent {
       isRunning: this._state.isRunning,
       streamingMessage: this._state.streamingMessage,
       errorMessage: this._state.errorMessage,
+      errorInfo:
+        this._state.errorInfo === undefined ? undefined : { ...this._state.errorInfo },
       pendingToolCalls: [...this._state.pendingToolCalls],
     };
   }
@@ -165,6 +183,7 @@ export class Agent {
     this._state.messages.length = 0;
     this._state.streamingMessage = undefined;
     this._state.errorMessage = undefined;
+    this._state.errorInfo = undefined;
     this._state.pendingToolCalls.length = 0;
     this.clearAllQueues();
   }
@@ -209,6 +228,7 @@ export class Agent {
   private async runPromptMessages(
     prompts: readonly AgentMessage[],
   ): Promise<readonly AgentMessage[]> {
+    const runStartMessageIndex = this._state.messages.length;
     return await this.runWithLifecycle(async (signal) => {
       const context = {
         systemPrompt: this._state.systemPrompt,
@@ -227,16 +247,18 @@ export class Agent {
       );
 
       return newMessages;
-    });
+    }, runStartMessageIndex);
   }
 
   /** 承担一次 Agent Run 的并发、取消、状态和清理边界。
    * @param executor 接收本次运行 AbortSignal 并执行具体工作的函数。
-   * @returns executor 成功返回的结果，异常保持原样传播。
+   * @param runStartMessageIndex 本次运行开始前的消息数量，用于保留已完成消息。
+   * @returns executor 成功结果，或包含 runtime failure 消息的本次运行消息。
    */
-  private async runWithLifecycle<T>(
-    executor: (signal: AbortSignal) => Promise<T>,
-  ): Promise<T> {
+  private async runWithLifecycle(
+    executor: (signal: AbortSignal) => Promise<readonly AgentMessage[]>,
+    runStartMessageIndex: number,
+  ): Promise<readonly AgentMessage[]> {
     if (this.activeRun) throw new Error('Agent is already running.');
 
     const abortController = new AbortController();
@@ -254,10 +276,14 @@ export class Agent {
     this._state.isRunning = true;
     this._state.streamingMessage = undefined;
     this._state.errorMessage = undefined;
+    this._state.errorInfo = undefined;
     this._state.pendingToolCalls.length = 0;
 
     try {
       return await executor(abortController.signal);
+    } catch (error: unknown) {
+      if (error instanceof AgentEventListenerError) throw error.cause;
+      return await this.handleRunFailure(error, abortController, runStartMessageIndex);
     } finally {
       this._state.isRunning = false;
       this._state.streamingMessage = undefined;
@@ -265,6 +291,51 @@ export class Agent {
       this.activeRun = undefined;
       activeRun.resolve();
     }
+  }
+
+  /** 将未预期的 Runtime 异常转成完整生命周期中的 synthetic assistant 消息。
+   * @param error 从 Agent Loop 或 Runtime hook 冒出的未知异常。
+   * @param abortController 本次运行的取消控制器，用于判断失败是否由 abort 导致。
+   * @param runStartMessageIndex 本次运行开始前的消息数量。
+   * @returns 本次运行已经提交的全部消息。
+   */
+  private async handleRunFailure(
+    error: unknown,
+    abortController: AbortController,
+    runStartMessageIndex: number,
+  ): Promise<readonly AgentMessage[]> {
+    const message = error instanceof Error ? error.message : String(error);
+    const aborted = abortController.signal.aborted;
+    const reason = aborted ? 'aborted' : 'error';
+    // 该消息由 Agent Runtime 在未预期运行异常时人工生成，用来保持 transcript 和 Agent 生命周期完整；它不是 Provider 返回的模型消息。
+    const failureMessage: AssistantMessage = {
+      role: 'assistant',
+      api: this._state.model.api,
+      provider: this._state.model.provider,
+      model: this._state.model.id,
+      content: [],
+      finishReason: reason,
+      errorMessage: message,
+    };
+
+    this._state.errorMessage = message;
+    this._state.errorInfo = {
+      source: 'runtime',
+      reason,
+      message,
+    };
+
+    await this.processEvents({ type: 'message_start', message: failureMessage });
+    await this.processEvents({ type: 'message_end', message: failureMessage });
+
+    const runMessages = this._state.messages.slice(runStartMessageIndex);
+    await this.processEvents({
+      type: 'turn_end',
+      message: failureMessage,
+      toolResults: [],
+    });
+    await this.processEvents({ type: 'agent_end', messages: runMessages });
+    return runMessages;
   }
 
   /** 先更新实时状态，再按订阅顺序等待所有监听器处理一个事件。
@@ -308,15 +379,28 @@ export class Agent {
       case 'turn_end':
         if (
           event.message.role === 'assistant' &&
+          (event.message.finishReason === 'error' ||
+            event.message.finishReason === 'aborted') &&
           event.message.errorMessage !== undefined
         ) {
           this._state.errorMessage = event.message.errorMessage;
+          if (this._state.errorInfo === undefined) {
+            this._state.errorInfo = {
+              source: 'model',
+              reason: event.message.finishReason,
+              message: event.message.errorMessage,
+            };
+          }
         }
         break;
     }
 
-    for (const listener of this.listeners) {
-      await listener(event);
+    try {
+      for (const listener of this.listeners) {
+        await listener(event);
+      }
+    } catch (error: unknown) {
+      throw new AgentEventListenerError(error);
     }
   }
 }

@@ -324,6 +324,30 @@ describe('Agent', () => {
     expect(agent.state.errorMessage).toBe('tool failed');
   });
 
+  it('keeps recoverable tool errors out of fatal Agent error metadata', async () => {
+    const call: ModelToolCall = {
+      callId: 'call_1',
+      name: 'missing_tool',
+      arguments: {},
+    };
+    const firstAssistant = assistantMessage('tool_calls', [call]);
+    const secondAssistant = assistantMessage();
+    const agent = new Agent({
+      model,
+      streamFn: sequentialStreamFn([assistantStream(firstAssistant), assistantStream(secondAssistant)]),
+    });
+
+    const result = await agent.prompt(userMessage('run missing tool'));
+    const toolResult = result[2];
+
+    expect(toolResult).toMatchObject({
+      role: 'tool',
+      callId: call.callId,
+      isError: true,
+    });
+    expect(agent.state.errorInfo).toBeUndefined();
+  });
+
   it('resets messages but keeps configuration and rejects reset while running', async () => {
     const tool = textTool('query_logs', 'logs');
     const firstAgent = new Agent({

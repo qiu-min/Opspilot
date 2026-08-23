@@ -137,6 +137,7 @@ describe('Agent real-time state', () => {
     expect(agent.state.isRunning).toBe(false);
     expect(agent.state.streamingMessage).toBeUndefined();
     expect(agent.state.errorMessage).toBeUndefined();
+    expect(agent.state.errorInfo).toBeUndefined();
     expect(agent.state.pendingToolCalls).toEqual([]);
   });
 
@@ -377,6 +378,11 @@ describe('Agent real-time state', () => {
     expect(agent.state.isRunning).toBe(false);
     expect(agent.state.streamingMessage).toBeUndefined();
     expect(agent.state.errorMessage).toBe('model failed');
+    expect(agent.state.errorInfo).toEqual({
+      source: 'model',
+      reason: 'error',
+      message: 'model failed',
+    });
     expect(agent.state.pendingToolCalls).toEqual([]);
   });
 
@@ -397,6 +403,7 @@ describe('Agent real-time state', () => {
     expect(agent.hasQueuedMessages()).toBe(false);
     expect(agent.state.streamingMessage).toBeUndefined();
     expect(agent.state.errorMessage).toBeUndefined();
+    expect(agent.state.errorInfo).toBeUndefined();
     expect(agent.state.pendingToolCalls).toEqual([]);
     expect(agent.state.isRunning).toBe(false);
   });
