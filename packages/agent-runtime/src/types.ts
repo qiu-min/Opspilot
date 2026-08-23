@@ -33,6 +33,20 @@ export interface AgentContext {
   readonly tools?: readonly AgentTool[];
 }
 
+/** beforeToolCall 收到的已完成模型消息、已校验参数和当前 Agent 上下文。 */
+export interface BeforeToolCallContext {
+  readonly assistantMessage: AssistantMessage;
+  readonly toolCall: ModelToolCall;
+  readonly args: JsonObject;
+  readonly context: AgentContext;
+}
+
+/** beforeToolCall 对当前 ToolCall 的最小拦截决策。 */
+export interface BeforeToolCallResult {
+  readonly block?: boolean;
+  readonly reason?: string;
+}
+
 export type AgentErrorSource = 'model' | 'runtime';
 
 /** Agent Runtime 层的诊断 metadata，不进入 model-gateway AssistantMessage contract。 */
@@ -64,6 +78,7 @@ export interface AgentOptions {
   readonly convertToLlm?: AgentLoopConfig['convertToLlm'];
   readonly prepareNextTurn?: AgentLoopConfig['prepareNextTurn'];
   readonly shouldStopAfterTurn?: AgentLoopConfig['shouldStopAfterTurn'];
+  readonly beforeToolCall?: AgentLoopConfig['beforeToolCall'];
 }
 
 export interface ShouldStopAfterTurnContext {
@@ -113,6 +128,10 @@ export interface AgentLoopConfig {
   readonly shouldStopAfterTurn?: (
     context: ShouldStopAfterTurnContext,
   ) => boolean | Promise<boolean>;
+  readonly beforeToolCall?: (
+    context: BeforeToolCallContext,
+    signal?: AbortSignal,
+  ) => BeforeToolCallResult | undefined | Promise<BeforeToolCallResult | undefined>;
 }
 
 export type MessageUpdateModelEvent = Extract<

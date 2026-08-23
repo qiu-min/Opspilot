@@ -52,6 +52,7 @@ export class Agent {
   private readonly convertToLlm: AgentOptions['convertToLlm'];
   private readonly prepareNextTurn: AgentOptions['prepareNextTurn'];
   private readonly shouldStopAfterTurn: AgentOptions['shouldStopAfterTurn'];
+  private readonly beforeToolCall: AgentOptions['beforeToolCall'];
   private readonly _state: MutableAgentState;
   private readonly steeringQueue: AgentMessage[] = [];
   private readonly followUpQueue: AgentMessage[] = [];
@@ -67,6 +68,7 @@ export class Agent {
     this.convertToLlm = options.convertToLlm;
     this.prepareNextTurn = options.prepareNextTurn;
     this.shouldStopAfterTurn = options.shouldStopAfterTurn;
+    this.beforeToolCall = options.beforeToolCall;
     this._state = {
       systemPrompt: options.systemPrompt,
       model: options.model,
@@ -230,6 +232,7 @@ export class Agent {
       getSteeringMessages: () => this.drainSteeringQueue(),
       getFollowUpMessages: () => this.drainFollowUpQueue(),
       shouldStopAfterTurn: this.shouldStopAfterTurn,
+      beforeToolCall: this.beforeToolCall,
     };
   }
 

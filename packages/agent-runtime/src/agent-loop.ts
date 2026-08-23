@@ -117,7 +117,12 @@ async function runLoop(
         for (const toolCall of toolCalls) {
           await emit({ type: 'tool_execution_start', toolCall });
 
-          const result = await executeToolCall(toolCall, currentContext.tools ?? [], signal);
+          const result = await executeToolCall(toolCall, currentContext.tools ?? [], {
+            assistantMessage,
+            context: currentContext,
+            beforeToolCall: config.beforeToolCall,
+            signal,
+          });
 
           await emit({ type: 'tool_execution_end', toolCall, result });
           toolResults.push(result);

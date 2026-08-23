@@ -348,6 +348,72 @@ describe('Agent', () => {
     expect(agent.state.errorInfo).toBeUndefined();
   });
 
+  it('blocks a tool through beforeToolCall while preserving tool lifecycle events', async () => {
+    const call: ModelToolCall = {
+      callId: 'call_before_block',
+      name: 'query_logs',
+      arguments: {},
+    };
+    const firstAssistant = assistantMessage('tool_calls', [call]);
+    const secondAssistant = assistantMessage();
+    const events: AgentEvent[] = [];
+    const agent = new Agent({
+      model,
+      tools: [textTool('query_logs', 'logs found')],
+      beforeToolCall: () => ({
+        block: true,
+        reason: 'Production operation requires approval.',
+      }),
+      streamFn: sequentialStreamFn([assistantStream(firstAssistant), assistantStream(secondAssistant)]),
+    });
+    agent.subscribe((event) => {
+      events.push(event);
+    });
+
+    const result = await agent.prompt(userMessage('blocked tool'));
+    const toolResult = result[2];
+
+    expect(toolResult).toMatchObject({
+      role: 'tool',
+      isError: true,
+      content: [{ type: 'text', text: 'Production operation requires approval.' }],
+    });
+    const toolStartIndex = events.findIndex((event) => event.type === 'tool_execution_start');
+    expect(events.slice(toolStartIndex, toolStartIndex + 2).map((event) => event.type)).toEqual([
+      'tool_execution_start',
+      'tool_execution_end',
+    ]);
+    expect(agent.state.errorInfo).toBeUndefined();
+  });
+
+  it('keeps beforeToolCall exceptions recoverable inside the Agent run', async () => {
+    const call: ModelToolCall = {
+      callId: 'call_before_throw',
+      name: 'query_logs',
+      arguments: {},
+    };
+    const firstAssistant = assistantMessage('tool_calls', [call]);
+    const secondAssistant = assistantMessage();
+    const agent = new Agent({
+      model,
+      tools: [textTool('query_logs', 'logs found')],
+      beforeToolCall: () => {
+        throw new Error('policy failed');
+      },
+      streamFn: sequentialStreamFn([assistantStream(firstAssistant), assistantStream(secondAssistant)]),
+    });
+
+    const result = await agent.prompt(userMessage('hook failure'));
+
+    expect(result[2]).toMatchObject({
+      role: 'tool',
+      isError: true,
+      content: [{ type: 'text', text: 'policy failed' }],
+    });
+    expect(result).toHaveLength(4);
+    expect(agent.state.errorInfo).toBeUndefined();
+  });
+
   it('resets messages but keeps configuration and rejects reset while running', async () => {
     const tool = textTool('query_logs', 'logs');
     const firstAgent = new Agent({
