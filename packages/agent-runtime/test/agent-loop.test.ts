@@ -339,13 +339,14 @@ describe('runAgentLoop tool loop', () => {
     const assistant1 = createAssistantMessage('tool_calls', [call1, call2]);
     const assistant2 = createAssistantMessage('stop');
     const events: AgentEvent[] = [];
+    const contexts: Context[] = [];
     const context = createContext([tool1, tool2]);
     const streamFn = createSequentialStreamFn(
       [createAssistantStream(assistant1), createAssistantStream(assistant2)],
-      [],
+      contexts,
     );
 
-    await runAgentLoop([prompt], context, config, streamFn, (event) => {
+    const result = await runAgentLoop([prompt], context, config, streamFn, (event) => {
       events.push(event);
     });
 
@@ -365,6 +366,16 @@ describe('runAgentLoop tool loop', () => {
     expect(events[8]).toEqual({ type: 'message_start', message: expect.any(Object) });
     expect(events[10]).toEqual({ type: 'tool_execution_start', toolCall: call2 });
     expect(events[12]).toEqual({ type: 'message_start', message: expect.any(Object) });
+    expect(
+      contexts[1]?.messages
+        .filter((message): message is ToolResultMessage => message.role === 'tool')
+        .map((message) => message.callId),
+    ).toEqual(['call_1', 'call_2']);
+    expect(
+      result
+        .filter((message): message is ToolResultMessage => message.role === 'tool')
+        .map((message) => message.callId),
+    ).toEqual(['call_1', 'call_2']);
   });
 
   it('publishes sequential ToolResult before starting a slow next tool', async () => {
@@ -412,6 +423,66 @@ describe('runAgentLoop tool loop', () => {
     await run;
   });
 
+  it('keeps sequential before and after hook context stable until the batch commits', async () => {
+    const prompt = createPrompt();
+    const callA = { callId: 'call_A', name: 'tool_A', arguments: { service: 'api' } };
+    const callB = { callId: 'call_B', name: 'tool_B', arguments: { service: 'api' } };
+    const beforeBToolResults: string[][] = [];
+    const afterBToolResults: string[][] = [];
+    const toolA = createTextTool('tool_A', 'A', async () => ({ content: [] }));
+    const toolB = createTextTool('tool_B', 'B', async () => ({ content: [] }));
+    const assistant1 = createAssistantMessage('tool_calls', [callA, callB]);
+    const assistant2 = createAssistantMessage('stop');
+    const events: AgentEvent[] = [];
+
+    await runAgentLoop(
+      [prompt],
+      createContext([toolA, toolB]),
+      {
+        ...config,
+        beforeToolCall: ({ toolCall, context }) => {
+          if (toolCall.callId === callB.callId) {
+            beforeBToolResults.push(
+              context.messages
+                .filter((message): message is ToolResultMessage => message.role === 'tool')
+                .map((message) => message.callId),
+            );
+          }
+          return undefined;
+        },
+        afterToolCall: ({ toolCall, context }) => {
+          if (toolCall.callId === callB.callId) {
+            afterBToolResults.push(
+              context.messages
+                .filter((message): message is ToolResultMessage => message.role === 'tool')
+                .map((message) => message.callId),
+            );
+          }
+          return undefined;
+        },
+      },
+      createSequentialStreamFn([createAssistantStream(assistant1), createAssistantStream(assistant2)], []),
+      (event) => {
+        events.push(event);
+      },
+    );
+
+    expect(beforeBToolResults).toEqual([[]]);
+    expect(afterBToolResults).toEqual([[]]);
+    const aMessageEndIndex = events.findIndex(
+      (event) =>
+        event.type === 'message_end' &&
+        event.message.role === 'tool' &&
+        'callId' in event.message &&
+        event.message.callId === callA.callId,
+    );
+    const bStartIndex = events.findIndex(
+      (event) => event.type === 'tool_execution_start' && event.toolCall.callId === callB.callId,
+    );
+    expect(aMessageEndIndex).toBeGreaterThanOrEqual(0);
+    expect(bStartIndex).toBeGreaterThan(aMessageEndIndex);
+  });
+
   it('keeps Agent Loop tool result messages in source order during parallel execution', async () => {
     const prompt = createPrompt();
     const callA = { callId: 'call_A', name: 'tool_A', arguments: { service: 'api' } };
@@ -435,11 +506,32 @@ describe('runAgentLoop tool loop', () => {
     const assistant1 = createAssistantMessage('tool_calls', [callA, callB]);
     const assistant2 = createAssistantMessage('stop');
     const events: AgentEvent[] = [];
+    const beforeToolResults: string[][] = [];
+    const afterToolResults: string[][] = [];
 
     const run = runAgentLoop(
       [prompt],
       createContext([toolA, toolB]),
-      { ...config, toolExecution: 'parallel' },
+      {
+        ...config,
+        toolExecution: 'parallel',
+        beforeToolCall: ({ context }) => {
+          beforeToolResults.push(
+            context.messages
+              .filter((message): message is ToolResultMessage => message.role === 'tool')
+              .map((message) => message.callId),
+          );
+          return undefined;
+        },
+        afterToolCall: ({ context }) => {
+          afterToolResults.push(
+            context.messages
+              .filter((message): message is ToolResultMessage => message.role === 'tool')
+              .map((message) => message.callId),
+          );
+          return undefined;
+        },
+      },
       createSequentialStreamFn([createAssistantStream(assistant1), createAssistantStream(assistant2)], []),
       (event) => {
         events.push(event);
@@ -472,6 +564,8 @@ describe('runAgentLoop tool loop', () => {
         )
         .map((event) => ('callId' in event.message ? event.message.callId : '')),
     ).toEqual(['call_A', 'call_B']);
+    expect(beforeToolResults).toEqual([[], []]);
+    expect(afterToolResults).toEqual([[], []]);
   });
 
   it('does not execute tools when finishReason is length', async () => {

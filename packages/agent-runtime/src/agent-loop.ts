@@ -114,7 +114,7 @@ async function runLoop(
       const toolResults: ToolResultMessage[] = [];
 
       if (assistantMessage.finishReason === 'tool_calls' && toolCalls.length > 0) {
-        await executeToolCalls({
+        const results = await executeToolCalls({
           toolCalls,
           tools: currentContext.tools ?? [],
           assistantMessage,
@@ -124,14 +124,13 @@ async function runLoop(
           toolExecution: config.toolExecution,
           signal,
           emit,
-          onToolResult: async (_toolCall, result) => {
-            toolResults.push(result);
-            currentContext.messages.push(result);
-            newMessages.push(result);
-            await emit({ type: 'message_start', message: result });
-            await emit({ type: 'message_end', message: result });
-          },
         });
+
+        for (const result of results) {
+          toolResults.push(result);
+          currentContext.messages.push(result);
+          newMessages.push(result);
+        }
       }
 
       await emit({

@@ -27,10 +27,6 @@ export interface ExecuteToolCallsOptions extends ExecuteToolCallOptions {
   readonly tools: readonly AgentTool[];
   readonly toolExecution?: ToolExecutionMode;
   readonly emit: AgentEventSink;
-  readonly onToolResult?: (
-    toolCall: ModelToolCall,
-    result: ToolResultMessage,
-  ) => void | Promise<void>;
 }
 
 interface PreparedToolCall {
@@ -89,8 +85,8 @@ async function executeToolCallsSequential(
     await options.emit({ type: 'tool_execution_start', toolCall });
     const result = await executeToolCall(toolCall, options.tools, options);
     await options.emit({ type: 'tool_execution_end', toolCall, result });
+    await emitToolResultMessage(result, options.emit);
     results.push(result);
-    await options.onToolResult?.(toolCall, result);
   }
 
   return results;
@@ -137,16 +133,26 @@ async function executeToolCallsParallel(
     }),
   );
 
-  for (const [index, entry] of entries.entries()) {
+  for (const [index] of entries.entries()) {
     const result = results[index];
     if (result !== undefined) {
-      const toolCall =
-        entry.kind === 'immediate' ? entry.toolCall : entry.preparation.toolCall;
-      await options.onToolResult?.(toolCall, result);
+      await emitToolResultMessage(result, options.emit);
     }
   }
 
   return results;
+}
+
+/** 发布一个 ToolResult message 的生命周期事件，不修改 Agent Loop 上下文。
+ * @param result 要发布的 ToolResultMessage。
+ * @param emit 当前 Agent Event 接收器。
+ */
+async function emitToolResultMessage(
+  result: ToolResultMessage,
+  emit: AgentEventSink,
+): Promise<void> {
+  await emit({ type: 'message_start', message: result });
+  await emit({ type: 'message_end', message: result });
 }
 
 /** 准备一个 ToolCall，只查找工具、校验参数并运行 before hook。

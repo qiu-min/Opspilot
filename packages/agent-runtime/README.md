@@ -95,7 +95,9 @@ runAgentLoop
 type ToolExecutionMode = 'sequential' | 'parallel';
 ```
 
-未配置时默认为 `sequential`。`sequential` 按模型返回顺序完成每个 ToolCall；`parallel` 先按模型顺序完成工具查找、参数校验和 `beforeToolCall`，再并发执行已通过准备阶段的工具。并行执行期间，`tool_execution_end` 按真实完成顺序发送，但 ToolResultMessage 仍按模型原始 ToolCall 顺序返回并写入上下文。
+未配置时默认为 `sequential`。`sequential` 按模型返回顺序完成每个 ToolCall，并在每个 Tool 完成后立即发送其 ToolResult message 事件；`parallel` 先按模型顺序完成工具查找、参数校验和 `beforeToolCall`，再并发执行已通过准备阶段的工具。并行执行期间，`tool_execution_end` 按真实完成顺序发送，全部执行完成后再按模型原始 ToolCall 顺序发送 ToolResult message 事件。
+
+两种模式都会在整个 Tool batch 完成后，按模型原始顺序把 ToolResult 一次性提交到 `currentContext.messages` 和 `newMessages`。因此 Tool hook 使用 batch 开始时的稳定上下文，而 Agent 状态仍可通过实时事件观察已完成的 ToolResult。
 
 工具生命周期分为三个阶段：
 
@@ -124,7 +126,7 @@ turn_end
 
 如果需要下一 Turn，则发送 `turn_start` 后重复模型调用；自然停止或策略停止后发送 `agent_end`。每个已正常完成的 Turn 恰好发送一次 `turn_end`，每次 Run 恰好发送一次 `agent_end`。
 
-批量工具事件和消息生命周期是两条顺序：并行工具的 `tool_execution_end` 反映真实完成顺序；所有工具执行完成后，Runtime 才按模型 ToolCall 顺序发出 ToolResult 的 `message_start` / `message_end`，再进入 `turn_end`。
+批量工具事件和上下文提交是两条顺序：sequential 在每个 `tool_execution_end` 后立即发出对应 ToolResult 的 `message_start` / `message_end`，parallel 则在所有工具完成后按模型 ToolCall 顺序发出这些事件；两种模式都在 batch 返回后统一提交 Loop context，再进入 `turn_end`。
 
 模型流的 `partial` AssistantMessage 会映射为 `message_start` 和 `message_update` 的 `message`，并替换 `currentContext` 中唯一的工作消息；只有 `message_end` 的最终 AssistantMessage 才写入 Agent transcript。Agent 状态通过 `streamingMessage` 暴露当前完整半成品，不自行解析 text、thinking 或 tool-call 增量。
 
