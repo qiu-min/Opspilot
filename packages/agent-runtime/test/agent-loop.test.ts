@@ -354,17 +354,62 @@ describe('runAgentLoop tool loop', () => {
     expect(events.slice(6, 14).map((event) => event.type)).toEqual([
       'tool_execution_start',
       'tool_execution_end',
+      'message_start',
+      'message_end',
       'tool_execution_start',
       'tool_execution_end',
       'message_start',
       'message_end',
-      'message_start',
-      'message_end',
     ]);
     expect(events[6]).toEqual({ type: 'tool_execution_start', toolCall: call1 });
-    expect(events[8]).toEqual({ type: 'tool_execution_start', toolCall: call2 });
-    expect(events[10]).toEqual({ type: 'message_start', message: expect.any(Object) });
+    expect(events[8]).toEqual({ type: 'message_start', message: expect.any(Object) });
+    expect(events[10]).toEqual({ type: 'tool_execution_start', toolCall: call2 });
     expect(events[12]).toEqual({ type: 'message_start', message: expect.any(Object) });
+  });
+
+  it('publishes sequential ToolResult before starting a slow next tool', async () => {
+    const prompt = createPrompt();
+    const callA = { callId: 'call_A', name: 'tool_A', arguments: { service: 'api' } };
+    const callB = { callId: 'call_B', name: 'tool_B', arguments: { service: 'api' } };
+    const toolBStarted = createDeferred<void>();
+    const toolBCompletion = createDeferred<void>();
+    const toolA = createTextTool('tool_A', 'A', async () => ({ content: [] }));
+    const toolB = createTextTool('tool_B', 'B', async () => {
+      toolBStarted.resolve();
+      await toolBCompletion.promise;
+      return { content: [] };
+    });
+    const assistant1 = createAssistantMessage('tool_calls', [callA, callB]);
+    const assistant2 = createAssistantMessage('stop');
+    const events: AgentEvent[] = [];
+
+    const run = runAgentLoop(
+      [prompt],
+      createContext([toolA, toolB]),
+      config,
+      createSequentialStreamFn([createAssistantStream(assistant1), createAssistantStream(assistant2)], []),
+      (event) => {
+        events.push(event);
+      },
+    );
+
+    await toolBStarted.promise;
+    const toolAResultEndIndex = events.findIndex(
+      (event) =>
+        event.type === 'message_end' &&
+        event.message.role === 'tool' &&
+        'callId' in event.message &&
+        event.message.callId === callA.callId,
+    );
+    const toolBStartIndex = events.findIndex(
+      (event) => event.type === 'tool_execution_start' && event.toolCall.callId === callB.callId,
+    );
+
+    expect(toolAResultEndIndex).toBeGreaterThanOrEqual(0);
+    expect(toolBStartIndex).toBeGreaterThan(toolAResultEndIndex);
+
+    toolBCompletion.resolve();
+    await run;
   });
 
   it('keeps Agent Loop tool result messages in source order during parallel execution', async () => {

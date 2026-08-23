@@ -27,6 +27,10 @@ export interface ExecuteToolCallsOptions extends ExecuteToolCallOptions {
   readonly tools: readonly AgentTool[];
   readonly toolExecution?: ToolExecutionMode;
   readonly emit: AgentEventSink;
+  readonly onToolResult?: (
+    toolCall: ModelToolCall,
+    result: ToolResultMessage,
+  ) => void | Promise<void>;
 }
 
 interface PreparedToolCall {
@@ -38,6 +42,7 @@ interface PreparedToolCall {
 
 interface ImmediateToolCallOutcome {
   readonly kind: 'immediate';
+  readonly toolCall: ModelToolCall;
   readonly result: ToolResultMessage;
 }
 
@@ -85,6 +90,7 @@ async function executeToolCallsSequential(
     const result = await executeToolCall(toolCall, options.tools, options);
     await options.emit({ type: 'tool_execution_end', toolCall, result });
     results.push(result);
+    await options.onToolResult?.(toolCall, result);
   }
 
   return results;
@@ -116,7 +122,7 @@ async function executeToolCallsParallel(
     }
   }
 
-  return await Promise.all(
+  const results = await Promise.all(
     entries.map(async (entry) => {
       if (entry.kind === 'immediate') return entry.result;
 
@@ -130,6 +136,17 @@ async function executeToolCallsParallel(
       return result;
     }),
   );
+
+  for (const [index, entry] of entries.entries()) {
+    const result = results[index];
+    if (result !== undefined) {
+      const toolCall =
+        entry.kind === 'immediate' ? entry.toolCall : entry.preparation.toolCall;
+      await options.onToolResult?.(toolCall, result);
+    }
+  }
+
+  return results;
 }
 
 /** 准备一个 ToolCall，只查找工具、校验参数并运行 before hook。
@@ -148,6 +165,7 @@ async function prepareToolCall(
   if (tool === undefined) {
     return {
       kind: 'immediate',
+      toolCall,
       result: createToolErrorResult(toolCall, `Tool "${toolCall.name}" not found.`),
     };
   }
@@ -156,7 +174,11 @@ async function prepareToolCall(
   try {
     args = validateToolArguments(tool, toolCall);
   } catch (error: unknown) {
-    return { kind: 'immediate', result: createToolErrorResult(toolCall, getErrorMessage(error)) };
+    return {
+      kind: 'immediate',
+      toolCall,
+      result: createToolErrorResult(toolCall, getErrorMessage(error)),
+    };
   }
 
   if (options?.beforeToolCall !== undefined) {
@@ -174,6 +196,7 @@ async function prepareToolCall(
       if (decision?.block === true) {
         return {
           kind: 'immediate',
+          toolCall,
           result: createToolErrorResult(
             toolCall,
             decision.reason ?? 'Tool execution was blocked.',
@@ -181,7 +204,11 @@ async function prepareToolCall(
         };
       }
     } catch (error: unknown) {
-      return { kind: 'immediate', result: createToolErrorResult(toolCall, getErrorMessage(error)) };
+      return {
+        kind: 'immediate',
+        toolCall,
+        result: createToolErrorResult(toolCall, getErrorMessage(error)),
+      };
     }
   }
 
