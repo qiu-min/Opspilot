@@ -1,6 +1,6 @@
 # `@opspilot/agent-runtime`
 
-通用 Agent Runtime，负责维护一次 Agent Run 的消息上下文、模型回合、串行工具调用和生命周期事件。业务层通过 `AgentLoopConfig` 注入模型以及可选的 `shouldStopAfterTurn` 策略；Runtime 不包含 Incident、RAG 或具体业务完成条件。
+通用 Agent Runtime，负责维护一次 Agent Run 的消息上下文、模型回合、批量工具调用和生命周期事件。业务层通过 `AgentLoopConfig` 注入模型、工具执行模式以及可选的 `shouldStopAfterTurn` 策略；Runtime 不包含 Incident、RAG 或具体业务完成条件。
 
 ## 基本流程
 
@@ -9,7 +9,7 @@ runAgentLoop
   → 初始化 currentContext / newMessages
   → runLoop
       → 调用模型并维护 streamingMessage
-      → 顺序执行当前 Turn 的 ToolCall
+      → 按 toolExecution 执行当前 Turn 的 ToolCall 批次
       → 写入 ToolResult
       → turn_end
       → 判断是否进入下一 Turn
@@ -29,7 +29,7 @@ Runtime 只保留自然停止、上层策略停止和模型终止错误三类回
 | `refusal` | 任意 | 不执行工具，结束 Run |
 | `length` | 任意 | 不执行工具，结束 Run，避免使用可能被截断的参数 |
 | `tool_calls` | 空 | 协议没有有效工具调用，安全结束 Run |
-| `tool_calls` | 非空 | 顺序执行全部工具，写入 ToolResult，然后进入下一 Turn |
+| `tool_calls` | 非空 | 按执行模式完成全部工具，按源顺序写入 ToolResult，然后进入下一 Turn |
 | `error` | 任意 | 保存失败 AssistantMessage，结束当前 Run，不执行工具或后续 hooks |
 | `aborted` | 任意 | 保存取消 AssistantMessage，结束当前 Run，不执行工具或后续 hooks |
 
@@ -84,8 +84,28 @@ message_start / message_update...
 runAgentLoop
   → runLoop
       → streamAssistantResponse(..., signal)
-      → executeToolCall(..., signal)
+      → executeToolCalls(..., signal)
 ```
+
+## 工具执行模式
+
+`AgentLoopConfig.toolExecution` 和 `AgentOptions.toolExecution` 支持：
+
+```ts
+type ToolExecutionMode = 'sequential' | 'parallel';
+```
+
+未配置时默认为 `sequential`。`sequential` 按模型返回顺序完成每个 ToolCall；`parallel` 先按模型顺序完成工具查找、参数校验和 `beforeToolCall`，再并发执行已通过准备阶段的工具。并行执行期间，`tool_execution_end` 按真实完成顺序发送，但 ToolResultMessage 仍按模型原始 ToolCall 顺序返回并写入上下文。
+
+工具生命周期分为三个阶段：
+
+```text
+prepare  → 查找工具、校验参数、执行 beforeToolCall
+execute  → 调用 AgentTool.execute
+finalize → 执行 afterToolCall 并生成 ToolResultMessage
+```
+
+`beforeToolCall` 阻止或抛错会生成立即 Tool error，不会调用 `execute` 或 `afterToolCall`。`execute` 抛错会转换成当前 Tool 的 `isError: true` 结果，不会阻止同一并行批次的其他工具完成。
 
 模型层返回 `aborted` 时，`prompt()` 会解析为本次新增消息（包含取消 AssistantMessage）。配置错误、监听器异常、工具异常或其他未预期运行时异常仍以原始异常 rejection 传播，不会伪造 Agent 错误消息或生命周期事件。
 
@@ -98,11 +118,13 @@ agent_start
 turn_start
 message_start / message_end   # prompts
 message_start / message_update... / message_end  # assistant
-tool_execution_start / tool_execution_end         # 可选，按顺序
+tool_execution_start / tool_execution_end         # 可选；end 按完成顺序，结果消息按源顺序
 turn_end
 ```
 
 如果需要下一 Turn，则发送 `turn_start` 后重复模型调用；自然停止或策略停止后发送 `agent_end`。每个已正常完成的 Turn 恰好发送一次 `turn_end`，每次 Run 恰好发送一次 `agent_end`。
+
+批量工具事件和消息生命周期是两条顺序：并行工具的 `tool_execution_end` 反映真实完成顺序；所有工具执行完成后，Runtime 才按模型 ToolCall 顺序发出 ToolResult 的 `message_start` / `message_end`，再进入 `turn_end`。
 
 模型流的 `partial` AssistantMessage 会映射为 `message_start` 和 `message_update` 的 `message`，并替换 `currentContext` 中唯一的工作消息；只有 `message_end` 的最终 AssistantMessage 才写入 Agent transcript。Agent 状态通过 `streamingMessage` 暴露当前完整半成品，不自行解析 text、thinking 或 tool-call 增量。
 

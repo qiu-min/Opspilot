@@ -6,7 +6,7 @@ import type {
   StreamFn,
 } from './types.js';
 import type { AssistantMessage, Context, ToolResultMessage } from '@opspilot/model-gateway';
-import { executeToolCall } from './tool-executor.js';
+import { executeToolCalls } from './tool-executor.js';
 import { defaultConvertToLlm } from './convert-to-llm.js';
 
 /**
@@ -114,18 +114,19 @@ async function runLoop(
       const toolResults: ToolResultMessage[] = [];
 
       if (assistantMessage.finishReason === 'tool_calls' && toolCalls.length > 0) {
-        for (const toolCall of toolCalls) {
-          await emit({ type: 'tool_execution_start', toolCall });
+        const results = await executeToolCalls({
+          toolCalls,
+          tools: currentContext.tools ?? [],
+          assistantMessage,
+          context: currentContext,
+          beforeToolCall: config.beforeToolCall,
+          afterToolCall: config.afterToolCall,
+          toolExecution: config.toolExecution,
+          signal,
+          emit,
+        });
 
-          const result = await executeToolCall(toolCall, currentContext.tools ?? [], {
-            assistantMessage,
-            context: currentContext,
-            beforeToolCall: config.beforeToolCall,
-            afterToolCall: config.afterToolCall,
-            signal,
-          });
-
-          await emit({ type: 'tool_execution_end', toolCall, result });
+        for (const result of results) {
           toolResults.push(result);
           currentContext.messages.push(result);
           newMessages.push(result);

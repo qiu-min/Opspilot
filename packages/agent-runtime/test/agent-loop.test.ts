@@ -9,6 +9,7 @@ import {
   type Model,
   type ModelEventStream,
   type ModelToolCall,
+  type ToolResultMessage,
 } from '@opspilot/model-gateway';
 
 import { defaultConvertToLlm, runAgentLoop } from '../src/index.js';
@@ -146,6 +147,17 @@ function createExecuteSpy() {
   return vi.fn(async (_callId: string, _args: JsonObject, _signal?: AbortSignal) => ({
     content: [{ type: 'text' as const, text: 'executed' }],
   }));
+}
+
+/** 创建可由测试控制完成时机的 Promise。
+ * @returns 包含 Promise 和完成函数的延迟对象。
+ */
+function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolvePromise!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: resolvePromise };
 }
 
 describe('runAgentLoop tool loop', () => {
@@ -342,17 +354,79 @@ describe('runAgentLoop tool loop', () => {
     expect(events.slice(6, 14).map((event) => event.type)).toEqual([
       'tool_execution_start',
       'tool_execution_end',
-      'message_start',
-      'message_end',
       'tool_execution_start',
       'tool_execution_end',
       'message_start',
       'message_end',
+      'message_start',
+      'message_end',
     ]);
     expect(events[6]).toEqual({ type: 'tool_execution_start', toolCall: call1 });
-    expect(events[8]).toEqual({ type: 'message_start', message: expect.any(Object) });
-    expect(events[10]).toEqual({ type: 'tool_execution_start', toolCall: call2 });
+    expect(events[8]).toEqual({ type: 'tool_execution_start', toolCall: call2 });
+    expect(events[10]).toEqual({ type: 'message_start', message: expect.any(Object) });
     expect(events[12]).toEqual({ type: 'message_start', message: expect.any(Object) });
+  });
+
+  it('keeps Agent Loop tool result messages in source order during parallel execution', async () => {
+    const prompt = createPrompt();
+    const callA = { callId: 'call_A', name: 'tool_A', arguments: { service: 'api' } };
+    const callB = { callId: 'call_B', name: 'tool_B', arguments: { service: 'api' } };
+    const completionA = createDeferred<void>();
+    const completionB = createDeferred<void>();
+    const started = createDeferred<void>();
+    let startedCount = 0;
+    const toolA = createTextTool('tool_A', 'A', async () => {
+      startedCount += 1;
+      if (startedCount === 2) started.resolve();
+      await completionA.promise;
+      return { content: [] };
+    });
+    const toolB = createTextTool('tool_B', 'B', async () => {
+      startedCount += 1;
+      if (startedCount === 2) started.resolve();
+      await completionB.promise;
+      return { content: [] };
+    });
+    const assistant1 = createAssistantMessage('tool_calls', [callA, callB]);
+    const assistant2 = createAssistantMessage('stop');
+    const events: AgentEvent[] = [];
+
+    const run = runAgentLoop(
+      [prompt],
+      createContext([toolA, toolB]),
+      { ...config, toolExecution: 'parallel' },
+      createSequentialStreamFn([createAssistantStream(assistant1), createAssistantStream(assistant2)], []),
+      (event) => {
+        events.push(event);
+      },
+    );
+
+    await started.promise;
+    completionB.resolve();
+    await Promise.resolve();
+    completionA.resolve();
+    const result = await run;
+
+    expect(
+      events
+        .filter((event): event is Extract<AgentEvent, { type: 'tool_execution_end' }> =>
+          event.type === 'tool_execution_end',
+        )
+        .map((event) => event.toolCall.callId),
+    ).toEqual(['call_B', 'call_A']);
+    expect(
+      result
+        .filter((message): message is ToolResultMessage => message.role === 'tool')
+        .map((message) => message.callId),
+    ).toEqual(['call_A', 'call_B']);
+    expect(
+      events
+        .filter(
+          (event): event is Extract<AgentEvent, { type: 'message_start' }> =>
+            event.type === 'message_start' && event.message.role === 'tool',
+        )
+        .map((event) => ('callId' in event.message ? event.message.callId : '')),
+    ).toEqual(['call_A', 'call_B']);
   });
 
   it('does not execute tools when finishReason is length', async () => {

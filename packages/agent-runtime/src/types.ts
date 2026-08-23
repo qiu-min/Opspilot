@@ -21,6 +21,8 @@ export interface AgentTool extends Tool {
   execute(callId: string, args: JsonObject, signal?: AbortSignal): Promise<AgentToolResult>;
 }
 
+export type ToolExecutionMode = 'sequential' | 'parallel';
+
 /** 预留给业务包通过 declaration merging 扩展 Agent 消息。 */
 export interface CustomAgentMessages {}
 
@@ -96,6 +98,7 @@ export interface AgentOptions {
   readonly shouldStopAfterTurn?: AgentLoopConfig['shouldStopAfterTurn'];
   readonly beforeToolCall?: AgentLoopConfig['beforeToolCall'];
   readonly afterToolCall?: AgentLoopConfig['afterToolCall'];
+  readonly toolExecution?: ToolExecutionMode;
 }
 
 export interface ShouldStopAfterTurnContext {
@@ -153,6 +156,7 @@ export interface AgentLoopConfig {
     context: AfterToolCallContext,
     signal?: AbortSignal,
   ) => AfterToolCallResult | undefined | Promise<AfterToolCallResult | undefined>;
+  readonly toolExecution?: ToolExecutionMode;
 }
 
 export type MessageUpdateModelEvent = Extract<

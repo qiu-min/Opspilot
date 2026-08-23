@@ -7,9 +7,11 @@ import {
 } from '@opspilot/model-gateway';
 import type {
   AgentContext,
+  AgentEventSink,
   AgentLoopConfig,
   AgentTool,
   AgentToolResult,
+  ToolExecutionMode,
 } from './types.js';
 
 export interface ExecuteToolCallOptions {
@@ -20,33 +22,141 @@ export interface ExecuteToolCallOptions {
   readonly signal?: AbortSignal;
 }
 
+export interface ExecuteToolCallsOptions extends ExecuteToolCallOptions {
+  readonly toolCalls: readonly ModelToolCall[];
+  readonly tools: readonly AgentTool[];
+  readonly toolExecution?: ToolExecutionMode;
+  readonly emit: AgentEventSink;
+}
+
+interface PreparedToolCall {
+  readonly kind: 'prepared';
+  readonly toolCall: ModelToolCall;
+  readonly tool: AgentTool;
+  readonly args: JsonObject;
+}
+
+interface ImmediateToolCallOutcome {
+  readonly kind: 'immediate';
+  readonly result: ToolResultMessage;
+}
+
+type ToolCallPreparation = PreparedToolCall | ImmediateToolCallOutcome;
+
 interface ExecutedToolCallOutcome {
   readonly result: AgentToolResult;
   readonly isError: boolean;
 }
 
-/** 执行一次模型工具调用，并完成 before/after Tool 策略阶段。
+type ParallelToolCallEntry =
+  | ImmediateToolCallOutcome
+  | {
+      readonly kind: 'prepared';
+      readonly preparation: PreparedToolCall;
+    };
+
+/** 执行一批模型工具调用，默认保持顺序执行。
+ * @param options 工具调用、模型消息、工具集合、策略 hook、执行模式和事件出口。
+ * @returns 按模型 ToolCall 原始顺序排列的 ToolResultMessage。
+ */
+export async function executeToolCalls(
+  options: ExecuteToolCallsOptions,
+): Promise<ToolResultMessage[]> {
+  if (options.toolExecution === 'parallel') {
+    return await executeToolCallsParallel(options);
+  }
+
+  return await executeToolCallsSequential(options);
+}
+
+/** 顺序准备并顺序执行所有工具调用。
+ * @param options 当前批次的工具执行选项。
+ * @returns 按输入顺序完成的 ToolResultMessage。
+ */
+async function executeToolCallsSequential(
+  options: ExecuteToolCallsOptions,
+): Promise<ToolResultMessage[]> {
+  const results: ToolResultMessage[] = [];
+
+  for (const toolCall of options.toolCalls) {
+    if (options.signal?.aborted) break;
+
+    await options.emit({ type: 'tool_execution_start', toolCall });
+    const result = await executeToolCall(toolCall, options.tools, options);
+    await options.emit({ type: 'tool_execution_end', toolCall, result });
+    results.push(result);
+  }
+
+  return results;
+}
+
+/** 顺序准备工具，再并发执行已经允许执行的工具。
+ * @param options 当前批次的工具执行选项。
+ * @returns 按输入顺序排列、但按实际完成顺序发出结束事件的结果。
+ */
+async function executeToolCallsParallel(
+  options: ExecuteToolCallsOptions,
+): Promise<ToolResultMessage[]> {
+  const entries: ParallelToolCallEntry[] = [];
+
+  for (const toolCall of options.toolCalls) {
+    if (options.signal?.aborted) break;
+
+    await options.emit({ type: 'tool_execution_start', toolCall });
+    const preparation = await prepareToolCall(toolCall, options.tools, options);
+    if (preparation.kind === 'immediate') {
+      await options.emit({
+        type: 'tool_execution_end',
+        toolCall,
+        result: preparation.result,
+      });
+      entries.push(preparation);
+    } else {
+      entries.push({ kind: 'prepared', preparation });
+    }
+  }
+
+  return await Promise.all(
+    entries.map(async (entry) => {
+      if (entry.kind === 'immediate') return entry.result;
+
+      const executed = await executePreparedToolCall(entry.preparation, options.signal);
+      const result = await finalizeExecutedToolCall(entry.preparation, executed, options);
+      await options.emit({
+        type: 'tool_execution_end',
+        toolCall: entry.preparation.toolCall,
+        result,
+      });
+      return result;
+    }),
+  );
+}
+
+/** 准备一个 ToolCall，只查找工具、校验参数并运行 before hook。
  * @param toolCall 模型请求执行的工具调用。
  * @param tools 当前上下文中允许使用的工具。
- * @param options 当前 assistant、AgentContext、策略 hook 和取消信号。
- * @returns 成功结果或可恢复的 Tool error 结果。
+ * @param options 当前 assistant、上下文和 before hook 配置。
+ * @returns 可执行的准备结果，或不进入 execute/after 阶段的立即错误。
  */
-export async function executeToolCall(
+async function prepareToolCall(
   toolCall: ModelToolCall,
   tools: readonly AgentTool[],
   options?: ExecuteToolCallOptions,
-): Promise<ToolResultMessage> {
+): Promise<ToolCallPreparation> {
   const tool = tools.find((candidate) => candidate.name === toolCall.name);
 
   if (tool === undefined) {
-    return createToolErrorResult(toolCall, `Tool "${toolCall.name}" not found.`);
+    return {
+      kind: 'immediate',
+      result: createToolErrorResult(toolCall, `Tool "${toolCall.name}" not found.`),
+    };
   }
 
   let args: JsonObject;
   try {
     args = validateToolArguments(tool, toolCall);
   } catch (error: unknown) {
-    return createToolErrorResult(toolCall, getErrorMessage(error));
+    return { kind: 'immediate', result: createToolErrorResult(toolCall, getErrorMessage(error)) };
   }
 
   if (options?.beforeToolCall !== undefined) {
@@ -62,38 +172,65 @@ export async function executeToolCall(
       );
 
       if (decision?.block === true) {
-        return createToolErrorResult(
-          toolCall,
-          decision.reason ?? 'Tool execution was blocked.',
-        );
+        return {
+          kind: 'immediate',
+          result: createToolErrorResult(
+            toolCall,
+            decision.reason ?? 'Tool execution was blocked.',
+          ),
+        };
       }
     } catch (error: unknown) {
-      return createToolErrorResult(toolCall, getErrorMessage(error));
+      return { kind: 'immediate', result: createToolErrorResult(toolCall, getErrorMessage(error)) };
     }
   }
 
-  let executed: ExecutedToolCallOutcome;
+  return { kind: 'prepared', toolCall, tool, args };
+}
+
+/** 执行一个已准备好的 Tool，不负责 after hook 或消息封装。
+ * @param prepared 已通过查找、参数校验和 before hook 的工具调用。
+ * @param signal 当前 Agent Run 的取消信号。
+ * @returns Tool 原始结果，以及是否由执行异常产生错误。
+ */
+async function executePreparedToolCall(
+  prepared: PreparedToolCall,
+  signal?: AbortSignal,
+): Promise<ExecutedToolCallOutcome> {
   try {
-    const result = await tool.execute(toolCall.callId, args, options?.signal);
-    executed = { result, isError: false };
+    const result = await prepared.tool.execute(prepared.toolCall.callId, prepared.args, signal);
+    return { result, isError: false };
   } catch (error: unknown) {
-    executed = {
+    return {
       result: {
         content: [{ type: 'text', text: getErrorMessage(error) }],
       },
       isError: true,
     };
   }
+}
 
+/** 运行 after hook，并将已执行结果封装成 ToolResultMessage。
+ * @param prepared 已准备好的工具调用及参数。
+ * @param executed Tool 执行结果和错误状态。
+ * @param options 当前 assistant、上下文、after hook 和取消信号。
+ * @returns 经过 after hook 覆盖后的标准 ToolResultMessage。
+ */
+async function finalizeExecutedToolCall(
+  prepared: PreparedToolCall,
+  executed: ExecutedToolCallOutcome,
+  options?: ExecuteToolCallOptions,
+): Promise<ToolResultMessage> {
   let finalResult = executed.result;
   let finalIsError = executed.isError;
+
   if (options?.afterToolCall !== undefined) {
     try {
       const override = await options.afterToolCall(
         {
           assistantMessage: options.assistantMessage,
-          toolCall,
-          args,
+          toolCall: prepared.toolCall,
+          args: prepared.args,
           result: finalResult,
           isError: finalIsError,
           context: options.context,
@@ -109,11 +246,29 @@ export async function executeToolCall(
         finalIsError = override.isError ?? finalIsError;
       }
     } catch (error: unknown) {
-      return createToolErrorResult(toolCall, getErrorMessage(error));
+      return createToolErrorResult(prepared.toolCall, getErrorMessage(error));
     }
   }
 
-  return createToolResult(toolCall, finalResult, finalIsError);
+  return createToolResult(prepared.toolCall, finalResult, finalIsError);
+}
+
+/** 执行单个 ToolCall 的完整 prepare → execute → finalize 流程。
+ * @param toolCall 模型请求执行的工具调用。
+ * @param tools 当前上下文中允许使用的工具。
+ * @param options 当前 assistant、上下文、策略 hook 和取消信号。
+ * @returns 成功结果或可恢复的 Tool error 结果。
+ */
+export async function executeToolCall(
+  toolCall: ModelToolCall,
+  tools: readonly AgentTool[],
+  options?: ExecuteToolCallOptions,
+): Promise<ToolResultMessage> {
+  const preparation = await prepareToolCall(toolCall, tools, options);
+  if (preparation.kind === 'immediate') return preparation.result;
+
+  const executed = await executePreparedToolCall(preparation, options?.signal);
+  return await finalizeExecutedToolCall(preparation, executed, options);
 }
 
 /** 创建最终的 ToolResultMessage。
