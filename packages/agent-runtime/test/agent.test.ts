@@ -414,6 +414,71 @@ describe('Agent', () => {
     expect(agent.state.errorInfo).toBeUndefined();
   });
 
+  it('emits the finalized afterToolCall result in tool_execution_end', async () => {
+    const call: ModelToolCall = {
+      callId: 'call_after_content',
+      name: 'query_logs',
+      arguments: {},
+    };
+    const firstAssistant = assistantMessage('tool_calls', [call]);
+    const secondAssistant = assistantMessage();
+    const events: AgentEvent[] = [];
+    const agent = new Agent({
+      model,
+      tools: [textTool('query_logs', 'raw result')],
+      afterToolCall: () => ({
+        content: [{ type: 'text', text: 'final result' }],
+      }),
+      streamFn: sequentialStreamFn([assistantStream(firstAssistant), assistantStream(secondAssistant)]),
+    });
+    agent.subscribe((event) => {
+      events.push(event);
+    });
+
+    const result = await agent.prompt(userMessage('finalize tool result'));
+    const toolResult = result[2];
+    const toolEnd = events.find(
+      (event): event is Extract<AgentEvent, { type: 'tool_execution_end' }> =>
+        event.type === 'tool_execution_end',
+    );
+
+    expect(toolResult).toMatchObject({
+      role: 'tool',
+      content: [{ type: 'text', text: 'final result' }],
+      isError: false,
+    });
+    expect(toolEnd?.result).toBe(toolResult);
+    expect(toolEnd?.result.content).toEqual([{ type: 'text', text: 'final result' }]);
+  });
+
+  it('keeps afterToolCall exceptions recoverable inside the Agent run', async () => {
+    const call: ModelToolCall = {
+      callId: 'call_after_throw',
+      name: 'query_logs',
+      arguments: {},
+    };
+    const firstAssistant = assistantMessage('tool_calls', [call]);
+    const secondAssistant = assistantMessage();
+    const agent = new Agent({
+      model,
+      tools: [textTool('query_logs', 'raw result')],
+      afterToolCall: () => {
+        throw new Error('result policy failed');
+      },
+      streamFn: sequentialStreamFn([assistantStream(firstAssistant), assistantStream(secondAssistant)]),
+    });
+
+    const result = await agent.prompt(userMessage('after hook failure'));
+
+    expect(result[2]).toMatchObject({
+      role: 'tool',
+      isError: true,
+      content: [{ type: 'text', text: 'result policy failed' }],
+    });
+    expect(result).toHaveLength(4);
+    expect(agent.state.errorInfo).toBeUndefined();
+  });
+
   it('resets messages but keeps configuration and rejects reset while running', async () => {
     const tool = textTool('query_logs', 'logs');
     const firstAgent = new Agent({

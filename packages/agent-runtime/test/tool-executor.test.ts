@@ -55,7 +55,8 @@ const assistantMessage: AssistantMessage = {
  * @returns 包含 assistant、上下文和 hook 的执行选项。
  */
 function createExecutionOptions(
-  beforeToolCall: NonNullable<ExecuteToolCallOptions['beforeToolCall']>,
+  beforeToolCall?: ExecuteToolCallOptions['beforeToolCall'],
+  afterToolCall?: ExecuteToolCallOptions['afterToolCall'],
 ): ExecuteToolCallOptions {
   return {
     assistantMessage,
@@ -63,7 +64,8 @@ function createExecutionOptions(
       messages: [],
       tools: [tool],
     },
-    beforeToolCall,
+    ...(beforeToolCall === undefined ? {} : { beforeToolCall }),
+    ...(afterToolCall === undefined ? {} : { afterToolCall }),
   };
 }
 
@@ -224,5 +226,112 @@ it('converts beforeToolCall exceptions into recoverable Tool errors', async () =
 
   expect(result.isError).toBe(true);
   expect(result.content).toEqual([{ type: 'text', text: 'policy failed' }]);
+  expect(execute).not.toHaveBeenCalled();
+});
+
+it('keeps the original result when afterToolCall returns undefined', async () => {
+  execute.mockClear();
+  execute.mockResolvedValue({
+    content: [{ type: 'text', text: 'raw logs' }],
+  });
+
+  const result = await executeToolCall(
+    toolCall,
+    [tool],
+    createExecutionOptions(undefined, () => undefined),
+  );
+
+  expect(result).toMatchObject({
+    content: [{ type: 'text', text: 'raw logs' }],
+    isError: false,
+  });
+});
+
+it('allows afterToolCall to override content and isError independently', async () => {
+  execute.mockClear();
+  execute.mockResolvedValue({
+    content: [{ type: 'text', text: 'raw logs' }],
+  });
+
+  const contentResult = await executeToolCall(
+    toolCall,
+    [tool],
+    createExecutionOptions(undefined, () => ({
+      content: [{ type: 'text', text: 'sanitized logs' }],
+    })),
+  );
+  const errorResult = await executeToolCall(
+    toolCall,
+    [tool],
+    createExecutionOptions(undefined, () => ({ isError: true })),
+  );
+
+  expect(contentResult.content).toEqual([{ type: 'text', text: 'sanitized logs' }]);
+  expect(contentResult.isError).toBe(false);
+  expect(errorResult.content).toEqual([{ type: 'text', text: 'raw logs' }]);
+  expect(errorResult.isError).toBe(true);
+});
+
+it('passes tool execution errors through afterToolCall before finalizing', async () => {
+  execute.mockClear();
+  execute.mockRejectedValue(new Error('ECONNREFUSED'));
+  let receivedIsError: boolean | undefined;
+  let receivedContent: readonly { type: 'text'; text: string }[] | undefined;
+
+  const result = await executeToolCall(
+    toolCall,
+    [tool],
+    createExecutionOptions(undefined, ({ result: executed, isError }) => {
+      receivedIsError = isError;
+      receivedContent = executed.content;
+      return {
+        content: [{ type: 'text', text: '日志服务暂时不可用。' }],
+      };
+    }),
+  );
+
+  expect(receivedIsError).toBe(true);
+  expect(receivedContent).toEqual([{ type: 'text', text: 'ECONNREFUSED' }]);
+  expect(result.content).toEqual([{ type: 'text', text: '日志服务暂时不可用。' }]);
+  expect(result.isError).toBe(true);
+});
+
+it('converts afterToolCall exceptions into recoverable Tool errors', async () => {
+  execute.mockClear();
+  execute.mockResolvedValue({
+    content: [{ type: 'text', text: 'raw logs' }],
+  });
+
+  const result = await executeToolCall(
+    toolCall,
+    [tool],
+    createExecutionOptions(undefined, () => {
+      throw new Error('result policy failed');
+    }),
+  );
+
+  expect(result.isError).toBe(true);
+  expect(result.content).toEqual([{ type: 'text', text: 'result policy failed' }]);
+});
+
+it('does not call afterToolCall for a beforeToolCall block', async () => {
+  execute.mockClear();
+  let afterCalled = false;
+
+  const result = await executeToolCall(
+    toolCall,
+    [tool],
+    createExecutionOptions(
+      () => ({ block: true, reason: 'blocked' }),
+      () => {
+        afterCalled = true;
+        return undefined;
+      },
+    ),
+  );
+
+  expect(result.content).toEqual([{ type: 'text', text: 'blocked' }]);
+  expect(result.isError).toBe(true);
+  expect(afterCalled).toBe(false);
   expect(execute).not.toHaveBeenCalled();
 });

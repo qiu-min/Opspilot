@@ -121,6 +121,7 @@ async function runLoop(
             assistantMessage,
             context: currentContext,
             beforeToolCall: config.beforeToolCall,
+            afterToolCall: config.afterToolCall,
             signal,
           });
 
