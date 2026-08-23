@@ -40,6 +40,7 @@ type ActiveRun = {
   readonly abortController: AbortController;
   readonly promise: Promise<void>;
   readonly resolve: () => void;
+  currentModel: AgentOptions['model'];
 };
 
 /**
@@ -210,11 +211,22 @@ export class Agent {
    * @returns 包含模型、现有 hooks 和队列 drain callback 的 Loop 配置。
    */
   private createLoopConfig(): AgentLoopConfig {
+    const prepareNextTurn = this.prepareNextTurn;
+
     return {
       model: this._state.model,
       transformContext: this.transformContext,
       convertToLlm: this.convertToLlm,
-      prepareNextTurn: this.prepareNextTurn,
+      prepareNextTurn:
+        prepareNextTurn === undefined
+          ? undefined
+          : async (context, signal) => {
+              const update = await prepareNextTurn(context, signal);
+              if (update?.model !== undefined && this.activeRun !== undefined) {
+                this.activeRun.currentModel = update.model;
+              }
+              return update;
+            },
       getSteeringMessages: () => this.drainSteeringQueue(),
       getFollowUpMessages: () => this.drainFollowUpQueue(),
       shouldStopAfterTurn: this.shouldStopAfterTurn,
@@ -270,6 +282,7 @@ export class Agent {
       abortController,
       promise,
       resolve: resolveRun,
+      currentModel: this._state.model,
     };
 
     this.activeRun = activeRun;
@@ -307,12 +320,13 @@ export class Agent {
     const message = error instanceof Error ? error.message : String(error);
     const aborted = abortController.signal.aborted;
     const reason = aborted ? 'aborted' : 'error';
+    const model = this.activeRun?.currentModel ?? this._state.model;
     // 该消息由 Agent Runtime 在未预期运行异常时人工生成，用来保持 transcript 和 Agent 生命周期完整；它不是 Provider 返回的模型消息。
     const failureMessage: AssistantMessage = {
       role: 'assistant',
-      api: this._state.model.api,
-      provider: this._state.model.provider,
-      model: this._state.model.id,
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
       content: [],
       finishReason: reason,
       errorMessage: message,

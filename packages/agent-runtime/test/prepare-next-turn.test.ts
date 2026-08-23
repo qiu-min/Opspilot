@@ -590,4 +590,74 @@ describe('prepareNextTurn', () => {
 
     expect(prepareNextTurn).toHaveBeenCalledTimes(2);
   });
+
+  it('uses the active run model for a runtime failure after prepareNextTurn switches models', async () => {
+    const call: ModelToolCall = {
+      callId: 'call_1',
+      name: 'query_logs',
+      arguments: {},
+    };
+    const firstAssistant = assistantMessage(modelA, 'tool_calls', [call]);
+    const models: Model[] = [];
+    let transformCallCount = 0;
+    const agent = new Agent({
+      model: modelA,
+      tools: [textTool('query_logs', 'logs found')],
+      transformContext: (messages) => {
+        transformCallCount += 1;
+        if (transformCallCount === 2) throw new Error('second turn runtime failed');
+        return messages;
+      },
+      prepareNextTurn: () => ({ model: modelB }),
+      streamFn: sequentialStreamFn([assistantStream(firstAssistant)], models, []),
+    });
+
+    const result = await agent.prompt(userMessage('switch model'));
+    const failure = result.at(-1);
+
+    expect(failure).toMatchObject({
+      role: 'assistant',
+      api: modelB.api,
+      provider: modelB.provider,
+      model: modelB.id,
+      finishReason: 'error',
+      errorMessage: 'second turn runtime failed',
+    });
+    expect(agent.state.model).toBe(modelA);
+    expect(agent.state.errorInfo).toEqual({
+      source: 'runtime',
+      reason: 'error',
+      message: 'second turn runtime failed',
+    });
+  });
+
+  it('keeps the previous active model when prepareNextTurn throws before switching models', async () => {
+    const call: ModelToolCall = {
+      callId: 'call_1',
+      name: 'query_logs',
+      arguments: {},
+    };
+    const firstAssistant = assistantMessage(modelA, 'tool_calls', [call]);
+    const agent = new Agent({
+      model: modelA,
+      tools: [textTool('query_logs', 'logs found')],
+      prepareNextTurn: () => {
+        throw new Error('prepare failed');
+      },
+      streamFn: sequentialStreamFn([assistantStream(firstAssistant)], [], []),
+    });
+
+    const result = await agent.prompt(userMessage('prepare failure'));
+    const failure = result.at(-1);
+
+    expect(failure).toMatchObject({
+      role: 'assistant',
+      api: modelA.api,
+      provider: modelA.provider,
+      model: modelA.id,
+      finishReason: 'error',
+      errorMessage: 'prepare failed',
+    });
+    expect(agent.state.model).toBe(modelA);
+  });
 });
