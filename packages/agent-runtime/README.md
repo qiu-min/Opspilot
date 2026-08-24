@@ -17,7 +17,7 @@ runAgentLoop
 
 ## 循环终止策略
 
-Runtime 只保留自然停止、上层策略停止和模型终止错误三类回合结果。Runtime 不设置 `maxTurns`、`maxSteps` 或其他隐式循环上限。
+Agent Loop 主路径只处理自然停止、上层策略停止和模型终止错误三类回合结果。Runtime 不设置 `maxTurns`、`maxSteps` 或其他隐式循环上限；Loop 外层的 `Agent.runWithLifecycle()` 另行负责把未预期 Runtime failure 转换为完整结束的失败 Run。
 
 ### 1. 自然停止
 
@@ -65,7 +65,7 @@ assistant response 完成
 
 返回 `true` 时，当前 Turn 已经完整结束，Runtime 发送 `agent_end` 并停止，不再开始下一 Turn。即使当前 Turn 有 ToolCall，也不会跳过工具执行。
 
-### 3. 模型终止错误与外部取消
+### 3. 模型失败与外部取消
 
 `model-gateway` 将模型错误和取消归一化为 `finishReason: 'error' | 'aborted'` 的最终 `AssistantMessage`。Runtime 会照常完成：
 
@@ -109,7 +109,7 @@ finalize → 执行 afterToolCall 并生成 ToolResultMessage
 
 `beforeToolCall` 阻止或抛错会生成立即 Tool error，不会调用 `execute` 或 `afterToolCall`。`execute` 抛错会转换成当前 Tool 的 `isError: true` 结果，不会阻止同一并行批次的其他工具完成。
 
-模型层返回 `aborted` 时，`prompt()` 会解析为本次新增消息（包含取消 AssistantMessage）。配置错误、监听器异常、工具异常或其他未预期运行时异常仍以原始异常 rejection 传播，不会伪造 Agent 错误消息或生命周期事件。
+模型层返回 `error` 或 `aborted` 时，`prompt()` 会解析为本次新增消息（包含失败或取消的 `AssistantMessage`），而不是将模型失败作为普通 Runtime exception rejection。工具查找、参数校验、`beforeToolCall`、`execute` 和 `afterToolCall` 阶段的异常会转换为当前 Tool 的 `isError: true` 结果，继续按工具生命周期处理；它们不等同于 Agent Runtime failure。
 
 ## 回合事件顺序
 
@@ -517,41 +517,94 @@ shouldStopAfterTurn
 
 ### 15. 统一 Agent Runtime Error
 
-Agent Runtime 需要区分两类错误来源：
+一次运行中的错误分为三类，调用方需要区分 Agent Runtime 的错误与外部事件消费者的错误。
 
-```text
-model
-runtime
+#### Model failure
+
+`model-gateway` 会把模型调用错误或取消归一化成最终 `AssistantMessage`：
+
+```ts
+finishReason: 'error' | 'aborted'
 ```
 
-模型错误来自 Model Gateway 返回的 `AssistantMessage`。
-
-Runtime 自己发生异常时，则生成 synthetic `AssistantMessage`，保持：
+Agent Runtime 正常消费该消息，并保持完整生命周期：
 
 ```text
-message_end
-turn_end
-agent_end
+message_start / message_update...
+→ message_end
+→ turn_end
+→ agent_end
 ```
 
-等生命周期完整。
+此时 `AgentState.errorMessage` 保存消息中的错误文本，并记录：
 
-同时通过：
+```ts
+AgentErrorInfo {
+  source: 'model'
+  reason: 'error' | 'aborted'
+  message: string
+}
+```
+
+模型失败不会作为普通 Runtime exception 向 `prompt()` 调用方抛出。
+
+#### Runtime failure
+
+如果 Runtime 自身执行过程中出现未预期异常，例如 `transformContext`、`convertToLlm`、`prepareNextTurn`、`shouldStopAfterTurn` 或 `streamFn` 的同步异常，`Agent.runWithLifecycle()` 会捕获它，并通过 `handleRunFailure()` 生成 synthetic `AssistantMessage`：
+
+```ts
+{
+  role: 'assistant',
+  finishReason: 'error' | 'aborted',
+  errorMessage: string,
+}
+```
+
+该消息由 Agent Runtime 为保持 transcript 和生命周期完整而生成，不是 Provider 返回的模型消息。随后发出：
 
 ```text
-AgentErrorInfo
+message_start
+→ message_end
+→ turn_end
+→ agent_end
 ```
 
-记录真正的错误来源。
+同时记录：
+
+```ts
+AgentErrorInfo {
+  source: 'runtime'
+  reason: 'error' | 'aborted'
+  message: string
+}
+```
+
+因此普通 Runtime failure 会转换为一次完整结束的 Agent Run，而不是直接破坏生命周期。
+
+#### Event listener failure
+
+`Agent.subscribe()` 注册的事件监听器属于 Runtime 外部消费者。如果 listener 在消费 `AgentEvent` 时抛出异常，Runtime 会先以 `AgentEventListenerError` 标记该异常，再解包原始 cause；`prompt()` 最终以原始异常 reject：
+
+```text
+listener throws
+→ AgentEventListenerError
+→ unwrap original cause
+→ prompt() reject
+```
+
+Listener failure 不会被包装成 synthetic `AssistantMessage`，也不会被记录为 `AgentErrorInfo`，因为它不代表 Model failure 或 Agent Runtime execution failure。
 
 因此：
 
 ```text
 AssistantMessage
-负责保持 transcript 完整
+= 保持 Agent transcript / lifecycle 完整
 
 AgentErrorInfo
-负责诊断错误来源
+= 区分 model / runtime 错误来源
+
+listener exception
+= 外部事件消费者异常，直接 reject
 ```
 
 ---
