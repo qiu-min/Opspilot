@@ -37,33 +37,109 @@ describe('Connector contracts', () => {
     );
   });
 
-  it('keeps strict output schemas with source metadata and no evidence mapping', () => {
+  it('compares input time ranges by timestamp across timezone offsets', () => {
+    const validRange = {
+      startTime: '2026-08-13T10:00:00+08:00',
+      endTime: '2026-08-13T03:00:00Z',
+    };
+    const invalidRange = {
+      startTime: '2026-08-13T12:00:00+08:00',
+      endTime: '2026-08-13T03:00:00Z',
+    };
+
+    expect(
+      queryLogsInputSchema.safeParse({ service: 'billing-api', ...validRange }).success,
+    ).toBe(true);
+    expect(
+      queryMetricsInputSchema.safeParse({
+        service: 'billing-api',
+        metric: 'http_error_rate',
+        ...validRange,
+      }).success,
+    ).toBe(true);
+    expect(
+      queryLogsInputSchema.safeParse({ service: 'billing-api', ...invalidRange }).success,
+    ).toBe(false);
+    expect(
+      queryMetricsInputSchema.safeParse({
+        service: 'billing-api',
+        metric: 'http_error_rate',
+        ...invalidRange,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('requires non-empty output collections and consistent log counts', () => {
+    const common = {
+      summary: 'fixture result',
+      sourceUri: 'fixture://test/result',
+    };
+    const logEntry = {
+      timestamp: '2026-08-13T10:00:00.000Z',
+      service: 'billing-api',
+      level: 'INFO' as const,
+      message: 'request completed',
+    };
+    const timeRange = {
+      timeRangeStart: '2026-08-13T10:00:00.000Z',
+      timeRangeEnd: '2026-08-13T10:15:00.000Z',
+    };
+
+    expect(
+      queryLogsOutputSchema.safeParse({
+        ...common,
+        ...timeRange,
+        entries: [logEntry],
+        count: 1,
+      }).success,
+    ).toBe(true);
+    expect(
+      queryLogsOutputSchema.safeParse({
+        ...common,
+        ...timeRange,
+        entries: [logEntry],
+        count: 999,
+      }).success,
+    ).toBe(false);
+    expect(
+      queryLogsOutputSchema.safeParse({
+        ...common,
+        ...timeRange,
+        entries: [],
+        count: 0,
+      }).success,
+    ).toBe(false);
+    expect(
+      queryMetricsOutputSchema.safeParse({
+        ...common,
+        ...timeRange,
+        metric: 'http_error_rate',
+        unit: 'ratio',
+        samples: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      queryMetricsOutputSchema.safeParse({
+        ...common,
+        ...timeRange,
+        metric: 'http_error_rate',
+        unit: 'ratio',
+        samples: [{ timestamp: '2026-08-13T10:00:00.000Z', value: 0.1 }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('keeps valid Runbook and topology outputs strict', () => {
     const common = {
       summary: 'fixture result',
       sourceUri: 'fixture://test/result',
     };
     expect(
-      queryLogsOutputSchema.safeParse({
+      searchRunbookOutputSchema.safeParse({
         ...common,
-        entries: [],
-        count: 0,
-        timeRangeStart: '2026-08-13T10:00:00.000Z',
-        timeRangeEnd: '2026-08-13T10:15:00.000Z',
+        title: 'Runbook',
+        excerpts: ['Step 1'],
       }).success,
-    ).toBe(true);
-    expect(
-      queryMetricsOutputSchema.safeParse({
-        ...common,
-        metric: 'http_error_rate',
-        unit: 'ratio',
-        samples: [],
-        timeRangeStart: '2026-08-13T10:00:00.000Z',
-        timeRangeEnd: '2026-08-13T10:15:00.000Z',
-      }).success,
-    ).toBe(true);
-    expect(
-      searchRunbookOutputSchema.safeParse({ ...common, title: 'Runbook', excerpts: ['Step 1'] })
-        .success,
     ).toBe(true);
     expect(
       getServiceTopologyOutputSchema.safeParse({

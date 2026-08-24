@@ -24,7 +24,7 @@ export const queryLogsInputSchema = z
     query: z.string().trim().min(1).max(200).optional(),
   })
   .strict()
-  .refine((value) => value.startTime <= value.endTime, {
+  .refine((value) => Date.parse(value.startTime) <= Date.parse(value.endTime), {
     message: 'startTime must not be after endTime.',
   });
 export type QueryLogsInput = z.infer<typeof queryLogsInputSchema>;
@@ -48,7 +48,7 @@ export const queryMetricsInputSchema = z
     ...dateRangeFields,
   })
   .strict()
-  .refine((value) => value.startTime <= value.endTime, {
+  .refine((value) => Date.parse(value.startTime) <= Date.parse(value.endTime), {
     message: 'startTime must not be after endTime.',
   });
 export type QueryMetricsInput = z.infer<typeof queryMetricsInputSchema>;
@@ -82,21 +82,30 @@ const metricSampleSchema = z
 
 export const queryLogsOutputSchema = z
   .object({
-    entries: z.array(logEntrySchema),
+    entries: z.array(logEntrySchema).min(1),
     count: z.number().int().nonnegative(),
     summary: summarySchema,
     sourceUri: sourceUriSchema,
     timeRangeStart: timestampSchema,
     timeRangeEnd: timestampSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.count !== value.entries.length) {
+      context.addIssue({
+        code: 'custom',
+        path: ['count'],
+        message: 'count must equal entries.length.',
+      });
+    }
+  });
 export type QueryLogsOutput = z.infer<typeof queryLogsOutputSchema>;
 
 export const queryMetricsOutputSchema = z
   .object({
     metric: supportedMetricSchema,
     unit: z.string().min(1),
-    samples: z.array(metricSampleSchema),
+    samples: z.array(metricSampleSchema).min(1),
     summary: summarySchema,
     sourceUri: sourceUriSchema,
     timeRangeStart: timestampSchema,
