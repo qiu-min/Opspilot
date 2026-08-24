@@ -133,3 +133,580 @@ turn_end
 ## 消息转换
 
 `AgentContext.messages` 使用 `AgentMessage[]`。每次模型调用前，Runtime 通过 `config.convertToLlm` 或 `defaultConvertToLlm` 将其转换为 model-gateway 的 `Message[]`。默认转换器保留标准 `user`、`assistant`、`tool` 消息，并过滤未知自定义消息。
+
+
+# Agent Runtime：职责与边界
+
+## 定位
+
+`agent-runtime` 是 OpsPilot 的 **通用 Agent 执行引擎**。
+
+它建立在 `model-gateway` 提供的统一模型能力之上，负责管理 Agent 从收到用户消息，到模型推理、工具调用、工具执行、继续推理，直到最终结束的完整运行过程。
+
+它对应 Pi 架构中的 `pi-agent-core` 层。
+
+---
+
+## 核心职责
+
+### 1. 驱动 Agent Loop
+
+Agent Runtime 最核心的职责是执行循环：
+
+```text
+User Message
+     ↓
+LLM
+     ↓
+AssistantMessage
+     ↓
+是否存在 Tool Call？
+   ├── No → Agent 结束
+   │
+   └── Yes
+         ↓
+      执行 Tool
+         ↓
+      Tool Result
+         ↓
+   再次提交给 LLM
+         ↓
+       下一轮
+```
+
+因此 Agent Runtime 决定的是：
+
+> 模型的一次返回之后，Agent 接下来应该做什么。
+
+而不是模型请求本身该怎么发送。
+
+---
+
+### 2. 管理 Turn
+
+一个 Agent Run 可以包含多个 Turn。
+
+例如：
+
+```text
+Turn 1
+LLM
+↓
+Tool Call
+↓
+Tool Result
+
+Turn 2
+LLM
+↓
+Tool Call
+↓
+Tool Result
+
+Turn 3
+LLM
+↓
+Final Answer
+```
+
+Agent Runtime 负责：
+
+* Turn 开始
+* 模型运行
+* 工具执行
+* Tool Result
+* Turn 结束
+* 判断是否进入下一 Turn
+
+---
+
+### 3. 执行工具调用
+
+当模型返回：
+
+```text
+finishReason = tool_calls
+```
+
+并包含 `toolCalls` 时，Agent Runtime 负责找到对应工具并执行：
+
+```ts
+tool.execute(callId, args, signal)
+```
+
+然后将工具结果转换成：
+
+```text
+ToolResultMessage
+```
+
+并加入 Agent Context，供下一轮模型调用使用。
+
+---
+
+### 4. 管理工具执行策略
+
+Agent Runtime 控制多个 Tool Call 如何执行。
+
+目前支持：
+
+```text
+sequential
+parallel
+```
+
+因此工具调用是否并行属于 Runtime 执行策略，而不是 Model Gateway 的职责。
+
+---
+
+### 5. 提供 Tool Hooks
+
+工具真正执行前后可以经过：
+
+```text
+beforeToolCall
+afterToolCall
+```
+
+例如：
+
+```text
+Model Tool Call
+      ↓
+beforeToolCall
+      ↓
+执行 / 拦截
+      ↓
+Tool Execute
+      ↓
+afterToolCall
+      ↓
+最终 ToolResult
+```
+
+这为未来实现以下能力提供扩展点：
+
+* 权限控制
+* 危险操作审批
+* 参数修改
+* Tool Result 修正
+* 日志
+* 审计
+
+---
+
+### 6. 管理 Agent 生命周期事件
+
+Agent Runtime 对外提供统一的 Agent Event：
+
+```text
+Agent
+├── agent_start
+└── agent_end
+
+Turn
+├── turn_start
+└── turn_end
+
+Message
+├── message_start
+├── message_update
+└── message_end
+
+Tool
+├── tool_execution_start
+└── tool_execution_end
+```
+
+这些事件可以被：
+
+* UI
+* 日志
+* Trace
+* Observability
+* Debugger
+
+消费。
+
+---
+
+### 7. 将 Model Event 提升为 Agent Event
+
+Model Gateway 提供的是模型粒度事件，例如：
+
+```text
+text.delta
+thinking.delta
+tool-call.delta
+```
+
+Agent Runtime 会把这些事件映射到：
+
+```text
+message_update
+```
+
+因此：
+
+```text
+ModelEvent = 模型正在发生什么
+
+AgentEvent = Agent 当前生命周期正在发生什么
+```
+
+两者属于不同抽象层级。
+
+---
+
+### 8. 管理 Agent State
+
+`Agent` 类维护当前 Agent 的实时状态：
+
+```text
+AgentState
+├── model
+├── messages
+├── tools
+├── isRunning
+├── streamingMessage
+├── pendingToolCalls
+├── errorMessage
+└── errorInfo
+```
+
+事件发生时先更新 State，再通知监听器。
+
+因此：
+
+```text
+AgentEvent = 时间轴
+
+AgentState = 当前快照
+```
+
+上层 UI 可以通过 Event 获取变化过程，也可以通过 State 获取当前运行状态。
+
+---
+
+### 9. 保存会话消息
+
+Agent Runtime 负责维护 Agent 消息历史。
+
+其中：
+
+```text
+_state.messages
+```
+
+表示已经正式完成并提交的消息。
+
+而：
+
+```text
+streamingMessage
+```
+
+表示当前正在流式生成、但还没有正式提交的消息。
+
+这样可以避免把实时 Partial Message 和正式 Conversation History 混在一起。
+
+---
+
+### 10. 管理 Abort
+
+Agent Runtime 为一次 Agent Run 建立 `AbortController`。
+
+取消信号会继续传给：
+
+```text
+Agent
+ ↓
+Agent Loop
+ ↓
+Model Request / Tool Execution
+```
+
+因此 Agent Runtime 是整个 Agent Run 的取消边界。
+
+---
+
+### 11. 支持 Steering
+
+Steering 表示：
+
+> 当前 Agent 任务还没结束，但用户希望新的消息尽快影响接下来的执行。
+
+Steering Message 会在合适的 Turn 边界加入 Context。
+
+例如：
+
+```text
+Agent 正在执行任务
+
+用户：
+“不要查生产环境，只查测试环境”
+
+↓ Steering
+
+下一 Turn 开始前加入 Context
+
+↓
+Agent 根据新要求继续
+```
+
+---
+
+### 12. 支持 Follow-up
+
+Follow-up 表示：
+
+> 当前任务先自然执行完成，之后继续处理新的用户请求。
+
+因此：
+
+```text
+steering
+= 修改当前任务
+
+follow-up
+= 当前任务之后继续一个任务
+```
+
+---
+
+### 13. 提供 Context Transform 扩展点
+
+在真正调用 Model Gateway 前，Agent Runtime 可以通过：
+
+```text
+transformContext
+convertToLlm
+```
+
+处理 Agent Messages。
+
+这为未来实现以下能力提供基础：
+
+* Context Window 裁剪
+* 消息压缩
+* Summary
+* 自定义 AgentMessage
+* RAG 消息注入
+* Provider 前消息转换
+
+---
+
+### 14. 提供 Turn 控制扩展点
+
+Runtime 提供：
+
+```text
+prepareNextTurn
+shouldStopAfterTurn
+```
+
+用于控制：
+
+* 下一轮 Context
+* 下一轮 Model
+* 是否提前结束 Agent
+
+因此 Agent Loop 不需要把所有策略硬编码到循环内部。
+
+---
+
+### 15. 统一 Agent Runtime Error
+
+Agent Runtime 需要区分两类错误来源：
+
+```text
+model
+runtime
+```
+
+模型错误来自 Model Gateway 返回的 `AssistantMessage`。
+
+Runtime 自己发生异常时，则生成 synthetic `AssistantMessage`，保持：
+
+```text
+message_end
+turn_end
+agent_end
+```
+
+等生命周期完整。
+
+同时通过：
+
+```text
+AgentErrorInfo
+```
+
+记录真正的错误来源。
+
+因此：
+
+```text
+AssistantMessage
+负责保持 transcript 完整
+
+AgentErrorInfo
+负责诊断错误来源
+```
+
+---
+
+## Agent Runtime 不负责什么
+
+### 不负责 Provider API
+
+Agent Runtime 不应该知道：
+
+* OpenAI API
+* Kimi API
+* HTTP Endpoint
+* API Key
+* Provider SDK
+* SSE 原始结构
+* Provider Tool Call 格式
+
+这些全部属于 `model-gateway`。
+
+---
+
+### 不负责 Provider 响应适配
+
+例如：
+
+```text
+delta.reasoning_content
+response.output
+choices[].delta
+```
+
+Agent Runtime 不应该直接解析这些字段。
+
+它只应该消费 Model Gateway 已经统一好的：
+
+```text
+ModelEventStream
+AssistantMessage
+```
+
+---
+
+### 不负责具体业务领域
+
+Agent Runtime 是一个通用执行引擎。
+
+它不应该包含：
+
+```text
+运维诊断逻辑
+日志分析规则
+指标诊断规则
+服务器知识
+数据库故障规则
+```
+
+这些属于 OpsPilot 的业务 Agent 或 Tool 层。
+
+---
+
+### 不负责工具具体实现
+
+Agent Runtime 负责：
+
+```text
+决定什么时候执行 Tool
+```
+
+但不负责：
+
+```text
+Tool 内部具体怎么完成任务
+```
+
+例如：
+
+```text
+query_logs()
+query_metrics()
+restart_service()
+```
+
+这些属于 Tool Gateway 或业务工具实现。
+
+---
+
+## 与 Model Gateway 的边界
+
+两层之间最核心的关系是：
+
+```text
+                OpsPilot Agent
+                     │
+                     ▼
+┌─────────────────────────────────┐
+│          agent-runtime          │
+│                                 │
+│ Agent Loop                      │
+│ Turn                            │
+│ Tool Execution                  │
+│ Agent Event                     │
+│ Agent State                     │
+│ Abort / Steering / Follow-up    │
+└───────────────┬─────────────────┘
+                │
+                │ Unified Context
+                │ Unified ModelEvent
+                │ AssistantMessage
+                ▼
+┌─────────────────────────────────┐
+│          model-gateway          │
+│                                 │
+│ Unified Model API               │
+│ Provider Adapter                │
+│ Message / Tool / Event Contract │
+└───────────────┬─────────────────┘
+                │
+        ┌───────┴────────┐
+        ▼                ▼
+     OpenAI            Kimi
+```
+
+依赖方向应该始终保持：
+
+```text
+agent-runtime
+      ↓
+model-gateway
+      ↓
+Provider
+```
+
+而不能反过来。
+
+---
+
+## 最重要的边界原则
+
+### Model Gateway
+
+回答：
+
+> “怎样用统一的协议调用模型？”
+
+### Agent Runtime
+
+回答：
+
+> “模型返回结果之后，Agent 下一步应该做什么？”
+
+这是两层最核心的职责分界。
+
+---
+
+## 一句话理解
+
+> `agent-runtime` 解决的是“如何让模型、工具和上下文不断循环，从而形成一个真正的 Agent”的问题。

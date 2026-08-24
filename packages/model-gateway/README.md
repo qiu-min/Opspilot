@@ -327,3 +327,259 @@ tool-gateway
 ~~~
 
 因此，model-gateway 只提供模型看到的最小工具声明，并归一化模型返回的 Tool Call；它不会调用 execute()，也不会实现 Agent Loop。
+
+# Model Gateway：职责与边界
+
+## 定位
+
+`model-gateway` 是 OpsPilot 的 **模型访问与协议统一层**。
+
+它位于具体模型供应商与上层 Agent Runtime 之间，负责屏蔽 OpenAI、Kimi 等不同模型供应商在 API、请求结构、响应结构、流式事件、工具调用和错误表示上的差异，并向上层暴露一套稳定、统一的模型调用契约。
+
+它对应 Pi 架构中的 `pi-ai` 层。
+
+---
+
+## 核心职责
+
+### 1. 统一模型调用接口
+
+上层不直接依赖具体 Provider SDK，而是通过统一的 `ModelGateway` 接口访问模型。
+
+目前主要提供：
+
+```ts
+stream(model, context, options)
+complete(model, context, options)
+```
+
+其中：
+
+* `stream()` 返回统一的模型事件流
+* `complete()` 返回统一的 `AssistantMessage`
+
+上层无需知道模型底层究竟来自 OpenAI、Kimi 或其他供应商。
+
+---
+
+### 2. 统一模型上下文协议
+
+`model-gateway` 定义模型能够理解的统一 `Context`：
+
+```text
+Context
+├── systemPrompt
+├── messages
+└── tools
+```
+
+同时统一消息类型：
+
+```text
+Message
+├── UserMessage
+├── AssistantMessage
+└── ToolResultMessage
+```
+
+Agent Runtime 只需要构造这一套 Context，不需要针对每个模型供应商分别构造请求。
+
+---
+
+### 3. 统一 AssistantMessage
+
+不同 Provider 返回的数据最终被转换成统一的：
+
+```text
+AssistantMessage
+├── content
+├── toolCalls
+├── finishReason
+├── usage
+├── reasoning
+├── errorMessage
+└── Provider / Model metadata
+```
+
+这样上层 Agent Runtime 可以只根据统一的 `finishReason`、`toolCalls` 等字段驱动 Agent Loop。
+
+---
+
+### 4. 统一 Tool Calling 协议
+
+不同模型供应商可能拥有不同的工具声明和 Tool Call 格式。
+
+`model-gateway` 将这些差异转换成统一的：
+
+```text
+Tool
+ModelToolCall
+ToolResultMessage
+```
+
+因此 Agent Runtime 不需要处理 OpenAI Tool Calling、Kimi Tool Calling 等供应商特有格式。
+
+---
+
+### 5. 统一流式事件
+
+Provider 的 SSE / Stream 数据最终被标准化成统一的 `ModelStreamEvent`。
+
+例如：
+
+```text
+start
+text.delta
+thinking.delta
+tool-call.delta
+tool-call.completed
+usage
+done
+error
+```
+
+上层只消费这些统一事件，而不接触具体 Provider 的原始流式协议。
+
+---
+
+### 6. 隔离 Provider 差异
+
+不同模型供应商的特殊逻辑集中放在 Adapter 中。
+
+典型差异包括：
+
+* HTTP API 格式
+* 请求字段名称
+* Response 格式
+* SSE Chunk 格式
+* Tool Calling 格式
+* Thinking / Reasoning 字段
+* Finish Reason
+* Usage
+* Error
+* Provider 特殊兼容逻辑
+
+这些差异应该尽量停留在 `model-gateway` 内部，而不向 Agent Runtime 泄漏。
+
+---
+
+### 7. 模型与 Provider 注册
+
+`model-gateway` 负责维护：
+
+```text
+Provider
+Model
+Provider Config
+Model Registry
+```
+
+上层只需要通过模型描述信息选择模型，不需要自己管理具体 Provider SDK。
+
+---
+
+## Model Gateway 不负责什么
+
+### 不负责 Agent Loop
+
+它只负责：
+
+```text
+输入 Context
+      ↓
+调用模型
+      ↓
+输出 AssistantMessage / ModelEventStream
+```
+
+它不会决定：
+
+* 是否继续下一轮模型调用
+* Tool Call 是否应该执行
+* Tool Result 如何重新提交给模型
+* 一个 Agent Run 什么时候结束
+
+这些属于 `agent-runtime`。
+
+---
+
+### 不负责工具实际执行
+
+`model-gateway` 只负责定义和传递 Tool / ToolCall 协议。
+
+真正调用：
+
+```ts
+tool.execute(...)
+```
+
+属于 Agent Runtime。
+
+---
+
+### 不负责 Agent 生命周期
+
+以下概念不应该由 `model-gateway` 管理：
+
+```text
+agent_start
+agent_end
+turn_start
+turn_end
+tool_execution_start
+tool_execution_end
+```
+
+这些都是 Agent Runtime 语义。
+
+---
+
+### 不负责业务逻辑
+
+例如：
+
+* 运维故障诊断
+* RAG
+* 告警分析
+* 数据库查询策略
+* 权限审批
+* 人工确认
+
+这些都应该存在于更上层业务模块或工具层中。
+
+---
+
+## 核心边界
+
+可以把 `model-gateway` 理解成：
+
+```text
+Provider SDK / API
+        │
+        ▼
+┌──────────────────────┐
+│    model-gateway     │
+│                      │
+│ Provider Adapter     │
+│ ↓                    │
+│ Unified Model API    │
+│ Unified Context      │
+│ Unified Message      │
+│ Unified Events       │
+└──────────┬───────────┘
+           │
+           ▼
+     agent-runtime
+```
+
+最重要的设计原则是：
+
+> Provider 差异应该在 Model Gateway 结束。
+
+Agent Runtime 不应该知道 OpenAI、Kimi 等供应商 API 的具体实现细节。
+
+---
+
+## 一句话理解
+
+> `model-gateway` 解决的是“如何用统一方式调用不同模型”的问题。
