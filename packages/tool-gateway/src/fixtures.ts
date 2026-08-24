@@ -45,10 +45,18 @@ export interface FixtureScenario {
   readonly sourceUris: { readonly logs: string; readonly metrics: string; readonly topology: string };
 }
 
+/** 读取 Fixture Runbook Markdown 内容。
+ * @param relativePath 相对于当前模块的 Markdown 路径。
+ * @returns 去除首尾空白后的 Markdown 内容。
+ */
 function loadMarkdown(relativePath: string): string {
   return readFileSync(new URL(relativePath, import.meta.url), 'utf8').trim();
 }
 
+/** 校验并组装一个完整 Fixture 场景。
+ * @param input 场景元数据及未校验的日志、指标和拓扑数据。
+ * @returns 通过一致性校验的 Fixture 场景。
+ */
 function scenario(input: Omit<FixtureScenario, 'logs' | 'metrics' | 'topology'> & { logs: unknown; metrics: unknown; topology: unknown }): FixtureScenario {
   const logs = z.array(logEntrySchema).min(1).parse(input.logs);
   const metrics = z.array(metricSeriesSchema).min(1).parse(input.metrics);
@@ -65,6 +73,10 @@ export const fixtureScenarios: readonly FixtureScenario[] = [
   scenario({ id: 'latency', service: 'orders-api', logs: latencyLogs, metrics: latencyMetrics, topology: latencyTopology, runbook: { title: 'Orders API latency investigation', markdown: loadMarkdown('./fixtures/latency/runbook.md'), sourceUri: 'fixture://latency/runbook' }, sourceUris: { logs: 'fixture://latency/logs', metrics: 'fixture://latency/metrics', topology: 'fixture://latency/topology' } }),
 ];
 
+/** 按服务名称查找 Fixture 场景。
+ * @param service 要查找的服务名称。
+ * @returns 匹配的 Fixture 场景，找不到时返回 undefined。
+ */
 export function findFixtureScenario(service: string): FixtureScenario | undefined {
   return fixtureScenarios.find((scenario) => scenario.service === service);
 }
