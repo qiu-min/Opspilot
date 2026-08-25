@@ -21,4 +21,4 @@
 
 ## Integration boundary
 
-Web 通过 HTTP 调用 `/backend` 的 ASP.NET Core API，正常情况下不直接调用 `agent-service/`。Agent Service 的运行启动、任务状态和业务 Tool 调用由 Backend 负责协调。
+Web 通过 HTTP 调用 Backend 提供的 ASP.NET Core API，正常情况下不直接调用 `agent-service/`。Agent Service 的运行启动、任务状态和业务 Tool 调用由 Backend 负责协调。
