@@ -26,7 +26,7 @@ OpsPilot/
 
 未来使用 ASP.NET Core，负责 User、Auth、RBAC、File、AnalysisTask、AgentRun、PostgreSQL、Redis、后台任务、Excel Processing、ClosedXML / Open XML SDK、Agent Service Client 和 Internal Tool API。
 
-Backend 负责传统业务和 Excel 基础设施，不负责实现 Agent Loop。当前仅有架构占位说明，见 [backend/README.md](backend/README.md)。
+Backend 负责传统业务和 Excel 基础设施，不负责实现 Agent Loop。当前已具备 .NET 10 ASP.NET Core 基础启动骨架，包含 Controller API、`/health` 健康检查、统一异常处理和分层 DI 入口；具体业务和基础设施仍按需加入，见 [backend/README.md](backend/README.md)。
 
 ### web
 
@@ -75,4 +75,4 @@ PostgreSQL 和 Redis 由仓库根目录的 `docker-compose.yml` 提供：
 docker compose up -d
 ```
 
-本次目录重构没有初始化 ASP.NET Core 或 Vue 项目，也没有新增 backend/web 容器。
+当前 Backend 已初始化基础 ASP.NET Core 项目；本次未新增数据库、缓存、业务功能或 backend/web 容器。
