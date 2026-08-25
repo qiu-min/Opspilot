@@ -32,12 +32,7 @@ public sealed class LocalFileStorage : IFileStorage
 
         string safeOriginalFileName = Path.GetFileName(originalFileName ?? string.Empty);
         string extension = Path.GetExtension(safeOriginalFileName);
-        if (!string.Equals(extension, ".xlsx", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new ArgumentException("Only .xlsx files can be stored.", nameof(originalFileName));
-        }
-
-        string storedFileName = $"{Guid.NewGuid():N}.xlsx";
+        string storedFileName = $"{Guid.NewGuid():N}{extension}";
         string storagePath = $"{UploadsDirectory}/{storedFileName}";
         string physicalPath = GetPhysicalPath(storagePath);
 

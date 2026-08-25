@@ -21,6 +21,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\OpsPilot.Application\OpsPilot.Application.csproj" />
     <ProjectReference Include="..\..\src\OpsPilot.Domain\OpsPilot.Domain.csproj" />
+    <ProjectReference Include="..\..\src\OpsPilot.Infrastructure\OpsPilot.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

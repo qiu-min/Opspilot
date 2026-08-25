@@ -4,6 +4,9 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using OpsPilot.Infrastructure.Persistence;
 
 namespace OpsPilot.IntegrationTests;
 
@@ -33,17 +36,34 @@ public sealed class UploadFileEndpointTests : IClassFixture<FilesTestFactory>
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
         JsonElement body = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.NotEqual(Guid.Empty, body.GetProperty("id").GetGuid());
+        Guid fileAssetId = body.GetProperty("id").GetGuid();
+        Assert.NotEqual(Guid.Empty, fileAssetId);
         Assert.Equal("monthly-report.XLSX", body.GetProperty("fileName").GetString());
         Assert.Equal(fileBytes.LongLength, body.GetProperty("sizeBytes").GetInt64());
         Assert.False(body.TryGetProperty("storedFileName", out _));
         Assert.False(body.TryGetProperty("storagePath", out _));
 
+        await using AsyncServiceScope scope = factory.Services.CreateAsyncScope();
+        OpsPilot.Domain.Files.FileAsset fileAsset = await scope.ServiceProvider
+            .GetRequiredService<OpsPilotDbContext>()
+            .FileAssets
+            .SingleAsync(asset => asset.Id == fileAssetId);
+
+        Assert.Equal("monthly-report.XLSX", fileAsset.OriginalFileName);
+        Assert.EndsWith(".XLSX", fileAsset.StoredFileName, StringComparison.Ordinal);
+        Assert.Equal($"uploads/{fileAsset.StoredFileName}", fileAsset.StoragePath);
+        Assert.Equal(fileBytes.LongLength, fileAsset.SizeBytes);
+
         string[] storedFiles = Directory.GetFiles(
             factory.StorageRootPath,
-            "*.xlsx",
+            "*",
             SearchOption.AllDirectories);
         string storedFilePath = Assert.Single(storedFiles);
+        Assert.Equal(
+            Path.GetFullPath(Path.Combine(
+                factory.StorageRootPath,
+                fileAsset.StoragePath.Replace('/', Path.DirectorySeparatorChar))),
+            Path.GetFullPath(storedFilePath));
         Assert.Equal(fileBytes, await File.ReadAllBytesAsync(storedFilePath));
     }
 }
