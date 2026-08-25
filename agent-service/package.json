@@ -4,13 +4,10 @@
   "description": "AI-assisted incident-response system.",
   "private": true,
   "scripts": {
-    "dev": "pnpm --filter web dev",
     "dev:api": "pnpm --filter @opspilot/api-runtime dev",
     "dev:worker": "pnpm --filter @opspilot/worker dev",
-    "build": "pnpm --filter web build",
     "build:api": "pnpm --filter @opspilot/api-runtime build",
     "build:worker": "pnpm --filter @opspilot/worker build",
-    "lint": "pnpm --filter web lint",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
     "test": "pnpm -r --if-present test",

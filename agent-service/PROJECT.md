@@ -246,8 +246,7 @@ agent-service/
 ├── apps/
 │   ├── api/             # 旧 Demo 的 NestJS HTTP 接口
 │   ├── api-runtime/     # 旧 Demo 的 API 组合根
-│   ├── worker/          # 旧 Demo 的后台运行入口
-│   └── web/             # 旧 Demo / 嵌套 Git 内容
+│   └── worker/          # 旧 Demo 的后台运行入口
 ├── packages/
 │   ├── model-gateway/
 │   ├── agent-runtime/
@@ -262,6 +261,8 @@ agent-service/
 ├── README.md
 └── PROJECT.md
 ```
+
+Earlier incident-response demos included a Web application inside the Agent workspace. That application is no longer part of the current Agent Service architecture; the formal frontend remains the repository root `/web`.
 
 旧故障响应设计保留在 [Legacy Incident Response Demo Design](docs/legacy/incident-response-demo.md)，不再作为当前 Agent Service 的产品边界。
 
@@ -281,7 +282,6 @@ pnpm lint
 当前真实存在的开发入口为：
 
 ```powershell
-pnpm dev
 pnpm dev:api
 pnpm dev:worker
 ```

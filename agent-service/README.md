@@ -126,8 +126,7 @@ agent-service/
 ├── apps/
 │   ├── api/             # 旧 Demo 的 NestJS HTTP 接口
 │   ├── api-runtime/     # 旧 Demo 的 API 组合根
-│   ├── worker/          # 旧 Demo 的后台运行入口
-│   └── web/             # 旧 Demo / 嵌套 Git 内容，不是未来正式 Web
+│   └── worker/          # 旧 Demo 的后台运行入口
 ├── packages/
 │   ├── model-gateway/
 │   ├── agent-runtime/
@@ -145,7 +144,7 @@ agent-service/
 
 `apps/api`、`apps/api-runtime` 和 `apps/worker` 包含早期 OpsPilot 故障响应 Demo 阶段留下的应用组合和运行入口，目前仍保留用于已有功能、测试或参考。它们不再定义未来 OpsPilot 的传统业务 Backend；未来主业务后端位于 `/backend`，使用 ASP.NET Core。
 
-`apps/web` 不代表未来 OpsPilot Web UI。正式前端边界是仓库根目录的 `/web`，技术方向为 Vue 3 + TypeScript；`agent-service/apps/web` 仅在 Legacy / Existing demo 范围内保留。
+早期 Workspace 曾包含 Next.js Web Demo，该实现现已从 Agent Service Workspace 移除。正式前端边界是仓库根目录的 `/web`，技术方向为 Vue 3 + TypeScript。
 
 旧 Incident、AnalysisRun、Evidence、Approval、Execution、Runbook 和 Alert 设计已归档至 [Legacy Incident Response Demo Design](docs/legacy/incident-response-demo.md)。
 
@@ -177,7 +176,6 @@ pnpm build:worker
 当前已有的开发入口：
 
 ```powershell
-pnpm dev         # 旧 apps/web Demo
 pnpm dev:api     # 旧 NestJS api-runtime
 pnpm dev:worker  # 旧 Worker 入口
 ```
