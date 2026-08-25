@@ -17,8 +17,12 @@ build/
 coverage/
 *.tsbuildinfo
 
-# Prisma generated client（本项目配置的生成目录）
-packages/db/generated/
+# Prisma generated client（Agent Service 配置的生成目录）
+agent-service/packages/db/generated/
+
+# .NET build outputs
+**/bin/
+**/obj/
 
 # Environment files: keep templates only
 .env

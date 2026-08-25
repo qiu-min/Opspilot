@@ -36,3 +36,39 @@ Connector 输入会在真实外部能力边界再次校验。未知服务或无�
 ## AgentTool 组合边界
 
 `tool-gateway` 不定义 `AgentTool`。未来由 `incident-agent` 组合 `AgentTool` 与 Connector：在 `AgentTool.execute()` 中解析输入、调用 Connector，并将结果序列化为 `AgentToolResult`。这样 `agent-runtime` 保持唯一的工具执行契约和错误封装职责。
+
+
+① 定义 Connector interface
+
+LogConnector
+MetricConnector
+RunbookConnector
+ServiceTopologyConnector
+
+
+② 定义 Connector 输入输出
+
+QueryLogsInput
+QueryLogsOutput
+QueryMetricsInput
+...
+
+
+③ Zod 边界验证
+
+queryLogsInputSchema
+queryLogsOutputSchema
+...
+
+
+④ 实现具体外部能力
+
+FixtureLogConnector
+FixtureMetricConnector
+FixtureRunbookConnector
+FixtureServiceTopologyConnector
+
+
+⑤ 传播取消
+
+AbortSignal

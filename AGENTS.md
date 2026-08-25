@@ -1,4 +1,4 @@
-每次执行任务都应该先查看PROJECT.md快速了解项目执行计划。
+每次执行任务都应该先查看 `agent-service/PROJECT.md` 快速了解 Agent 项目执行计划；涉及 Agent Workspace 的命令请先进入 `agent-service/` 执行。
 
 ### 规范
 每个包下需要一个README.md文件介绍和讲解如何使用该包

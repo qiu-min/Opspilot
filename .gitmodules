@@ -5,3 +5,8 @@
 [submodule "docs/dg-ai-notes"]
 	path = agent-service/docs/dg-ai-notes
 	url = https://github.com/buchidonggua/dg-ai-notes.git
+
+# apps/web 是已有的嵌套 Git 仓库，但当前没有配置可用的远程 URL。
+# 先记录迁移后的 gitlink 路径，待仓库所有者提供远程地址后再补充 url。
+[submodule "apps/web"]
+	path = agent-service/apps/web

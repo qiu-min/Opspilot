@@ -1,6 +1,28 @@
-# OpsPilot
+# OpsPilot Agent Service
 
-用于演示 AI 辅助生产故障响应闭环的 TypeScript Monorepo。
+`agent-service/` 是 OpsPilot 的 TypeScript / Node.js Agent Workspace，负责通用 Agent 基础设施与当前的故障响应演示闭环。它不直接承担用户、文件、权限或 Excel 持久化等传统业务职责。
+
+## Responsibilities
+
+- Model Gateway：模型 Provider 适配、消息和工具声明
+- Agent Runtime：Agent Loop、生命周期、状态、取消和工具编排
+- Tool Gateway：工具契约、Fixture Connector、校验和安全执行边界
+- API / Worker：当前演示用的 NestJS API 组合根与后台进程
+- Observability：结构化日志、追踪和脱敏边界
+- 后续扩展：RAG、评测和更多 Agent 工具
+
+## Workspace layout
+
+```text
+agent-service/
+├── apps/       # api、api-runtime、worker、当前演示 web
+├── packages/   # Agent Runtime、Model Gateway、Tool Gateway 等包
+├── config/     # 模型 Provider 配置
+├── docs/       # Agent 设计文档和参考资料
+└── PROJECT.md  # Agent Workspace 计划
+```
+
+包名保持原有的 `@opspilot/*` 命名；物理目录位于 `agent-service/` 不会改变 npm workspace 包名或包间依赖。
 
 ## Prerequisites
 
@@ -10,10 +32,13 @@
 
 ## Start development
 
+在仓库根目录执行以下命令前，先进入本目录：
+
 ```powershell
+cd agent-service
 pnpm install
 Copy-Item .env.example .env
-docker compose up -d
+docker compose -f ../docker-compose.yml up -d
 pnpm dev
 ```
 
@@ -22,11 +47,12 @@ Web 应用启动后访问终端显示的本地地址，默认是 `http://localho
 ## Useful commands
 
 ```powershell
+cd agent-service
 pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
-docker compose down
+docker compose -f ../docker-compose.yml down
 ```
 
 ## API usage (Day 4)
@@ -34,8 +60,9 @@ docker compose down
 Start Docker PostgreSQL, apply the Prisma migrations, then run the API composition root:
 
 ```powershell
+cd agent-service
 Copy-Item .env.example .env
-docker compose up -d
+docker compose -f ../docker-compose.yml up -d
 pnpm --filter @opspilot/db exec prisma migrate deploy
 pnpm dev:api
 ```
@@ -48,6 +75,7 @@ The Worker is an independent server-side process. At this stage it only verifies
 startup and graceful shutdown; it does not consume Redis jobs yet.
 
 ```powershell
+cd agent-service
 pnpm dev:worker
 ```
 
