@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using OpsPilot.Application.AnalysisTasks.Create;
+using OpsPilot.Application.Files.Upload;
 
 namespace OpsPilot.Application;
 
@@ -9,6 +10,7 @@ public static class DependencyInjection
     {
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<CreateAnalysisTaskHandler>();
+        services.AddScoped<UploadFileHandler>();
 
         return services;
     }

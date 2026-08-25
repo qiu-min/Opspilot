@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using OpsPilot.Application.Abstractions.Files;
 using OpsPilot.Application.Abstractions.Persistence;
+using OpsPilot.Infrastructure.Files;
 using OpsPilot.Infrastructure.Persistence;
 using OpsPilot.Infrastructure.Persistence.Repositories;
 
@@ -23,6 +25,14 @@ public static class DependencyInjection
         services.AddDbContext<OpsPilotDbContext>(options =>
             options.UseNpgsql(connectionString));
         services.AddScoped<IAnalysisTaskRepository, AnalysisTaskRepository>();
+        services.AddScoped<IFileAssetRepository, FileAssetRepository>();
+
+        string? configuredRootPath = configuration[$"{FileStorageOptions.SectionName}:RootPath"];
+        string rootPath = string.IsNullOrWhiteSpace(configuredRootPath)
+            ? "storage"
+            : configuredRootPath;
+        services.AddSingleton(new FileStorageOptions { RootPath = rootPath });
+        services.AddSingleton<IFileStorage, LocalFileStorage>();
 
         return services;
     }

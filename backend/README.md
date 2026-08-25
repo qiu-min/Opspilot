@@ -1,6 +1,6 @@
 # OpsPilot Backend
 
-OpsPilot Backend 是负责用户、权限、文件和 Excel 处理等产品能力的 ASP.NET Core 后端。本目录当前已包含 .NET 10 基础启动骨架，以及 AnalysisTask / AgentRun 的最小 PostgreSQL 持久化能力。
+OpsPilot Backend 是负责用户、权限、文件和 Excel 处理等产品能力的 ASP.NET Core 后端。本目录当前已包含 .NET 10 基础启动骨架，以及 AnalysisTask / AgentRun / FileAsset 的最小 PostgreSQL 持久化能力。
 
 当前骨架提供：
 
@@ -9,8 +9,9 @@ OpsPilot Backend 是负责用户、权限、文件和 Excel 处理等产品能�
 - 基于 `IExceptionHandler` 和 `ProblemDetails` 的统一未预期异常处理
 - Application 与 Infrastructure 的统一 DI 注册入口
 - EF Core + Npgsql 的 `OpsPilotDbContext`
-- `analysis_tasks`、`agent_runs` 和 `InitialCreate` Migration
+- `analysis_tasks`、`agent_runs`、`file_assets` 和 `AddFileAssets` Migration
 - `POST /api/analysis-tasks` 创建 Pending AnalysisTask 的完整 Vertical Slice
+- `POST /api/files` 上传 `.xlsx` 文件到本地存储并创建 FileAsset 的完整 Vertical Slice
 
 `agent_runs.analysis_task_id` 使用 Restrict 删除行为，避免删除任务时级联抹掉 Agent 执行历史。
 
@@ -33,6 +34,19 @@ dotnet ef database update --project src/OpsPilot.Infrastructure --startup-projec
 
 Connection String 位于 `src/OpsPilot.Api/appsettings.Development.json`，仅用于本地开发。数据库、缓存、认证授权、文件处理和 Agent Service 的其他能力将在对应功能具备真实需求后加入。
 
+## File upload API
+
+```http
+POST /api/files
+Content-Type: multipart/form-data
+```
+
+表单字段名为 `file`。当前只接受扩展名为 `.xlsx` 的文件（大小必须大于 0 且不超过 20 MB），扩展名检查不区分大小写；请求的 `Content-Type` 会保存到 FileAsset，但不会替代扩展名校验。开发环境使用 `FileStorage:RootPath` 配置的 `LocalFileStorage`，默认目录为 `storage`，上传文件实际位于其 `uploads` 子目录，仓库已忽略 `backend/storage/`。
+
+成功响应为 `201 Created`，包含 `Id`、原始文件名、ContentType、SizeBytes 和 CreatedAtUtc，不暴露服务器文件名或磁盘路径。上传流程是：先写入本地文件，再写入 `file_assets`；数据库写入失败时会尝试删除已写入的文件，并保留原始数据库异常。
+
+典型业务流程为：先 `POST /api/files` 获取 `FileId`，再将该 ID 传给 `POST /api/analysis-tasks`。当前 AnalysisTask 仍只把 `FileId` 当作业务引用，不验证 FileAsset 是否存在。
+
 ## AnalysisTask API
 
 ```http
@@ -40,7 +54,7 @@ POST /api/analysis-tasks
 Content-Type: application/json
 ```
 
-请求中的 `FileId` 当前只是 AnalysisTask 的业务引用。由于 FileAsset、文件上传和权限校验尚未实现，接口不会验证文件是否存在，也不会创建 AgentRun 或调用 Agent Service。
+请求中的 `FileId` 当前只是 AnalysisTask 的业务引用。接口不会验证 FileAsset 是否存在，也不会创建 AgentRun 或调用 Agent Service。
 
 成功响应为 `201 Created`，新任务状态为 `Pending`。空 Prompt 或空 FileId 会返回 `400 ProblemDetails`；其他未预期异常仍返回 `500 ProblemDetails`。
 

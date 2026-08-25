@@ -33,6 +33,9 @@ agent-service/packages/db/generated/
 *.db
 *.db-journal
 
+# Local uploaded files
+backend/storage/
+
 # Docker local overrides
 docker-compose.override.yml
 
