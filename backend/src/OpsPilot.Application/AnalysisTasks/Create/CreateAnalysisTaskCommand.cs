@@ -1,4 +1,4 @@
-namespace OpsPilot.Application.AnalysisTasks.CreateAnalysisTask;
+namespace OpsPilot.Application.AnalysisTasks.Create;
 
 public sealed record CreateAnalysisTaskCommand(
     Guid FileId,

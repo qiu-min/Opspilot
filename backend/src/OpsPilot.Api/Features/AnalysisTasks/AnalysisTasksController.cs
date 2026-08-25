@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
-using OpsPilot.Application.AnalysisTasks.CreateAnalysisTask;
+using OpsPilot.Application.AnalysisTasks.Create;
+using OpsPilot.Api.AnalysisTasks.Contracts;
 
 namespace OpsPilot.Api.AnalysisTasks;
 

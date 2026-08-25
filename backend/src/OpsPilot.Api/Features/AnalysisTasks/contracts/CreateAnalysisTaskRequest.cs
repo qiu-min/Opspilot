@@ -1,4 +1,4 @@
-namespace OpsPilot.Api.AnalysisTasks;
+namespace OpsPilot.Api.AnalysisTasks.Contracts;
 
 public sealed record CreateAnalysisTaskRequest(
     Guid FileId,

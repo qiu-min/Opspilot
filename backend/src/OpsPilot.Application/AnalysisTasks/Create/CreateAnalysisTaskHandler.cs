@@ -2,7 +2,7 @@ using OpsPilot.Application.Abstractions.Persistence;
 using OpsPilot.Application.Exceptions;
 using OpsPilot.Domain.AnalysisTasks;
 
-namespace OpsPilot.Application.AnalysisTasks.CreateAnalysisTask;
+namespace OpsPilot.Application.AnalysisTasks.Create;
 
 public sealed class CreateAnalysisTaskHandler(
     IAnalysisTaskRepository analysisTaskRepository,

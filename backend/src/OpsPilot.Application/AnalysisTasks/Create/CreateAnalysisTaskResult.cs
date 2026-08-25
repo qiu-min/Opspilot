@@ -1,6 +1,6 @@
 using OpsPilot.Domain.AnalysisTasks;
 
-namespace OpsPilot.Application.AnalysisTasks.CreateAnalysisTask;
+namespace OpsPilot.Application.AnalysisTasks.Create;
 
 public sealed record CreateAnalysisTaskResult(
     Guid Id,
