@@ -10,6 +10,7 @@ OpsPilot Backend 是负责用户、权限、文件和 Excel 处理等产品能�
 - Application 与 Infrastructure 的统一 DI 注册入口
 - EF Core + Npgsql 的 `OpsPilotDbContext`
 - `analysis_tasks`、`agent_runs` 和 `InitialCreate` Migration
+- `POST /api/analysis-tasks` 创建 Pending AnalysisTask 的完整 Vertical Slice
 
 `agent_runs.analysis_task_id` 使用 Restrict 删除行为，避免删除任务时级联抹掉 Agent 执行历史。
 
@@ -31,6 +32,17 @@ dotnet ef database update --project src/OpsPilot.Infrastructure --startup-projec
 ```
 
 Connection String 位于 `src/OpsPilot.Api/appsettings.Development.json`，仅用于本地开发。数据库、缓存、认证授权、文件处理和 Agent Service 的其他能力将在对应功能具备真实需求后加入。
+
+## AnalysisTask API
+
+```http
+POST /api/analysis-tasks
+Content-Type: application/json
+```
+
+请求中的 `FileId` 当前只是 AnalysisTask 的业务引用。由于 FileAsset、文件上传和权限校验尚未实现，接口不会验证文件是否存在，也不会创建 AgentRun 或调用 Agent Service。
+
+成功响应为 `201 Created`，新任务状态为 `Pending`。空 Prompt 或空 FileId 会返回 `400 ProblemDetails`；其他未预期异常仍返回 `500 ProblemDetails`。
 
 ## Technology
 

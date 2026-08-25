@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using OpsPilot.Application.Abstractions.Persistence;
 using OpsPilot.Infrastructure.Persistence;
+using OpsPilot.Infrastructure.Persistence.Repositories;
 
 namespace OpsPilot.Infrastructure;
 
@@ -20,6 +22,7 @@ public static class DependencyInjection
 
         services.AddDbContext<OpsPilotDbContext>(options =>
             options.UseNpgsql(connectionString));
+        services.AddScoped<IAnalysisTaskRepository, AnalysisTaskRepository>();
 
         return services;
     }
