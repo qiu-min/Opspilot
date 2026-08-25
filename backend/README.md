@@ -25,3 +25,15 @@
 - Internal Tool API 与 Excel Processing
 
 Backend 负责传统业务和 Excel 基础设施，不负责实现 Agent Loop。
+
+## Integration boundaries
+
+```text
+Web
+ ↓ HTTP
+Backend
+ ├─→ Agent Service       # 启动和管理 Agent Run
+ └─← Agent Service Tool  # 提供 Excel 等业务 Tool 的 Internal API
+```
+
+Backend 是 Web 和 Agent Service 之间的传统业务边界；Agent Service 不直接访问 EF Core、ClosedXML 或 Backend 的数据库基础设施。

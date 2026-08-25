@@ -1,321 +1,337 @@
-# OpsPilot
+# OpsPilot Agent Service
 
-OpsPilot 是一个使用 TypeScript 构建的生产故障响应智能体，面向后端与 AI 智能体应用岗位展示。
+Agent Service 是 OpsPilot 中独立的 TypeScript / Node.js Agent Runtime Service。它从早期的故障响应 Agent Demo 演进而来，当前目标是提供业务无关、模型供应商无关、Tool 实现无关的 Agent 基础设施。
 
-它将告警、日志、指标、历史事故和 Runbook 串联为一个可追踪的处理闭环：模型负责分析和提出建议；策略层负责授权；人工负责高风险操作审批；Worker 负责可靠执行；事件层负责证据、恢复和复盘。
+Agent Service 应能够服务未来的 Excel Data Agent、RAG Agent、ERP Agent 和其他业务 Agent，而不是绑定 Incident Agent 或运维故障领域。
 
-```text
-告警 → 创建事件与运行记录 → Agent 分析 / 调用只读工具 → 生成行动建议
-     → 人工审批高风险行动 → 受控执行 → 写入审计与复盘材料
-```
+## 1. Positioning
 
-项目的 Agent 架构参考 `docs/dg-ai-notes/pi-agent/docs/typescript/` 下的 Pi TypeScript 分层笔记，重点包括：[第 2 章：三层架构](docs/dg-ai-notes/pi-agent/docs/typescript/第2章-三层架构-Pi-Agent项目的骨骼.md)、[第 3 章：Agent Loop](docs/dg-ai-notes/pi-agent/docs/typescript/第3章-Agent-Loop-让模型转动起来的引擎.md)、[第 4 章：模型调用](docs/dg-ai-notes/pi-agent/docs/typescript/第4章-模型调用-一行代码驾驭多个模型.md)、[第 5 章：工具系统](docs/dg-ai-notes/pi-agent/docs/typescript/第5章-工具系统-Agent的手脚是怎么被管住的.md)、[第 7 章：事件驱动](docs/dg-ai-notes/pi-agent/docs/typescript/第7章-事件驱动-Agent的神经系统.md) 与 [第 8 章：上下文工程](docs/dg-ai-notes/pi-agent/docs/typescript/第8章-上下文工程-让有限窗口装下无限对话.md)。借鉴其单向分层、状态化 Agent、事件流、工具调用闸门、上下文检查点和类型化遥测；不照搬多模型目录、通用插件市场或完整会话树等超出 MVP 范围的复杂度。
-
-## 技术组合
-
-- **后端：Node.js + NestJS**：HTTP API、鉴权、事件命令、审批流与 SSE 网关。
-- **数据库：PostgreSQL + Prisma + pgvector**：领域数据、不可变运行事件、审计、RAG 向量检索。
-- **异步任务：Redis + BullMQ**：分析运行、重试、延迟任务和已审批行动执行。
-- **智能体：OpenAI Node SDK + 工具调用**：模型仅提出工具意图；工具网关校验和执行。
-- **前端：Next.js + React + Tailwind CSS**：告警列表、事故时间线、证据、分析进度和审批页面。
-- **实时通信：SSE**：向页面推送持久化的领域事件，支持按事件 ID 断线回放。
-- **验证与测试：Zod + Vitest + Supertest**：共享事件/API schema、工具契约测试与关键链路集成测试。
-- **可观测性：Pino + OpenTelemetry**：请求、模型、工具、审批和执行的 trace；遵循脱敏规则。
-- **部署：Docker Compose**：一键启动 Web、API、Worker、PostgreSQL 与 Redis。
-
-## 核心领域模型
-
-一次故障不是一段聊天记录。OpsPilot 将故障本身和诊断尝试分开保存：
+OpsPilot 的整体调用关系是：
 
 ```text
-Incident（一次故障事件）
-  └─ AnalysisRun（一次诊断尝试，可重试或重新发起）
-       ├─ RunEvent（模型、工具、审批、执行的不可变事件）
-       ├─ ToolInvocation（工具调用及其输入输出摘要）
-       ├─ ProposedAction（模型提出的操作建议）
-       │  └─ Approval / Execution（人工决策与实际执行）
-       └─ ContextCheckpoint（可恢复的诊断摘要）
-  └─ Evidence（可跨多次诊断复用的证据）
+Web（Vue 3 + TypeScript）
+        ↓ HTTP
+Backend（ASP.NET Core）
+        ↓ HTTP
+Agent Service（Node.js + TypeScript）
 ```
 
-### 业务归属与查询关系
+Agent Service 只负责 AI Agent Runtime 及其模型、工具和运行时边界。用户、权限、文件、任务、数据库和 Excel 业务基础设施属于 Backend；用户交互属于 Web。
 
-业务对象按主归属形成下列树；这是领域所有权，而不是限制数据库只能存在树状外键。
+## 2. Architecture Principles
+
+- **Provider-independent**：Agent Runtime 不绑定某个模型 Provider，Provider 差异收敛在 Model Gateway。
+- **Business-independent**：Runtime 不感知 Excel、Incident、ERP 或其他业务领域对象。
+- **Tool-implementation-independent**：Runtime 只消费 Tool 契约，不直接引用外部连接器或 .NET Infrastructure。
+- **Event-driven**：Agent、Turn、Message 和 Tool Execution 通过生命周期事件表达进度与状态。
+- **Observable**：模型调用、工具调用、耗时、token、错误来源和 Agent 事件应有可追踪边界。
+- **Cancelable**：模型请求与工具执行接收上游 AbortSignal，并能在取消时结束运行。
+- **Recoverable**：为上下文管理、检查点和长运行 Agent 恢复预留扩展边界。
+- **Explicit boundaries**：Backend → Agent Service 与 Agent Service → Backend Tool API 是两条独立的服务通信路径。
+
+## 3. Core Architecture
 
 ```text
-Incident
-├─ AnalysisRun
-│  ├─ RunEvent
-│  ├─ ProposedAction
-│  │  ├─ Approval
-│  │  └─ Execution
-│  └─ ContextCheckpoint
-└─ Evidence
+model-gateway   ← 模型 Provider、消息、模型 Tool 声明和模型事件
+       ↑
+agent-runtime   ← Agent 生命周期、Loop、状态、事件和工具编排
+       ↑
+tool-gateway    ← Tool 契约验证、适配器和外部能力执行边界
 ```
 
-Evidence 归属于 Incident，并可记录首次产生它的 `AnalysisRun`；后续诊断通过 `evidenceId` 引用既有证据。ContextCheckpoint 归属于产生它的 AnalysisRun。`RunEvent` 和 `ProposedAction` 同时保存 `incidentId` 与 `runId`，这是为了按 Incident 回放时间线、查询待审批 Action 和实施动作锁的有意冗余，而非双重业务所有权。仓储层创建它们时必须校验两个 ID 指向同一 Incident。
+这表示能力边界和协作关系，不是把所有实现简化为单向的机械依赖链：Model Gateway 负责模型访问，Agent Runtime 负责运行 Agent，Tool Gateway 负责执行工具及其外部能力适配。
 
-推荐状态机：
+## 4. Model Gateway
+
+当前 `packages/model-gateway` 已有以下能力：
+
+- Provider 和 Model 描述、模型查询与 `ModelGateway` 接口
+- `Context`、Message、`Options`、Tool Declaration 和响应契约
+- OpenAI Completions 模型适配器与工具声明转换
+- Provider 流式事件归一化为统一的模型事件流
+- Provider 错误和响应结束原因的统一表达
+- Thinking / reasoning level 的能力判断、Provider 映射和等级回退
+- 配置文件和环境变量驱动的模型 Provider 配置
+
+Model Gateway 不负责 Agent Loop、Agent State、工具执行、业务 DTO 或业务领域持久化。
+
+## 5. Agent Runtime
+
+当前 `packages/agent-runtime` 已有以下能力：
+
+- 有状态 `Agent` 包装器和 Agent 生命周期
+- Agent Loop：模型回合、工具调用、工具结果回填和后续回合
+- Agent State：模型、工具、消息、运行状态、流式消息、错误和待执行 Tool Call
+- Agent Event：Agent、Turn、Message 和 Tool Execution 生命周期事件
+- Streaming：消费模型增量事件并更新消息生命周期
+- Tool Calling：校验后的 Tool Call 执行、串行/并行模式和结果回填
+- Cancellation：AbortSignal 向模型和工具执行传播
+- Context commit：在调用模型前转换上下文和消息，并支持下一轮 Context 更新
+- Steering / Follow-up：在当前运行中插入下一轮消息
+- Termination：正常完成、模型错误、运行时错误和 aborted 结束原因
+- Hook：`transformContext`、`convertToLlm`、`prepareNextTurn`、`shouldStopAfterTurn`、`beforeToolCall` 和 `afterToolCall`
+
+Agent Runtime 不感知 Excel、运维、ERP、Incident、Runbook 或其他业务领域知识。
+
+## 6. Tool Gateway
+
+Tool Gateway 的通用定位是：
 
 ```text
-Incident: OPEN → INVESTIGATING → MITIGATING → RESOLVED / CLOSED
-AnalysisRun: QUEUED → RUNNING → WAITING_APPROVAL → COMPLETED / FAILED / CANCELLED
-Action: PROPOSED → PENDING_APPROVAL → APPROVED / REJECTED → EXECUTING → SUCCEEDED / FAILED
+Agent-facing Tool Contract
+        ↓
+Tool Gateway
+        ↓
+Business / External Tool Adapter
 ```
 
-`RunEvent` 是系统事实，页面上的时间线与当前状态是它的投影。Worker 写入事件后再通过 Redis 发布，SSE 网关据此推送；浏览器断线后从最后一个事件 ID 回放。
+当前 `packages/tool-gateway` 已有：
 
-```ts
-type RunEventType =
-  | 'run.started'
-  | 'model.response.delta'
-  | 'model.response.completed'
-  | 'tool.requested'
-  | 'tool.started'
-  | 'tool.progressed'
-  | 'tool.completed'
-  | 'action.proposed'
-  | 'approval.requested'
-  | 'approval.decided'
-  | 'execution.started'
-  | 'execution.completed'
-  | 'run.completed'
-  | 'run.failed';
-```
+- 工具输入输出 Zod schema
+- 日志、指标、Runbook 和服务拓扑 Connector 契约
+- Fixture Connector 实现
+- Connector 输入输出边界的再次验证
+- AbortSignal 取消传播
 
-## 诊断分支与长期存储
-
-借鉴 Pi 的会话树，OpsPilot 将一次 Incident 的诊断过程保存为**可追加、可回放、可分支**的长期记录，而不是在分析完成后只留下最终结论。
+当前 Fixture 是早期 Demo 的实现，不应把 Tool Gateway 永久限定为生产故障运维 Connector。未来 Excel Tool 可以通过同一边界接入：
 
 ```text
-Incident
-  └─ AnalysisRun A：连接池耗尽假设
-       ├─ 证据：5xx 指标、连接错误日志、相关 Runbook
-       ├─ 建议：扩容连接池
-       └─ 分支 AnalysisRun B：发布回归假设
-            ├─ 证据：发布记录、版本差异、错误日志
-            └─ 建议：回滚版本
+excel.read_range
+        ↓
+Tool Gateway
+        ↓ HTTP
+ASP.NET Core Internal Tool API
+        ↓
+Excel Service
+        ↓
+ClosedXML / Open XML SDK
 ```
 
-### 长期记录策略
+Excel 是未来业务 Tool 示例，不属于 Agent Runtime 本身。
 
-- `run_events` 采用追加式不可变记录：包含 `id`、`incidentId`、`runId`、`parentEventId`、`type`、`payload`、`createdAt` 与 schema version。
-- `parentEventId` 将关键诊断节点组织成轻量树；同一 Incident 可以从任一证据或结论发起新的 `AnalysisRun`，保留原诊断路径。
-- 原始日志、指标快照和大工具输出不直接塞入事件 payload；保存到受访问控制的 Evidence 存储，事件只引用 `evidenceId`、摘要、时间范围与内容哈希。
-- `analysis_runs` 保存运行配置快照：模型、提示词/Playbook 版本、工具权限快照、发起人、起止时间和最终状态，确保之后可以解释或复跑。
-- 审批、执行与策略决策作为独立事件永久保留，不能被新的分析结果覆盖。
+## 7. Agent Service API（Planned）
 
-### 检查点与上下文恢复
-
-长时间故障会积累大量证据。每个关键阶段创建 `ContextCheckpoint`：持久化结构化工作摘要和最近保留的上下文。恢复或重新运行时，Agent 从最近检查点、近期事件和关联证据引用重建上下文，不必重放所有原始日志。
-
-检查点至少记录：已确认事实、已排除/待验证假设、证据 ID、未解决问题、行动建议与审批状态。它类似 Pi 的 compaction checkpoint，但 OpsPilot 的原始事件和证据始终保留，因此摘要可重新生成并被审计。
-
-### MVP 范围
-
-第一版实现“一个 Incident 下可多次运行分析 + 保留每次运行的完整事件时间线 + 从上一运行的检查点重新分析”。不需要实现通用聊天树选择器；控制台只需提供“基于此证据重新分析”和“查看历史诊断运行”两个入口。
-
-## 工具与安全边界
-
-模型不能直接执行生产操作。每个工具调用均通过工具网关：
+未来 Agent Service 应为 Backend 提供启动和管理 Agent Run 的 HTTP API：
 
 ```text
-LLM tool call
-  → Zod 参数校验
-  → Tool Policy Gate（身份、环境、风险、幂等、变更窗口）
-  → 只读操作：执行并保存证据
-  → 高风险写操作：创建 ProposedAction 和 Approval
-  → 审批通过：Worker 使用受限服务身份执行并写审计
+ASP.NET Core Backend
+        ↓ HTTP
+Agent Service
 ```
 
-| 工具类别          | 示例                              | 默认执行方式                               |
-| ----------------- | --------------------------------- | ------------------------------------------ |
-| `read`            | 查询日志、指标、服务依赖、Runbook | 自动执行；可并行；短超时与结果上限         |
-| `write-low-risk`  | 创建工单、发送通知                | 可配置自动执行；必须有审计和幂等键         |
-| `write-high-risk` | 重启、扩容、回滚、切流            | 必须人工审批；单 Incident 串行执行与动作锁 |
-
-每个工具元数据应包含 `riskLevel`、`executionMode`、`requiredPermission`、`timeoutMs` 和 `idempotency` 策略。记录策略决策、审批人、执行身份和关联的 Incident/Run ID。
-
-### 模型 Tool 与运行时 Tool
-
-模型只需要知道工具能做什么，不应获知连接器、权限、超时或执行实现。参照 Pi，将同一个工具按消费方分成两个递进的契约：
-
-```ts
-// packages/model-gateway：发给 LLM 的最小声明
-export interface ToolDeclaration<TParameters> {
-  readonly name: string;
-  readonly description: string;
-  readonly parameters: TParameters;
-}
-
-// packages/agent-runtime：Loop 使用的可执行工具
-export interface RuntimeTool<TParameters, TResult>
-  extends ToolDeclaration<TParameters> {
-  readonly executionMode?: 'sequential' | 'parallel';
-  execute(
-    callId: string,
-    parameters: TParameters,
-    signal?: AbortSignal,
-    onProgress?: (result: Partial<TResult>) => void,
-  ): Promise<TResult>;
-}
-```
-
-`model-gateway` 仅序列化 `ToolDeclaration` 并归一化 Provider 的 tool call；`agent-runtime` 用 `RuntimeTool` 进行参数准备、并发控制、取消和进度处理。`incident-agent` 直接依赖这两个层的原子类型，并定义 `IncidentTool extends RuntimeTool`，补充 `evidenceKind`、诊断语义及 `execute` 的业务实现；该实现委托 `tool-gateway` 完成模型不可见的 Zod 校验、Policy Gate、权限、超时、连接器调用和结果校验。`riskLevel`、`requiredPermission`、`timeoutMs`、输出 schema 与连接器配置属于 `tool-gateway`；`evidenceKind` 以及将结果持久化为 Evidence 的领域映射属于 `incident-agent`。因此 LLM 只能请求某个工具及其参数，不能绕过策略直接执行生产操作。
-
-## 上下文与证据
-
-不将所有日志与工具输出无限追加到模型上下文。上下文分为：
-
-1. 稳定上下文：系统提示词、工具权限、服务目录和 Incident 基础信息。
-2. 证据索引：原始工具输出保存到数据库或对象存储；模型获取截断摘要、时间范围和证据 ID。
-3. 工作检查点：保存已验证事实、假设、待确认项和当前行动建议的结构化摘要。
-4. 近期窗口：保留最近几轮关键工具结果和审批状态。
-
-这既控制 token 成本，也保证结论可回溯到证据。
-
-## 项目结构
+概念性接口如下，当前尚未作为产品级公共 API 实现：
 
 ```text
-opspilot/
-  apps/
-    web/                    # Next.js：事故时间线、证据、审批
-    api/                    # NestJS HTTP 模块：HTTP、鉴权、SSE、命令入口
-    api-runtime/            # API 组合根：装配 application 用例与 Prisma 仓储后启动 API
-    worker/                 # BullMQ：分析与已审批行动执行
-  packages/
-    agent-runtime/          # 通用 Agent loop；不包含故障领域知识
-    incident-agent/         # 故障诊断业务 Agent：提示词、工具集、完成条件和领域映射
-    application/            # 业务用例与仓储接口（计划新增）
-    tool-gateway/           # 工具 schema、连接器、策略闸门、执行器
-    domain/                 # 状态机、领域事件、Zod schema
-    db/                     # Prisma schema、仓储、事务 outbox
-    model-gateway/          # OpenAI 适配器与流事件归一化
-    observability/          # Pino、OpenTelemetry、脱敏规则
-    shared/                 # 前端可用 DTO 与客户端事件类型
-  infra/
-    docker-compose.yml
+POST /runs
+GET /runs/{id}
+POST /runs/{id}/cancel
+GET /runs/{id}/events
 ```
 
-`apps` 是可独立启动的应用：`web` 提供浏览器控制台，`api` 提供 HTTP/SSE 接口，`worker` 消费后台分析与执行任务。`packages` 是这些应用复用的模块；`infra` 存放 Docker、数据库、Redis 与后续部署/监控配置，而不放业务代码。
+接口应能表达 Agent Run 的创建、状态查询、取消和事件流；具体认证、用户权限和业务任务归属由 Backend 负责。
+
+## 8. Backend Tool Integration
+
+Backend 与 Agent Service 存在两个方向不同的服务调用：
 
 ```text
-浏览器 → apps/web
-             ↓
-apps/api-runtime → apps/api → packages/application → packages/domain
-       │                                      ↑
-       └──────────── packages/db（Prisma）────┘
-                              ↓
-                         PostgreSQL
-
-apps/worker → packages/incident-agent → packages/agent-runtime
-                    ↓
-               PostgreSQL、Redis
+Backend → Agent Service
 ```
 
-依赖方向遵循“底层不反向依赖上层”的原则：`model-gateway`、`observability` 可独立存在；`agent-runtime → model-gateway, observability`，但不依赖 `domain`、`application`、`shared` 或任何 app；`tool-gateway → model-gateway`，只使用模型层的原子 ToolDeclaration 类型，不依赖 Agent Loop 或业务领域；`incident-agent → model-gateway, agent-runtime, tool-gateway, application, domain`，它与 Pi 的 `pi-coding-agent` 一样可直接依赖底层原子类型和中层循环；`web → shared`；`api → application`；`api-runtime → api, incident-agent, application, db`，并作为唯一组合根绑定仓储实现和应用用例；`worker → incident-agent, application, db, observability`；`application → domain` 并声明仓储接口；`db → application, domain` 并用 Prisma 实现仓储接口。`domain` 不依赖 NestJS、BullMQ、Prisma 或模型 SDK。
-
-### Agent 的三层结构
-
-参考 Pi 的 `pi-ai → pi-agent-core → pi-coding-agent`，OpsPilot 将 Agent 能力分为三层：
+用于启动和管理 Agent Run。
 
 ```text
-model-gateway                 # 模型 Provider、模型配置、消息与 ToolDeclaration 原子类型
-        ↑                 ↑
-agent-runtime             tool-gateway
-        ↑                 ↑
-        └── incident-agent ──┘ # 故障响应业务：IncidentTool、上下文、提示词、完成条件
-        ↑
-apps/api-runtime / apps/worker # 仅作组合根或任务宿主，不拥有诊断业务流程
+Agent Service → Tool Gateway → Backend Internal Tool API
 ```
 
-`model-gateway` 不了解 Incident、Evidence、API DTO 或连接器；`agent-runtime` 不了解故障诊断领域；`tool-gateway` 不依赖 Agent Loop，只提供安全的工具执行能力；`incident-agent` 如同 Pi 的 `pi-coding-agent`，直接依赖 `model-gateway` 的原子类型和 `agent-runtime` 的循环类型，并且是唯一知道 Incident、Runbook、Evidence 与诊断策略的业务 Agent。当前 API 直跑和未来 Worker 异步运行都使用同一个 `incident-agent`，因此该包是有明确共同业务语义的边界，而不是泛化的公共包。
+用于调用 Excel 等业务 Tool。
 
-### 分层职责
+这两条路径是独立服务之间的 API 通信。Agent Service 不直接引用 EF Core、ClosedXML 或其他 .NET Infrastructure；Tool Gateway 只通过明确的 Tool/HTTP 边界访问业务能力。
 
-- `domain`：定义 Incident、Run、状态机和领域错误；不负责数据库访问，也不负责编排调用流程。
-- `application`：提供应用服务和仓储接口。仓储接口放在应用层，因为它们是应用用例所需的持久化能力。
-- `db`：作为基础设施适配器，实现 `application` 的仓储接口；允许依赖 `application` 与 `domain`。
-- `incident-agent`：故障响应业务 Agent。负责构造 Incident 上下文、配置系统提示词与允许的工具集合、定义诊断完成条件，并把通用 Loop 的结果映射为领域诊断和 Evidence；它是 API/Worker 共同调用的业务边界。
-- `apps/api`：仅调用 `application` 服务；Controller 不直接访问 Prisma、仓储实现或数据库表。
-- `apps/api-runtime`：唯一的 API 组合根，负责将 db 的仓储实现和 application 用例注入 Nest API，并管理数据库连接生命周期。
-- `infra/`：仅存放 `docker-compose`、镜像、部署和监控配置，不放业务代码。
+## 9. Observability
 
-## 告警到 Agent 分析完成的处理流程
+`packages/observability` 当前只有 `ObservabilityBoundary` marker interface，表示结构化日志与追踪的包边界已经预留；完整可观测实现仍是 Planned。
 
-下面描述的是项目完成后的目标链路。它覆盖从外部告警提交，到 Agent 形成带证据诊断结果并完成一次 `AnalysisRun`；高风险 Action 的人工审批与实际执行属于后续链路。
+未来至少需要覆盖：
+
+- AgentRun Trace
+- Model call
+- Tool call
+- Latency
+- Token usage
+- Error source
+- Agent events
+
+敏感信息边界仍需保持：不记录完整 Prompt、原始业务文件、凭据或未脱敏的 Tool 参数。
+
+## 10. Context Management
+
+当前 Agent Runtime 已支持在模型调用前执行：
+
+- 消息和上下文转换
+- 转换为 LLM 消息
+- Tool 声明附加
+- 下一轮 Context 和 Model 更新
+- 取消信号传递
+
+以下能力尚未形成通用持久化实现，属于 Planned：
+
+- Context window management
+- Context compaction
+- 通用 checkpoint
+- Long-running Agent recovery
+
+这些能力应保持通用，不直接复制旧 Incident-specific `ContextCheckpoint` 领域模型。
+
+## 11. RAG（Planned）
+
+RAG 属于未来 Agent Tool / capability，不属于 Model Gateway 的职责。概念调用关系为：
 
 ```text
-告警系统 / 用户
-  → apps/api-runtime + apps/api
-  → packages/application → packages/domain
-  → packages/db → PostgreSQL
-  → Outbox publisher → Redis / BullMQ
-  → apps/worker
-  → packages/agent-runtime
-      ├─ packages/model-gateway
-      └─ packages/tool-gateway → 日志 / 指标 / Runbook 等连接器
-  → packages/application → packages/db → PostgreSQL
-  → AnalysisRun COMPLETED、Evidence、RunEvent、ProposedAction
+Agent
+  ↓
+rag.search
+  ↓
+Tool Gateway
+  ↓
+RAG Service
 ```
 
-### 各模块职责
+当前仓库没有完成通用 RAG Service 或 `rag.search` Tool 实现。
 
-| 模块                     | 在“告警 → Agent 分析完成”中的职责                                                                                                                    |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web`               | 供值班人员查看 Incident、分析进度、证据和诊断结果；经 HTTP/SSE 调用或订阅 API，不参与分析执行。                                                      |
-| `apps/api-runtime`       | API 的组合根，类似 ASP.NET Core 的 `Program.cs`：创建数据库仓储、装配 application 用例和 Nest API，并管理数据库连接生命周期。                        |
-| `apps/api`               | HTTP 接口层：接收 `POST /alerts`、校验请求、返回查询结果；Controller 只调用 application 用例，不直接访问 Prisma。                                    |
-| `packages/shared`        | 前后端共享的告警请求/响应 DTO 与 Zod schema。                                                                                                        |
-| `packages/application`   | 业务用例和仓储接口：创建 Incident、AnalysisRun、初始事件与 outbox 消息；后续推进 Run 生命周期并保存分析结果。                                        |
-| `packages/domain`        | 核心业务规则：Incident/Run/Action 状态机、事件类型、领域 DTO，以及非法状态转换校验。                                                                 |
-| `packages/db`            | 基础设施适配层：Prisma schema、仓储实现、数据库事务和 outbox 持久化；将业务事实保存到 PostgreSQL。                                                   |
-| PostgreSQL               | 最终事实来源：保存 Incident、AnalysisRun、RunEvent、Evidence、Action、审批/执行审计和 OutboxMessage。                                                |
-| Redis + BullMQ           | 异步任务调度：传递“分析此 Run”的后台 Job，并提供重试、延迟和并发控制；不作为审计事实的唯一来源。                                                     |
-| `apps/worker`            | 独立的服务端后台进程：消费分析 Job、处理超时/重试/幂等，调用 Agent，并通过 application 用例持久化状态与结果。它不提供 HTTP 接口，也不是 Web 客户端。 |
-| `packages/agent-runtime` | 通用 Agent Loop：管理模型回合、工具调用、并发、取消、进度和失败边界；不包含 Incident、Evidence 或诊断策略等领域知识。                              |
-| `packages/incident-agent` | 故障诊断业务 Agent：直接使用模型层原子类型和通用 Loop，定义 `IncidentTool extends RuntimeTool`，提供 Incident 上下文、提示词、工具集、完成条件，并映射领域诊断与 Evidence。 |
-| `packages/model-gateway` | 独立的模型适配层：仅处理 Provider、模型配置、模型消息和最小 ToolDeclaration；不依赖故障领域、工具执行或 API DTO。                                 |
-| `packages/tool-gateway`  | 独立工具执行适配层：校验、策略闸门、权限、超时与日志/指标/Runbook 连接器；由 `incident-agent` 的 IncidentTool 委托调用，模型不可直接访问其执行细节。 |
-| `packages/observability` | 记录脱敏后的结构化日志、trace、耗时、token 与成本；不记录完整提示词、原始日志、工具参数或密钥。                                                      |
+## 12. Eval（Planned）
 
-### 一次分析的顺序
+未来 Agent Eval 可覆盖：
 
-1. 告警系统或用户调用 `POST /alerts`。
-2. `apps/api` 调用 `packages/application`；应用层按 `packages/domain` 的规则创建 `Incident(OPEN)`、`AnalysisRun(QUEUED)` 和 `alert.received` 事件。
-3. `packages/db` 在同一 PostgreSQL 事务写入上述事实以及一条“分析此 Run”的 `OutboxMessage`。
-4. Outbox publisher 将消息投递到 Redis/BullMQ；若 Redis 暂时故障，消息仍保留在 PostgreSQL 中等待重试。
-5. `apps/worker` 消费 Job，将 Run 推进为 `RUNNING` 并追加 `run.started`；它负责重试、超时和幂等，而不包含模型或工具的具体实现。
-6. Worker 调用 `packages/incident-agent`；它配置故障诊断上下文、创建 IncidentTool 后调用 `agent-runtime`。Loop 通过 `model-gateway` 获取模型决策；IncidentTool 将执行委托给 `tool-gateway`。
-7. `incident-agent` 将工具结果映射为 Evidence；`packages/db` 持久化 Evidence，Agent 使用证据 ID 和摘要形成根因假设、置信度与行动建议。
-8. Worker 经 `packages/application` 追加结果事件、保存 Evidence 引用和 ProposedAction，写入 `run.completed`，并将 Run 推进为 `COMPLETED`。
+- Tool selection correctness
+- Task success
+- Trajectory evaluation
+- Regression tests
+- Latency
+- Token cost
+- Failure classification
 
-Worker 是后台任务执行宿主，Tool Gateway 才是具体工具执行与安全校验的边界：Worker 决定任务如何可靠运行，Agent 决定查什么，Tool Gateway 决定能否查以及如何调用连接器。
+当前仓库尚未形成独立 Eval Pipeline 或评测数据集。
 
-## 实现原则
+## 13. Current Status
 
-- 使用 TypeScript 全栈与 Zod schema，保持 API、领域事件、工具输入输出的类型安全。
-- 保持模块化单体架构；不急于拆分微服务或引入 Kubernetes。
-- 先实现一个 OpenAI 适配器；用 `ModelGateway` 隔离供应商差异，但不做多 Provider 平台。
-- 进度展示使用工具和业务事件，不显示或持久化模型思维链。
-- trace 只记录 ID、名称、耗时、状态、token 与成本；不记录完整提示词、日志、工具参数、凭据或自由格式敏感信息。
-- 维护故障案例评测集，衡量根因 Top-3 命中率、Runbook 引用正确率、平均分析耗时、工具调用成功率和人工审批响应时间。
+### Completed
 
-## 迭代计划
+- Model Gateway 基础契约、模型配置和 OpenAI Provider 适配
+- Model streaming event、tool declaration 和 reasoning 处理
+- Agent Runtime 生命周期、Loop、State、Event、Tool Call、Streaming 和 Cancellation
+- Agent Runtime 的 Context 转换与 Loop Hook
+- Tool Gateway 的 Fixture Tool contract、Connector schema 和 Fixture Connector
+- 以上核心包的类型检查与已有单元测试
 
-1. **事件与状态机**：建立 Incident、AnalysisRun、RunEvent、ProposedAction、Approval 的 Prisma 模型与迁移。
-2. **只读分析闭环**：接入模拟日志、指标与 Runbook；Agent 并行调用查询工具，保存证据与时间线。
-3. **实时控制台**：用 SSE 展示运行进度、工具状态、最终结论和断线回放。
-4. **审批与受控执行**：将高风险建议转为待审批 Action；批准后由 Worker 执行模拟重启/扩容并审计。
-5. **上下文检查点与评测**：加入结构化摘要、token/成本统计和故障案例评测集。
-6. **真实连接器与遥测**：最后接入 Prometheus/Loki/Kubernetes，并补充 OpenTelemetry。
+### In Progress
 
-## 首个可演示闭环
+- 早期故障响应 Demo 的 API、Worker、Prisma 和 Fixture 数据仍保留在 Workspace 中，用于已有功能、测试或参考
+- 通用 Agent Service 与未来 Backend 之间的产品级 HTTP 边界尚在规划
 
-1. 接收一条“数据库连接池耗尽”告警，创建 Incident 与 AnalysisRun。
-2. Worker 并行查询过去 15 分钟日志、指标和 Runbook，事件实时推送到控制台。
-3. Agent 输出带证据引用的根因假设与“扩容或重启”建议。
-4. 系统将建议创建为 `ProposedAction`，而非直接执行。
-5. 值班工程师在审批页批准后，Worker 以受限身份执行模拟操作，记录审计和最终结果。
+### Planned
 
-这个闭环能同时展示后端的状态机、异步可靠性、权限与审计设计，以及 AI 应用的 RAG、工具调用、流式交互和评测能力。
+- Agent Service HTTP Run API
+- Backend adapter 与 Internal Tool API 集成
+- 完整 Observability / Trace
+- 通用 Context compaction、checkpoint 和恢复
+- RAG Tool / Service 集成
+- Agent Eval Pipeline
+- 生产级鉴权、限流、幂等和部署加固
+
+## 14. Workspace Layout
+
+```text
+agent-service/
+├── apps/
+│   ├── api/             # 旧 Demo 的 NestJS HTTP 接口
+│   ├── api-runtime/     # 旧 Demo 的 API 组合根
+│   ├── worker/          # 旧 Demo 的后台运行入口
+│   └── web/             # 旧 Demo / 嵌套 Git 内容
+├── packages/
+│   ├── model-gateway/
+│   ├── agent-runtime/
+│   ├── tool-gateway/
+│   ├── observability/
+│   ├── application/     # 旧 Demo 应用用例
+│   ├── domain/          # 旧 Demo Incident 领域模型
+│   ├── db/              # 旧 Demo Prisma 持久化
+│   └── shared/          # 旧 Demo DTO
+├── config/
+├── docs/
+├── README.md
+└── PROJECT.md
+```
+
+旧故障响应设计保留在 [Legacy Incident Response Demo Design](docs/legacy/incident-response-demo.md)，不再作为当前 Agent Service 的产品边界。
+
+## 15. Development and Verification
+
+从仓库根目录进入 Agent Service 后执行：
+
+```powershell
+cd agent-service
+pnpm install
+pnpm build
+pnpm test
+pnpm typecheck
+pnpm lint
+```
+
+当前真实存在的开发入口为：
+
+```powershell
+pnpm dev
+pnpm dev:api
+pnpm dev:worker
+```
+
+这些入口对应现有旧 Demo 应用；它们不代表未来 ASP.NET Core Backend 的启动命令。
+
+## 16. Roadmap
+
+### Phase 1 — Core Runtime
+
+- Model Gateway
+- Agent Runtime
+- Agent Loop
+- Tool contract
+- Agent events
+
+当前核心代码已基本覆盖本阶段；持续工作集中在边界稳定性和错误/取消测试。
+
+### Phase 2 — Service Integration
+
+- Tool Gateway integration
+- Agent Service HTTP contract
+- Backend adapter
+- Backend Internal Tool API 协议
+
+### Phase 3 — Context and Operations
+
+- Context management
+- Compaction and recovery
+- RAG integration
+- Observability / Trace
+
+### Phase 4 — Evaluation and Hardening
+
+- Eval
+- Regression dataset
+- Failure classification
+- Production hardening
+
+## 17. Explicit Non-goals
+
+Agent Service 不实现：
+
+- Excel domain logic
+- ClosedXML / Open XML SDK
+- User management、JWT 和 RBAC
+- File upload、File Management 和 File Storage
+- AnalysisTask business model
+- EF Core
+- ASP.NET Core business logic
+- Vue UI
+- 直接持久化 Backend 的传统业务数据
+- 把旧 Incident / 运维故障领域升级为 Agent Service 的核心产品模型

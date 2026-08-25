@@ -18,3 +18,7 @@
 - 创建分析任务
 - 展示 Agent 执行进度和分析结果
 - 下载处理后的 Excel
+
+## Integration boundary
+
+Web 通过 HTTP 调用 `/backend` 的 ASP.NET Core API，正常情况下不直接调用 `agent-service/`。Agent Service 的运行启动、任务状态和业务 Tool 调用由 Backend 负责协调。
