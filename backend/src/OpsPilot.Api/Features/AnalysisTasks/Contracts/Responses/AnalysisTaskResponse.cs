@@ -1,4 +1,4 @@
-namespace OpsPilot.Api.AnalysisTasks.Contracts;
+namespace OpsPilot.Api.Features.AnalysisTasks.Contracts;
 
 public sealed record AnalysisTaskResponse(
     Guid Id,

@@ -2,6 +2,8 @@ namespace OpsPilot.Domain.AnalysisTasks;
 
 public sealed class AnalysisTask
 {
+    public const int MaxPromptLength = 4000;
+
     private AnalysisTask()
     {
         Prompt = string.Empty;
@@ -40,12 +42,20 @@ public sealed class AnalysisTask
             throw new ArgumentException("FileId cannot be empty.", nameof(fileId));
         }
 
-        if (string.IsNullOrWhiteSpace(prompt))
+        string normalizedPrompt = prompt?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(normalizedPrompt))
         {
             throw new ArgumentException("Prompt cannot be empty.", nameof(prompt));
         }
 
-        return new AnalysisTask(Guid.NewGuid(), fileId, prompt, createdAtUtc);
+        if (normalizedPrompt.Length > MaxPromptLength)
+        {
+            throw new ArgumentException(
+                $"Prompt cannot exceed {MaxPromptLength} characters.",
+                nameof(prompt));
+        }
+
+        return new AnalysisTask(Guid.NewGuid(), fileId, normalizedPrompt, createdAtUtc);
     }
 
     public void Start(DateTime startedAtUtc)

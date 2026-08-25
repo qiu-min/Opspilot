@@ -50,4 +50,22 @@ public sealed class CreateAnalysisTaskEndpointTests : IClassFixture<WebApplicati
             response.Content.Headers.ContentType?.MediaType ?? string.Empty,
             StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public async Task PostAnalysisTask_WithPromptTooLong_ReturnsBadRequestProblemDetails()
+    {
+        using HttpResponseMessage response = await httpClient.PostAsJsonAsync(
+            "/api/analysis-tasks",
+            new
+            {
+                fileId = Guid.NewGuid(),
+                prompt = new string('a', 4001)
+            });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains(
+            "problem+json",
+            response.Content.Headers.ContentType?.MediaType ?? string.Empty,
+            StringComparison.OrdinalIgnoreCase);
+    }
 }

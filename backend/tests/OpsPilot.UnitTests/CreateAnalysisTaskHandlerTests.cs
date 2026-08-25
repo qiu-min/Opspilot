@@ -1,5 +1,5 @@
 using OpsPilot.Application.Abstractions.Persistence;
-using OpsPilot.Application.AnalysisTasks.CreateAnalysisTask;
+using OpsPilot.Application.AnalysisTasks.Create;
 using OpsPilot.Application.Exceptions;
 using OpsPilot.Domain.AnalysisTasks;
 
@@ -44,6 +44,24 @@ public sealed class CreateAnalysisTaskHandlerTests
         await Assert.ThrowsAsync<ApplicationValidationException>(() =>
             handler.HandleAsync(
                 new CreateAnalysisTaskCommand(Guid.Empty, "Analyze this file"),
+                CancellationToken.None));
+
+        Assert.False(repository.WasAdded);
+        Assert.False(repository.WasSaved);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenPromptIsTooLong_DoesNotPersist()
+    {
+        var repository = new FakeAnalysisTaskRepository();
+        var handler = new CreateAnalysisTaskHandler(
+            repository,
+            new FixedTimeProvider(CurrentTime));
+        string prompt = new('a', AnalysisTask.MaxPromptLength + 1);
+
+        await Assert.ThrowsAsync<ApplicationValidationException>(() =>
+            handler.HandleAsync(
+                new CreateAnalysisTaskCommand(Guid.NewGuid(), prompt),
                 CancellationToken.None));
 
         Assert.False(repository.WasAdded);

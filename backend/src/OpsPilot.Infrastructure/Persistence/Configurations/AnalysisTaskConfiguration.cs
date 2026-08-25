@@ -22,7 +22,7 @@ public sealed class AnalysisTaskConfiguration : IEntityTypeConfiguration<Analysi
 
         builder.Property(analysisTask => analysisTask.Prompt)
             .HasColumnName("prompt")
-            .HasMaxLength(4000)
+            .HasMaxLength(AnalysisTask.MaxPromptLength)
             .IsRequired();
 
         builder.Property(analysisTask => analysisTask.Status)

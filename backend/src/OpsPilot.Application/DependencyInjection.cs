@@ -1,5 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
-using OpsPilot.Application.AnalysisTasks.CreateAnalysisTask;
+using OpsPilot.Application.AnalysisTasks.Create;
 
 namespace OpsPilot.Application;
 

@@ -76,6 +76,46 @@ public sealed class AnalysisTaskTests
     }
 
     [Fact]
+    public void Create_WithEmptyPromptIsRejected()
+    {
+        Assert.Throws<ArgumentException>(
+            () => AnalysisTask.Create(Guid.NewGuid(), string.Empty, CreatedAtUtc));
+    }
+
+    [Fact]
+    public void Create_WithMaximumLengthPromptIsAccepted()
+    {
+        string prompt = new('a', AnalysisTask.MaxPromptLength);
+
+        AnalysisTask analysisTask = AnalysisTask.Create(
+            Guid.NewGuid(),
+            prompt,
+            CreatedAtUtc);
+
+        Assert.Equal(prompt, analysisTask.Prompt);
+    }
+
+    [Fact]
+    public void Create_WithPromptLongerThanMaximumIsRejected()
+    {
+        string prompt = new('a', AnalysisTask.MaxPromptLength + 1);
+
+        Assert.Throws<ArgumentException>(
+            () => AnalysisTask.Create(Guid.NewGuid(), prompt, CreatedAtUtc));
+    }
+
+    [Fact]
+    public void Create_TrimsPromptBeforeSaving()
+    {
+        AnalysisTask analysisTask = AnalysisTask.Create(
+            Guid.NewGuid(),
+            "  Analyze this file  ",
+            CreatedAtUtc);
+
+        Assert.Equal("Analyze this file", analysisTask.Prompt);
+    }
+
+    [Fact]
     public void Create_WithEmptyFileIdIsRejected()
     {
         Assert.Throws<ArgumentException>(

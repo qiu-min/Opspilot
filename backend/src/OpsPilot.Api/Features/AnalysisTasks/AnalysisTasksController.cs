@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
+using OpsPilot.Api.Features.AnalysisTasks.Contracts;
 using OpsPilot.Application.AnalysisTasks.Create;
-using OpsPilot.Api.AnalysisTasks.Contracts;
 
-namespace OpsPilot.Api.AnalysisTasks;
+namespace OpsPilot.Api.Features.AnalysisTasks;
 
 [ApiController]
 [Route("api/analysis-tasks")]
