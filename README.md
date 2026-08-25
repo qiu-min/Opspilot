@@ -75,4 +75,4 @@ PostgreSQL 和 Redis 由仓库根目录的 `docker-compose.yml` 提供：
 docker compose up -d
 ```
 
-当前 Backend 已初始化基础 ASP.NET Core 项目；本次未新增数据库、缓存、业务功能或 backend/web 容器。
+当前 Backend 已初始化基础 ASP.NET Core 项目，并包含 AnalysisTask / AgentRun 的最小 PostgreSQL 持久化；本次未新增 Redis、认证授权、其他业务 API 或 backend/web 容器。

@@ -1,6 +1,6 @@
 # OpsPilot Backend
 
-OpsPilot Backend 是负责用户、权限、文件和 Excel 处理等产品能力的 ASP.NET Core 后端。本目录当前已包含 .NET 10 基础启动骨架，但尚未加入具体业务实现或基础设施。
+OpsPilot Backend 是负责用户、权限、文件和 Excel 处理等产品能力的 ASP.NET Core 后端。本目录当前已包含 .NET 10 基础启动骨架，以及 AnalysisTask / AgentRun 的最小 PostgreSQL 持久化能力。
 
 当前骨架提供：
 
@@ -8,6 +8,10 @@ OpsPilot Backend 是负责用户、权限、文件和 Excel 处理等产品能�
 - `GET /health` 基础进程健康检查
 - 基于 `IExceptionHandler` 和 `ProblemDetails` 的统一未预期异常处理
 - Application 与 Infrastructure 的统一 DI 注册入口
+- EF Core + Npgsql 的 `OpsPilotDbContext`
+- `analysis_tasks`、`agent_runs` 和 `InitialCreate` Migration
+
+`agent_runs.analysis_task_id` 使用 Restrict 删除行为，避免删除任务时级联抹掉 Agent 执行历史。
 
 ## Development
 
@@ -19,7 +23,14 @@ dotnet test
 dotnet run --project src/OpsPilot.Api
 ```
 
-数据库、缓存、认证授权、文件处理和 Agent Service 集成将在对应功能具备真实需求后加入。
+本地 PostgreSQL 使用仓库根目录的 Compose 配置：
+
+```powershell
+docker compose up -d postgres
+dotnet ef database update --project src/OpsPilot.Infrastructure --startup-project src/OpsPilot.Api
+```
+
+Connection String 位于 `src/OpsPilot.Api/appsettings.Development.json`，仅用于本地开发。数据库、缓存、认证授权、文件处理和 Agent Service 的其他能力将在对应功能具备真实需求后加入。
 
 ## Technology
 
