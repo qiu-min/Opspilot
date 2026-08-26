@@ -493,8 +493,15 @@ describe('Agent', () => {
       content: [{ type: 'text', text: 'Tool execution was aborted.' }],
       details: { kind: 'aborted', code: 'TOOL_ABORTED' },
     });
-    expect(result).toHaveLength(4);
-    expect(result[3]).toMatchObject({ role: 'assistant', finishReason: 'aborted' });
+    expect(result[3]).toMatchObject({
+      role: 'tool',
+      callId: secondCall.callId,
+      isError: true,
+      content: [{ type: 'text', text: 'Tool execution was aborted before this tool started.' }],
+      details: { kind: 'aborted', code: 'TOOL_ABORTED' },
+    });
+    expect(result).toHaveLength(5);
+    expect(result[4]).toMatchObject({ role: 'assistant', finishReason: 'aborted' });
     expect(secondExecute).not.toHaveBeenCalled();
     expect(events.filter((event) => event.type === 'tool_execution_start')).toHaveLength(1);
     expect(agent.state.errorInfo).toMatchObject({ source: 'runtime', reason: 'aborted' });

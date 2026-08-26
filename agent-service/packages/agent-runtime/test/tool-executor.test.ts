@@ -10,7 +10,7 @@ import {
   executeToolCalls,
   type ExecuteToolCallOptions,
 } from '../src/tool-executor.js';
-import type { AgentTool } from '../src/types.js';
+import type { AgentEvent, AgentTool } from '../src/types.js';
 import type { ToolResultMessage } from '@opspilot/model-gateway';
 
 const execute = vi.fn();
@@ -556,21 +556,143 @@ it('stops sequential execution after an internal error', async () => {
   });
   const secondTool = createBatchTool('B', secondExecute);
   const { assistantMessage, context } = createBatchContext([firstTool, secondTool]);
+  const events: AgentEvent[] = [];
 
   const outcome = await executeToolCalls({
     toolCalls: [createBatchToolCall('A'), createBatchToolCall('B')],
     tools: [firstTool, secondTool],
     assistantMessage,
     context,
-    emit: () => undefined,
+    emit: (event) => {
+      events.push(event);
+    },
   });
 
   expect(outcome.stopReason).toBe('error');
-  expect(outcome.messages).toHaveLength(1);
+  expect(outcome.messages).toHaveLength(2);
   expect(outcome.messages[0]).toMatchObject({
     details: { kind: 'internal', code: 'TOOL_INTERNAL_ERROR' },
   });
+  expect(outcome.messages[1]).toMatchObject({
+    callId: 'call_B',
+    details: { kind: 'internal', code: 'TOOL_NOT_EXECUTED' },
+  });
   expect(secondExecute).not.toHaveBeenCalled();
+  expect(
+    events
+      .filter((event): event is Extract<AgentEvent, { type: 'tool_execution_start' }> =>
+        event.type === 'tool_execution_start',
+      )
+      .map((event) => event.toolCall.callId),
+  ).toEqual(['call_A']);
+  expect(
+    events
+      .filter((event): event is Extract<AgentEvent, { type: 'message_start' }> =>
+        event.type === 'message_start' && event.message.role === 'tool',
+      )
+      .map((event) => ('callId' in event.message ? event.message.callId : '')),
+  ).toEqual(['call_A', 'call_B']);
+});
+
+it('closes every tool call without starting execution when already aborted', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const executeSpies = new Map<string, ReturnType<typeof vi.fn<AgentTool['execute']>>>();
+  const tools = ['A', 'B', 'C'].map((name) => {
+    const executeSpy = vi.fn<AgentTool['execute']>(async () => ({ content: [] }));
+    executeSpies.set(name, executeSpy);
+    return createBatchTool(name, executeSpy);
+  });
+  const { assistantMessage, context } = createBatchContext(tools);
+  const events: AgentEvent[] = [];
+
+  const outcome = await executeToolCalls({
+    toolCalls: tools.map((tool) => createBatchToolCall(tool.name)),
+    tools,
+    assistantMessage,
+    context,
+    signal: controller.signal,
+    emit: (event) => {
+      events.push(event);
+    },
+  });
+
+  expect(outcome.stopReason).toBe('aborted');
+  expect(outcome.messages.map((message) => message.callId)).toEqual([
+    'call_A',
+    'call_B',
+    'call_C',
+  ]);
+  expect(outcome.messages.every((message) => message.isError)).toBe(true);
+  expect(outcome.messages.every((message) => message.details === undefined ||
+    (message.details as { kind: string; code: string }).kind === 'aborted')).toBe(true);
+  expect([...executeSpies.values()].every((executeSpy) => executeSpy.mock.calls.length === 0)).toBe(
+    true,
+  );
+  expect(events).not.toContainEqual(expect.objectContaining({ type: 'tool_execution_start' }));
+  expect(events).not.toContainEqual(expect.objectContaining({ type: 'tool_execution_end' }));
+});
+
+it('closes unstarted parallel calls after a preparation internal error', async () => {
+  const executeSpies = new Map<string, ReturnType<typeof vi.fn<AgentTool['execute']>>>();
+  const tools = ['A', 'B', 'C'].map((name) => {
+    const executeSpy = vi.fn<AgentTool['execute']>(async () => ({
+      content: [{ type: 'text', text: name }],
+    }));
+    executeSpies.set(name, executeSpy);
+    return createBatchTool(name, executeSpy);
+  });
+  const { assistantMessage, context } = createBatchContext(tools);
+  const events: AgentEvent[] = [];
+
+  const outcome = await executeToolCalls({
+    toolCalls: tools.map((tool) => createBatchToolCall(tool.name)),
+    tools,
+    assistantMessage,
+    context,
+    toolExecution: 'parallel',
+    beforeToolCall: ({ toolCall }) => {
+      if (toolCall.name === 'B') throw new TypeError('private preparation failure');
+      return undefined;
+    },
+    emit: (event) => {
+      events.push(event);
+    },
+  });
+
+  expect(outcome.stopReason).toBe('error');
+  expect(outcome.messages.map((message) => message.callId)).toEqual([
+    'call_A',
+    'call_B',
+    'call_C',
+  ]);
+  expect(outcome.messages[1]).toMatchObject({
+    isError: true,
+    content: [{ type: 'text', text: 'Tool execution failed due to an internal error.' }],
+    details: { kind: 'internal', code: 'TOOL_INTERNAL_ERROR' },
+  });
+  expect(outcome.messages[2]).toMatchObject({
+    isError: true,
+    content: [{ type: 'text', text: 'Tool was not executed because the current tool batch was stopped.' }],
+    details: { kind: 'internal', code: 'TOOL_NOT_EXECUTED' },
+  });
+  expect(executeSpies.get('A')).toHaveBeenCalledTimes(1);
+  expect(executeSpies.get('B')).not.toHaveBeenCalled();
+  expect(executeSpies.get('C')).not.toHaveBeenCalled();
+  expect(
+    events
+      .filter((event): event is Extract<AgentEvent, { type: 'tool_execution_start' }> =>
+        event.type === 'tool_execution_start',
+      )
+      .map((event) => event.toolCall.callId),
+  ).toEqual(['call_A', 'call_B']);
+  expect(
+    events
+      .filter((event): event is Extract<AgentEvent, { type: 'message_start' }> =>
+        event.type === 'message_start' && event.message.role === 'tool',
+      )
+      .map((event) => ('callId' in event.message ? event.message.callId : '')),
+  ).toEqual(['call_A', 'call_B', 'call_C']);
 });
 
 it('executes prepared tools concurrently in parallel mode', async () => {

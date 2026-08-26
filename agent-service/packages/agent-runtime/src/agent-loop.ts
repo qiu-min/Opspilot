@@ -6,8 +6,20 @@ import type {
   StreamFn,
 } from './types.js';
 import type { AssistantMessage, Context, ToolResultMessage } from '@opspilot/model-gateway';
-import { AgentToolBatchError, executeToolCalls } from './tool-executor.js';
+import { executeToolCalls } from './tool-executor.js';
 import { defaultConvertToLlm } from './convert-to-llm.js';
+
+export interface AgentLoopTermination {
+  readonly reason: 'error' | 'aborted';
+  readonly message: string;
+  readonly cause?: unknown;
+  readonly toolResults: readonly ToolResultMessage[];
+}
+
+export interface AgentLoopOutcome {
+  readonly messages: AgentMessage[];
+  readonly termination?: AgentLoopTermination;
+}
 
 /**
  * 启动一次 Agent 运行并发出生命周期事件。
@@ -26,6 +38,26 @@ export async function runAgentLoop(
   emit: AgentEventSink,
   signal?: AbortSignal,
 ): Promise<AgentMessage[]> {
+  const outcome = await runAgentLoopWithOutcome(
+    prompts,
+    context,
+    config,
+    streamFn,
+    emit,
+    signal,
+  );
+  return outcome.messages;
+}
+
+/** 启动一次 Agent 运行，并显式返回工具批次的终止结果。 */
+export async function runAgentLoopWithOutcome(
+  prompts: readonly AgentMessage[],
+  context: AgentContext,
+  config: AgentLoopConfig,
+  streamFn: StreamFn,
+  emit: AgentEventSink,
+  signal?: AbortSignal,
+): Promise<AgentLoopOutcome> {
   const newMessages: AgentMessage[] = [...prompts];
   const currentContext: AgentContext = {
     ...context,
@@ -41,9 +73,12 @@ export async function runAgentLoop(
     await emit({ type: 'message_end', message: prompt });
   }
 
-  await runLoop(currentContext, newMessages, config, streamFn, emit, signal);
+  const termination = await runLoop(currentContext, newMessages, config, streamFn, emit, signal);
 
-  return newMessages;
+  return {
+    messages: newMessages,
+    ...(termination === undefined ? {} : { termination }),
+  };
 }
 
 /**
@@ -62,7 +97,7 @@ async function runLoop(
   streamFn: StreamFn,
   emit: AgentEventSink,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<AgentLoopTermination | undefined> {
   let currentContext = initialContext;
   let config = initialConfig;
   const initialSteeringMessages = await config.getSteeringMessages?.(signal);
@@ -107,7 +142,7 @@ async function runLoop(
           toolResults: [],
         });
         await emit({ type: 'agent_end', messages: newMessages });
-        return;
+        return undefined;
       }
 
       const toolCalls = assistantMessage.toolCalls ?? [];
@@ -133,7 +168,15 @@ async function runLoop(
         }
 
         if (outcome.stopReason !== undefined) {
-          throw new AgentToolBatchError(outcome);
+          return {
+            reason: outcome.stopReason,
+            message:
+              outcome.stopReason === 'aborted'
+                ? 'Tool execution was aborted.'
+                : 'Tool execution failed due to an internal error.',
+            ...(outcome.cause === undefined ? {} : { cause: outcome.cause }),
+            toolResults,
+          };
         }
       }
 
@@ -170,7 +213,7 @@ async function runLoop(
       });
       if (shouldStop) {
         await emit({ type: 'agent_end', messages: newMessages });
-        return;
+        return undefined;
       }
 
       hasMoreToolCalls = assistantMessage.finishReason === 'tool_calls' && toolCalls.length > 0;
@@ -184,6 +227,7 @@ async function runLoop(
   }
 
   await emit({ type: 'agent_end', messages: newMessages });
+  return undefined;
 }
 
 /**

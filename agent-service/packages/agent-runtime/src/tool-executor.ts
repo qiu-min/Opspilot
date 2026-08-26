@@ -22,6 +22,10 @@ const INTERNAL_ERROR_MESSAGE = 'Tool execution failed due to an internal error.'
 const INTERNAL_ERROR_CODE = 'TOOL_INTERNAL_ERROR';
 const ABORTED_ERROR_MESSAGE = 'Tool execution was aborted.';
 const ABORTED_ERROR_CODE = 'TOOL_ABORTED';
+const ABORTED_BEFORE_START_MESSAGE = 'Tool execution was aborted before this tool started.';
+const NOT_EXECUTED_MESSAGE =
+  'Tool was not executed because the current tool batch was stopped.';
+const NOT_EXECUTED_CODE = 'TOOL_NOT_EXECUTED';
 
 export interface ExecuteToolCallOptions {
   readonly assistantMessage: AssistantMessage;
@@ -50,13 +54,11 @@ interface ToolCallOutcome {
   readonly stopReason?: 'error' | 'aborted';
   readonly cause?: unknown;
 }
-
 interface ToolCallBatchOutcome {
   readonly messages: ToolResultMessage[];
   readonly stopReason?: 'error' | 'aborted';
   readonly cause?: unknown;
 }
-
 interface ImmediateToolCallOutcome extends ToolCallOutcome {
   readonly kind: 'immediate';
   readonly toolCall: ModelToolCall;
@@ -72,25 +74,12 @@ interface ExecutedToolCallOutcome {
 }
 
 type ParallelToolCallEntry =
-  | ImmediateToolCallOutcome
+  | (ImmediateToolCallOutcome & { readonly index: number })
   | {
       readonly kind: 'prepared';
+      readonly index: number;
       readonly preparation: PreparedToolCall;
     };
-
-/** 供 Agent Loop 识别 Tool 批次终止原因的内部异常。 */
-export class AgentToolBatchError extends Error {
-  readonly outcome: ToolCallBatchOutcome;
-
-  constructor(outcome: ToolCallBatchOutcome) {
-    super(
-      outcome.stopReason === 'aborted' ? ABORTED_ERROR_MESSAGE : INTERNAL_ERROR_MESSAGE,
-      { cause: outcome.cause },
-    );
-    this.name = 'AgentToolBatchError';
-    this.outcome = outcome;
-  }
-}
 
 /** 执行一批模型工具调用，默认保持顺序执行。 */
 export async function executeToolCalls(
@@ -109,8 +98,14 @@ async function executeToolCallsSequential(
 ): Promise<ToolCallBatchOutcome> {
   const messages: ToolResultMessage[] = [];
 
-  for (const toolCall of options.toolCalls) {
+  for (const [index, toolCall] of options.toolCalls.entries()) {
     if (options.signal?.aborted) {
+      await appendUnexecutedToolResults(
+        options.toolCalls.slice(index),
+        'aborted',
+        messages,
+        options.emit,
+      );
       return { messages, stopReason: 'aborted' };
     }
 
@@ -121,6 +116,12 @@ async function executeToolCallsSequential(
     messages.push(outcome.result);
 
     if (outcome.stopReason !== undefined) {
+      await appendUnexecutedToolResults(
+        options.toolCalls.slice(index + 1),
+        outcome.stopReason,
+        messages,
+        options.emit,
+      );
       return {
         messages,
         stopReason: outcome.stopReason,
@@ -137,9 +138,16 @@ async function executeToolCallsParallel(
   options: ExecuteToolCallsOptions,
 ): Promise<ToolCallBatchOutcome> {
   const entries: ParallelToolCallEntry[] = [];
+  let preparationStopReason: 'error' | 'aborted' | undefined;
+  let preparationCause: unknown;
+  let firstUnstartedIndex = options.toolCalls.length;
 
-  for (const toolCall of options.toolCalls) {
-    if (options.signal?.aborted) break;
+  for (const [index, toolCall] of options.toolCalls.entries()) {
+    if (options.signal?.aborted) {
+      preparationStopReason = 'aborted';
+      firstUnstartedIndex = index;
+      break;
+    }
 
     await options.emit({ type: 'tool_execution_start', toolCall });
     const preparation = await prepareToolCall(toolCall, options.tools, options);
@@ -149,16 +157,22 @@ async function executeToolCallsParallel(
         toolCall,
         result: preparation.result,
       });
-      entries.push(preparation);
-      if (preparation.stopReason !== undefined) break;
+      entries.push({ ...preparation, index });
     } else {
-      entries.push({ kind: 'prepared', preparation });
+      entries.push({ kind: 'prepared', index, preparation });
+    }
+
+    firstUnstartedIndex = index + 1;
+    if (preparation.kind === 'immediate' && preparation.stopReason !== undefined) {
+      preparationStopReason = preparation.stopReason;
+      preparationCause = preparation.cause;
+      break;
     }
   }
 
   const outcomes = await Promise.all(
-    entries.map(async (entry): Promise<ToolCallOutcome> => {
-      if (entry.kind === 'immediate') return entry;
+    entries.map(async (entry): Promise<{ readonly index: number; readonly outcome: ToolCallOutcome }> => {
+      if (entry.kind === 'immediate') return { index: entry.index, outcome: entry };
 
       const executed = await executePreparedToolCall(entry.preparation, options.signal);
       const outcome = await finalizeExecutedToolCall(entry.preparation, executed, options);
@@ -167,22 +181,74 @@ async function executeToolCallsParallel(
         toolCall: entry.preparation.toolCall,
         result: outcome.result,
       });
-      return outcome;
+      return { index: entry.index, outcome };
     }),
   );
 
+  const unexecutedOutcomes =
+    preparationStopReason === undefined
+      ? []
+      : options.toolCalls.slice(firstUnstartedIndex).map((toolCall, offset) => ({
+          index: firstUnstartedIndex + offset,
+          outcome: createUnexecutedToolCallOutcome(toolCall, preparationStopReason),
+        }));
+  const orderedOutcomes = [...outcomes, ...unexecutedOutcomes].sort(
+    (left, right) => left.index - right.index,
+  );
   const messages: ToolResultMessage[] = [];
-  for (const outcome of outcomes) {
+  for (const { outcome } of orderedOutcomes) {
     await emitToolResultMessage(outcome.result, options.emit);
     messages.push(outcome.result);
   }
 
-  const stopReason = getBatchStopReason(outcomes, options.signal);
-  const cause = getBatchCause(outcomes, stopReason);
+  const flatOutcomes = orderedOutcomes.map(({ outcome }) => outcome);
+  const stopReason =
+    options.signal?.aborted
+      ? 'aborted'
+      : preparationStopReason ?? getBatchStopReason(flatOutcomes, options.signal);
+  const cause =
+    stopReason === preparationStopReason
+      ? preparationCause
+      : getBatchCause(flatOutcomes, stopReason);
   return {
     messages,
     ...(stopReason === undefined ? {} : { stopReason }),
     ...(cause === undefined ? {} : { cause }),
+  };
+}
+
+async function appendUnexecutedToolResults(
+  toolCalls: readonly ModelToolCall[],
+  stopReason: 'error' | 'aborted',
+  messages: ToolResultMessage[],
+  emit: AgentEventSink,
+): Promise<void> {
+  for (const toolCall of toolCalls) {
+    const result = createUnexecutedToolCallOutcome(toolCall, stopReason).result;
+    await emitToolResultMessage(result, emit);
+    messages.push(result);
+  }
+}
+
+function createUnexecutedToolCallOutcome(
+  toolCall: ModelToolCall,
+  stopReason: 'error' | 'aborted',
+): ToolCallOutcome {
+  const classified: ClassifiedToolError =
+    stopReason === 'aborted'
+      ? {
+          message: ABORTED_BEFORE_START_MESSAGE,
+          details: { kind: 'aborted', code: ABORTED_ERROR_CODE },
+          stopReason: 'aborted',
+        }
+      : {
+          message: NOT_EXECUTED_MESSAGE,
+          details: { kind: 'internal', code: NOT_EXECUTED_CODE },
+          stopReason: 'error',
+        };
+  return {
+    result: createToolErrorResult(toolCall, classified),
+    stopReason: classified.stopReason,
   };
 }
 

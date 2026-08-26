@@ -2,14 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Model } from '@opspilot/model-gateway';
 
 import { Agent } from '../src/index.js';
-import { runAgentLoop } from '../src/agent-loop.js';
+import { runAgentLoopWithOutcome } from '../src/agent-loop.js';
 import type { AgentLoopConfig, AgentMessage } from '../src/index.js';
 
 vi.mock('../src/agent-loop.js', () => ({
-  runAgentLoop: vi.fn(),
+  runAgentLoopWithOutcome: vi.fn(),
 }));
 
-const mockedRunAgentLoop = vi.mocked(runAgentLoop);
+const mockedRunAgentLoop = vi.mocked(runAgentLoopWithOutcome);
 
 const model: Model = {
   provider: 'test-provider',
@@ -46,7 +46,7 @@ function createAgent(): Agent {
 describe('Agent message queues', () => {
   beforeEach(() => {
     mockedRunAgentLoop.mockReset();
-    mockedRunAgentLoop.mockImplementation(async (prompts) => [...prompts]);
+    mockedRunAgentLoop.mockImplementation(async (prompts) => ({ messages: [...prompts] }));
   });
 
   it('enqueues steering messages in FIFO order and drains them once', async () => {

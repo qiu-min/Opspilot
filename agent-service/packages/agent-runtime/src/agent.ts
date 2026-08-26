@@ -1,5 +1,4 @@
-import { runAgentLoop } from './agent-loop.js';
-import { AgentToolBatchError } from './tool-executor.js';
+import { runAgentLoopWithOutcome, type AgentLoopTermination, type AgentLoopOutcome } from './agent-loop.js';
 import type { AssistantMessage, ModelToolCall } from '@opspilot/model-gateway';
 import type {
   AgentEvent,
@@ -257,7 +256,7 @@ export class Agent {
         messages: [...this._state.messages],
         tools: [...this._state.tools],
       };
-      const newMessages = await runAgentLoop(
+      const outcome = await runAgentLoopWithOutcome(
         prompts,
         context,
         this.createLoopConfig(),
@@ -268,7 +267,7 @@ export class Agent {
         signal,
       );
 
-      return newMessages;
+      return outcome;
     }, runStartMessageIndex);
   }
 
@@ -278,7 +277,7 @@ export class Agent {
    * @returns executor 成功结果，或包含 runtime failure 消息的本次运行消息。
    */
   private async runWithLifecycle(
-    executor: (signal: AbortSignal) => Promise<readonly AgentMessage[]>,
+    executor: (signal: AbortSignal) => Promise<AgentLoopOutcome>,
     runStartMessageIndex: number,
   ): Promise<readonly AgentMessage[]> {
     if (this.activeRun) throw new Error('Agent is already running.');
@@ -303,7 +302,14 @@ export class Agent {
     this._state.pendingToolCalls.length = 0;
 
     try {
-      return await executor(abortController.signal);
+      const outcome = await executor(abortController.signal);
+      if (outcome.termination !== undefined) {
+        return await this.handleRunTermination(
+          outcome.termination,
+          runStartMessageIndex,
+        );
+      }
+      return outcome.messages;
     } catch (error: unknown) {
       if (error instanceof AgentEventListenerError) throw error.cause;
       return await this.handleRunFailure(error, abortController, runStartMessageIndex);
@@ -314,6 +320,42 @@ export class Agent {
       this.activeRun = undefined;
       activeRun.resolve();
     }
+  }
+
+  /** 将工具批次的显式终止结果转成完整生命周期中的 synthetic assistant 消息。 */
+  private async handleRunTermination(
+    termination: AgentLoopTermination,
+    runStartMessageIndex: number,
+  ): Promise<readonly AgentMessage[]> {
+    const model = this.activeRun?.currentModel ?? this._state.model;
+    const failureMessage: AssistantMessage = {
+      role: 'assistant',
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      content: [],
+      finishReason: termination.reason,
+      errorMessage: termination.message,
+    };
+
+    this._state.errorMessage = termination.message;
+    this._state.errorInfo = {
+      source: 'runtime',
+      reason: termination.reason,
+      message: termination.message,
+    };
+
+    await this.processEvents({ type: 'message_start', message: failureMessage });
+    await this.processEvents({ type: 'message_end', message: failureMessage });
+
+    const runMessages = this._state.messages.slice(runStartMessageIndex);
+    await this.processEvents({
+      type: 'turn_end',
+      message: failureMessage,
+      toolResults: [...termination.toolResults],
+    });
+    await this.processEvents({ type: 'agent_end', messages: runMessages });
+    return runMessages;
   }
 
   /** 将未预期的 Runtime 异常转成完整生命周期中的 synthetic assistant 消息。
@@ -327,17 +369,8 @@ export class Agent {
     abortController: AbortController,
     runStartMessageIndex: number,
   ): Promise<readonly AgentMessage[]> {
-    const toolBatchError = error instanceof AgentToolBatchError ? error : undefined;
-    const stopReason = toolBatchError?.outcome.stopReason;
-    const message =
-      stopReason === 'aborted'
-        ? 'Tool execution was aborted.'
-        : stopReason === 'error'
-          ? 'Tool execution failed due to an internal error.'
-          : error instanceof Error
-            ? error.message
-            : String(error);
-    const aborted = stopReason === 'aborted' || abortController.signal.aborted;
+    const message = error instanceof Error ? error.message : String(error);
+    const aborted = abortController.signal.aborted;
     const reason = aborted ? 'aborted' : 'error';
     const model = this.activeRun?.currentModel ?? this._state.model;
     // 该消息由 Agent Runtime 在未预期运行异常时人工生成，用来保持 transcript 和 Agent 生命周期完整；它不是 Provider 返回的模型消息。
@@ -365,7 +398,7 @@ export class Agent {
     await this.processEvents({
       type: 'turn_end',
       message: failureMessage,
-      toolResults: toolBatchError?.outcome.messages ?? [],
+      toolResults: [],
     });
     await this.processEvents({ type: 'agent_end', messages: runMessages });
     return runMessages;
