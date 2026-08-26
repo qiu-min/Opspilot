@@ -1,400 +1,205 @@
-# OpsPilot Development Instructions
+# OpsPilot AGENTS.md
 
-本文件定义整个 OpsPilot 仓库的通用开发规范。
+## 1. 项目概述与核心技术栈
 
-修改代码前，先理解相关模块的职责、现有实现、调用链、测试和文档，再进行修改。
+OpsPilot 是一个多服务 Monorepo。
 
-核心原则：
+主要目录：
 
-> Correctness > Clarity > Maintainability > Extensibility > Cleverness
+```text
+agent-service/
+backend/
+web/
+```
 
-优先写容易理解、容易验证、容易修改的代码，而不是复杂或炫技的代码。
+核心技术栈包括：
 
----
+- TypeScript / Node.js
+- C# / .NET / ASP.NET Core
+- PostgreSQL
+- Redis
+- Docker
+- pnpm
+- xUnit / Vitest
 
-## 1. Repository Architecture
+本文件只定义仓库级代码设计与工程规范。
 
-仓库主要包含：
+具体模块职责、业务边界和能力归属以：
 
-* `agent-service/`
+- `/README.md`
+- 各子项目 `README.md`
+- 相关架构文档
 
-  * TypeScript / Node.js
-  * Agent、Model Gateway、Tool Gateway、RAG、Eval 等 AI 能力。
+为准。
 
-* `backend/`
-
-  * ASP.NET Core
-  * 用户、权限、文件、任务、数据库、缓存、后台任务、Excel 等传统业务能力。
-
-* `web/`
-
-  * Vue 3 + TypeScript
-  * 用户交互与 Agent 运行过程展示。
-
-开发前应阅读：
-
-* 根目录 `README.md`
-* 当前模块的 `README.md`
-* 当前目录或上级目录存在的 `AGENTS.md`
-* 修改 `agent-service/` 时，同时阅读 `agent-service/PROJECT.md`
-
-遵守模块边界，不得因为实现方便而跨层复制业务逻辑。
+进入子项目开发时，应同时遵守该目录下更具体的 `AGENTS.md`。
 
 ---
 
-## 2. Change Discipline
+## 2. 环境搭建与开发/构建指令
 
-### 先理解，再修改
+优先使用仓库已有的脚本、包管理器和配置，不自行引入重复工具链。
 
-不要只阅读目标文件。
-
-修改前应检查：
-
-* 相关类型和接口
-* 调用方
-* 测试
-* 模块 README
-* 相关配置
-
-理解数据流和生命周期后再修改。
-
-### 保持改动最小
-
-只修改完成当前任务需要的内容。
-
-除非任务明确要求，否则不要：
-
-* 顺手重构无关代码
-* 大范围格式化
-* 大规模重命名
-* 调整无关目录结构
-* 引入新的架构模式
-
-### 保持契约兼容
-
-修改以下内容前，先搜索所有消费者：
-
-* Public API
-* Interface
-* DTO
-* Event
-* Shared Type
-* Tool Contract
-* Service Contract
-
-如果必须改变契约，应同步修改调用方、测试和相关文档。
-
-不得静默改变已有行为。
-
----
-
-## 3. Code Quality
-
-代码应该：
-
-* 职责清晰
-* 命名准确
-* 数据流明确
-* 副作用可见
-* 边界明确
-* 容易测试
-
-优先使用 early return，避免不必要的深层嵌套。
-
-函数只承担一个清晰职责，但不要为了缩短函数而机械拆分。
-
-不要创建没有明确价值的：
-
-* Manager
-* Helper
-* Utils
-* Base Class
-* Factory
-* Interface
-* Shared Package
-
-抽象必须来自真实的重复语义，而不是对未来需求的猜测。
-
-只有多个模块确实以相同业务语义消费某个能力时，才考虑抽取公共抽象。
-
-宁可暂时保留少量重复，也不要制造错误抽象。
-
----
-
-## 4. Naming
-
-名称应表达领域语义。
-
-避免无意义名称：
-
-* `data`
-* `info`
-* `obj`
-* `temp`
-* `result2`
-* `manager`
-* `helper`
-* `utils`
-
-优先：
-
-* `toolCall`
-* `agentState`
-* `modelResponse`
-* `executionResult`
-* `analysisTask`
-
-布尔变量应表达判断：
-
-* `isRunning`
-* `hasToolCalls`
-* `shouldTerminate`
-* `canRetry`
-
-让代码本身尽可能表达含义，而不是依赖注释解释。
-
----
-
-## 5. Comments
-
-代码表达 **what**，注释主要解释 **why**。
-
-注释适合说明：
-
-* 非显而易见的设计原因
-* 生命周期约束
-* 外部 API 的特殊行为
-* 边界条件
-* 为什么不能采用更简单的实现
-
-不要为显而易见的代码添加注释。
-
-不要强制为每个函数或参数编写注释。
-
-公共 API 在参数、行为或约束不明显时，可以使用 JSDoc / XML Documentation。
-
----
-
-## 6. Type Safety
-
-不得为了快速通过编译绕过类型系统。
-
-TypeScript：
-
-* 尊重 strict 模式
-* 避免 `any`
-* 优先 `unknown` + 类型收窄
-* 不使用类型断言掩盖真实类型问题
-
-C#：
-
-* 尊重 Nullable Reference Types
-* 不使用 `null!` 掩盖设计问题
-* 异步代码保持 async 调用链
-* 不使用 `.Result` / `.Wait()` 阻塞异步代码
-
-不要因为两个类型字段相似就自动合并它们。
-
-类型是否共享取决于业务语义和边界。
-
----
-
-## 7. Error Handling
-
-不得吞掉错误。
-
-禁止空 `catch` 或通过返回 `null` 掩盖异常。
-
-错误处理应：
-
-* 保留原始错误原因
-* 保留必要的错误来源
-* 在正确的架构边界处理
-* 区分可恢复与不可恢复错误
-* 区分用户错误与内部诊断信息
-
-不得把所有错误转换成一个无法定位来源的普通字符串。
-
-不要在日志中泄漏：
-
-* API Key
-* Token
-* Secret
-* 敏感用户数据
-
----
-
-## 8. External Input
-
-所有外部输入默认不可信，包括：
-
-* HTTP Request
-* LLM Output
-* Tool Arguments
-* Provider Response
-* Environment Variables
-* File Content
-* Database Data
-
-应在系统边界进行验证。
-
-不得信任未经验证的 LLM Structured Output 或 Tool Arguments。
-
----
-
-## 9. Async and Side Effects
-
-涉及异步、状态修改或外部副作用时，应考虑：
-
-* Timeout
-* Cancellation
-* Retry
-* Race Condition
-* Duplicate Execution
-* State Consistency
-* Resource Cleanup
-
-不要无条件 Retry。
-
-只有明确属于临时故障且操作允许安全重试时才重试。
-
-具有副作用的操作必须考虑幂等性和重复执行风险。
-
----
-
-## 10. Tests
-
-行为发生变化时，应检查是否需要增加或修改测试。
-
-重点覆盖：
-
-* Happy Path
-* Boundary Condition
-* Failure Path
-* Regression Case
-
-Bug 修复如果可以自动化复现，应优先：
-
-1. 添加能够复现问题的测试
-2. 修复实现
-3. 验证回归测试
-4. 运行相关测试集
-
-测试应验证行为，而不是过度绑定内部实现。
-
-不要通过修改测试来掩盖真实问题。
-
----
-
-## 11. Validation
-
-修改完成后必须执行与修改范围匹配的验证。
-
-根据实际项目配置执行适用的：
-
-### TypeScript
+### Agent Service
 
 ```bash
+cd agent-service
+pnpm install
 pnpm typecheck
 pnpm test
-pnpm lint
 pnpm build
 ```
 
-### .NET
+### Backend
 
 ```bash
+cd backend
+dotnet restore
 dotnet build
 dotnet test
 ```
 
-执行前先检查当前项目真实存在的 script 或 solution，不要虚构命令。
+### Infrastructure
 
-不得在存在已知：
+```bash
+docker compose up -d
+```
 
-* Build Error
-* Type Error
-* Test Failure
-* Lint Error
+原则：
 
-的情况下声称任务完全完成。
-
-如果由于环境原因无法执行某项验证，应在最终回复中明确说明。
-
----
-
-## 12. Documentation
-
-发生以下变化时，应检查相关 README / PROJECT 文档是否需要同步：
-
-* Public API
-* Architecture Boundary
-* Directory Structure
-* Configuration
-* Environment Variables
-* Development Commands
-* 对外行为
-
-不要因为内部实现发生变化就机械修改文档。
+- 不硬编码环境相关配置。
+- 不提交 Secret、API Key、Token、生产连接字符串。
+- 修改依赖后同步更新对应 lockfile。
+- 不无理由升级或替换现有核心依赖。
+- 不修改与当前任务无关的环境配置。
 
 ---
 
-## 13. Keep Diffs Reviewable
+## 3. 测试规范
 
-修改应尽量容易 Code Review。
+代码行为发生变化时同步检查测试。
 
-不要在同一个任务中混入无关的：
+重点覆盖：
 
-* 全局格式化
-* 大规模重命名
-* 架构调整
-* 文档重写
-* 无关重构
+- Happy Path
+- Validation
+- Failure Path
+- State Transition
+- Boundary Case
+- Regression Case
 
-不要修改与当前任务无关的文件。
+规范：
 
----
+- 测试关注可观察行为，不绑定无关内部实现。
+- Bug 修复尽可能增加 Regression Test。
+- 不为了测试机械增加 Interface 或无意义抽象。
+- 外部系统优先在明确边界处 Mock / Fake。
+- 涉及真实数据库、HTTP、文件或队列行为时使用 Integration Test。
 
-## 14. Final Self Review
+修改完成后运行当前受影响项目的：
 
-完成任务前检查：
+```text
+typecheck / build / test
+```
 
-* 是否真正解决了问题？
-* 是否改变了未要求改变的行为？
-* 是否破坏已有调用方？
-* 是否引入不必要的抽象？
-* 命名和职责是否清晰？
-* 是否正确处理错误和边界情况？
-* 是否存在 null / undefined / race condition 风险？
-* 是否存在重复副作用风险？
-* 是否需要增加测试？
-* 是否需要更新文档？
-* 是否执行了相关 build / test / typecheck / lint？
-
-发现明显问题应先修复，再结束任务。
+不得在存在已知编译、类型检查或测试失败时声称任务完成。
 
 ---
 
-## 15. Final Response
+## 4. 代码风格与命名规范
 
-完成开发任务后简要说明：
+保持：
 
-1. 修改了什么
-2. 为什么这样设计
-3. 主要涉及哪些文件
-4. 执行了哪些验证
-5. 是否存在未解决的问题或风险
+- 清晰的依赖方向
+- 单一职责
+- 明确的模块边界
+- 简单的控制流
+- 稳定的内部契约
+- 可测试性
 
-不要只回复“已完成”。
+命名应表达业务或技术意图。
 
-不要声称执行了实际上没有执行的验证。
+避免：
+
+- 模糊缩写
+- God Class / God Service
+- 深层嵌套
+- Magic String / Magic Number
+- 重复逻辑
+- 无意义 Wrapper
+- 无意义 Interface
+- 循环依赖
+- 跨层直接访问实现细节
+
+跨模块调用优先通过明确的：
+
+```text
+Contract
+Port
+Adapter
+Client
+Interface
+```
+
+隔离实现细节。
+
+第三方 SDK、数据库驱动和协议类型不要无必要向其他模块泄漏。
+
+异步 IO 应：
+
+- 使用 async / await
+- 正确传播 CancellationToken / AbortSignal
+- 明确处理 Timeout 和失败
+
+优先实现当前需求所需的最简单方案，不为假设中的未来需求提前构建复杂框架。
 
 ---
+
+## 5. 操作边界与绝对禁止事项
+
+### 必须遵守
+
+- 修改前先阅读相关 README、AGENTS、调用方和测试。
+- 尊重现有架构和依赖方向。
+- 修改公共契约时检查所有调用方。
+- 新增依赖前确认现有依赖无法合理解决问题。
+- 外部输入默认不可信并进行边界验证。
+- 跨服务调用必须明确错误、超时和取消语义。
+- 有副作用的操作必须考虑 Retry 与 Idempotency。
+- 架构或模块职责发生变化时同步更新 README。
+
+### 禁止
+
+- 不在 `AGENTS.md` 中规定具体业务能力属于哪个模块。
+- 不绕过已有抽象直接依赖具体实现。
+- 不为了完成局部任务破坏其他模块边界。
+- 不修改与当前任务无关的代码。
+- 不进行无关的大规模重构。
+- 不静默改变公共 API 或跨模块契约。
+- 不吞异常或隐藏真实错误原因。
+- 不无条件 Retry 有副作用的操作。
+- 不提交 Secret、Token、API Key 或生产凭据。
+- 不删除测试来让构建通过。
+- 不通过 `any`、禁用类型检查或忽略编译错误规避问题。
+- 不复制已有能力形成多个事实来源。
+- 不为了形式机械套用架构模式。
 
 ## Core Principle
 
-当存在多种可行实现时：
+`AGENTS.md` 定义：
 
-> 选择最容易被下一位开发者正确理解、修改和验证的实现。
+> 代码应该怎么写。
 
-不要为了展示复杂度而增加复杂度。
+`README.md` 定义：
+
+> 项目和模块负责什么，以及业务能力属于哪里。
+
+根目录 `AGENTS.md` 负责仓库级通用规范。
+
+子项目 `AGENTS.md` 负责该技术栈下更具体的开发规范。
+
+具体业务边界不要固化在 `AGENTS.md` 中。
+
+当存在多种方案时，优先选择：
+
+> 边界清晰、依赖简单、错误明确、容易测试、改动范围最小的实现。

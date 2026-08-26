@@ -1,78 +1,133 @@
 # OpsPilot
 
-OpsPilot 是一个 AI Agent 驱动的数据处理平台。当前仓库先保留已有的 TypeScript Agent 基础设施，并为后续 ASP.NET Core 业务后端和 Vue 3 前端预留清晰边界。
+OpsPilot 是一个 AI Agent 驱动的数据分析与处理平台。
 
-## Repository structure
+项目采用多服务架构，将传统业务系统、Agent 执行环境和 Web 客户端分离，使各部分能够独立开发、测试和演进。
+
+## Repository Structure
 
 ```text
 OpsPilot/
 ├── agent-service/       # TypeScript / Node.js Agent Service
-├── backend/             # 未来的 ASP.NET Core 业务后端
-├── web/                 # 未来的 Vue 3 + TypeScript 前端
-└── docker-compose.yml   # 产品级 PostgreSQL / Redis 编排
+├── backend/             # ASP.NET Core Backend
+├── web/                 # Web Frontend
+├── docker-compose.yml   # Local infrastructure
+├── AGENTS.md            # Repository-wide development rules
+└── README.md
 ```
 
-### agent-service
+各子项目的架构、模块职责和开发方式由其自身 README 说明。
 
-`agent-service/` 负责通用 Agent 能力：
+* [Agent Service](agent-service/README.md)
+* [Backend](backend/README.md)
+* [Web](web/README.md)
 
-- Model Gateway、Agent Runtime、Agent Loop 和 Agent Lifecycle
-- Tool Calling、Tool Gateway、Streaming Events 和 Agent State
-- Observability，以及后续的 RAG 和 Eval 能力
+## Architecture
 
-它不直接承担用户、文件、权限、Excel 持久化等传统业务职责。详细的 Agent 架构、包说明和当前演示命令见 [agent-service/README.md](agent-service/README.md)，项目计划见 [agent-service/PROJECT.md](agent-service/PROJECT.md)。
-
-### backend
-
-未来使用 ASP.NET Core，负责 User、Auth、RBAC、File、AnalysisTask、AgentRun、PostgreSQL、Redis、后台任务、Excel Processing、ClosedXML / Open XML SDK、Agent Service Client 和 Internal Tool API。
-
-Backend 负责传统业务和 Excel 基础设施，不负责实现 Agent Loop。当前已具备 .NET 10 ASP.NET Core 基础启动骨架、PostgreSQL 持久化和 `POST /api/analysis-tasks` Vertical Slice；AgentRun 创建、文件模块和 Agent Service 集成仍按需加入，见 [backend/README.md](backend/README.md)。
-
-### web
-
-未来使用 Vue 3 + TypeScript，负责文件上传、自然语言分析请求、Agent 实时进度、分析结果和结果文件下载。当前仅有架构占位说明，见 [web/README.md](web/README.md)。
-
-## Target call flow
+OpsPilot 主要由三个独立进程组成：
 
 ```text
-Web
- ↓ HTTP
-ASP.NET Core Backend
- ↓ HTTP
-Agent Service
- ↓
-Agent Runtime
- ↓
-Tool Gateway
- ↓ HTTP
-ASP.NET Core Internal Tool API
- ↓
-Excel Service
- ↓
-ClosedXML / Open XML SDK
- ↓
-.xlsx
+┌───────────────┐
+│      Web      │
+└───────┬───────┘
+        │
+        ▼
+┌───────────────┐
+│    Backend    │
+│ ASP.NET Core  │
+└───────┬───────┘
+        │
+        ▼
+┌───────────────┐
+│ Agent Service │
+│  TypeScript   │
+└───────────────┘
 ```
 
-Backend → Agent Service 用于启动 Agent Run；Agent Service → Backend Internal Tool API 用于执行 Excel 等业务 Tool。
+服务之间通过稳定的 API、消息或其他明确契约进行通信。
 
-## Current development
+具体业务边界和内部模块设计不在根 README 中展开，请查看对应子项目文档。
 
-当前可运行的 Agent Workspace 位于 `agent-service/`：
+## Tech Stack
 
-```powershell
-cd agent-service
-pnpm install
-Copy-Item .env.example .env
-pnpm build
-pnpm test
-pnpm typecheck
-```
+### Agent Service
 
-PostgreSQL 和 Redis 由仓库根目录的 `docker-compose.yml` 提供：
+* TypeScript
+* Node.js
+* pnpm
 
-```powershell
+### Backend
+
+* C#
+* ASP.NET Core
+* EF Core
+
+### Web
+
+* TypeScript
+* Vue
+
+### Infrastructure
+
+* PostgreSQL
+* Redis
+* Docker
+
+## Development
+
+### Infrastructure
+
+在仓库根目录启动本地基础设施：
+
+```bash
 docker compose up -d
 ```
 
-当前 Backend 已初始化基础 ASP.NET Core 项目，并包含 AnalysisTask / AgentRun 的最小 PostgreSQL 持久化；本次未新增 Redis、认证授权、其他业务 API 或 backend/web 容器。
+### Agent Service
+
+```bash
+cd agent-service
+pnpm install
+pnpm typecheck
+pnpm test
+pnpm build
+```
+
+### Backend
+
+```bash
+cd backend
+dotnet restore
+dotnet build
+dotnet test
+```
+
+具体环境配置和运行方式以各子项目 README 为准。
+
+## Documentation
+
+仓库级文档只描述 OpsPilot 的整体结构。
+
+详细设计应放在距离代码最近的位置：
+
+```text
+README.md
+    ↓
+整体项目
+
+agent-service/README.md
+backend/README.md
+web/README.md
+    ↓
+子项目架构与职责
+
+package / module README
+    ↓
+具体模块设计与边界
+```
+
+开发规范：
+
+* 根目录 `AGENTS.md`：仓库级通用开发规范
+* 子项目 `AGENTS.md`：对应技术栈和工程规范
+* `README.md`：描述项目、模块职责和架构边界

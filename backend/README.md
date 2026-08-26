@@ -1,95 +1,465 @@
 # OpsPilot Backend
 
-OpsPilot Backend 是负责用户、权限、文件和 Excel 处理等产品能力的 ASP.NET Core 后端。本目录当前已包含 .NET 10 基础启动骨架，以及 AnalysisTask / AgentRun / FileAsset 的最小 PostgreSQL 持久化能力。
+`backend/` 是 OpsPilot 的 ASP.NET Core 业务后端。
 
-当前骨架提供：
+它负责面向 Web 的业务 API、业务数据持久化、文件资产管理以及与其他服务之间的业务流程协调。
 
-- Controller API 管道和开发环境 OpenAPI
-- `GET /health` 基础进程健康检查
-- 基于 `IExceptionHandler` 和 `ProblemDetails` 的统一未预期异常处理
-- Application 与 Infrastructure 的统一 DI 注册入口
-- EF Core + Npgsql 的 `OpsPilotDbContext`
-- `analysis_tasks`、`agent_runs`、`file_assets` 和 `AddFileAssets` Migration
-- `POST /api/analysis-tasks` 创建 Pending AnalysisTask 的完整 Vertical Slice
-- `POST /api/files` 上传 `.xlsx` 文件到本地存储并创建 FileAsset 的完整 Vertical Slice
+Excel 工作簿的读取、修改等具体文件处理能力不在 Backend 中实现，由 Agent Service 的 Tool Gateway 提供。
 
-`agent_runs.analysis_task_id` 使用 Restrict 删除行为，避免删除任务时级联抹掉 Agent 执行历史。
+---
 
-## Development
+## Responsibilities
 
-```powershell
-cd backend
-dotnet restore
-dotnet build
-dotnet test
-dotnet run --project src/OpsPilot.Api
+Backend 主要负责：
+
+* 对外 HTTP API
+* 业务用例与状态管理
+* PostgreSQL 数据持久化
+* 文件上传、存储与文件资产管理
+* AnalysisTask / AgentRun 等业务记录
+* 身份认证与权限控制
+* 与 Agent Service 的跨服务协作
+* 后续需要的缓存、任务调度和实时通信能力
+
+Backend 负责管理“文件这个业务资源”，但不负责理解和操作 Excel Workbook 内容。
+
+例如：
+
+```text
+Backend
+  ↓
+FileAsset
+  ↓
+文件存储
+
+Agent Service
+  ↓
+Tool Gateway
+  ↓
+ExcelJS
+  ↓
+Excel Workbook 操作
 ```
 
-本地 PostgreSQL 使用仓库根目录的 Compose 配置：
+---
 
-```powershell
-docker compose up -d postgres
-dotnet ef database update --project src/OpsPilot.Infrastructure --startup-project src/OpsPilot.Api
+## Architecture
+
+Backend 使用分层结构：
+
+```text
+API
+ ↓
+Application
+ ↓
+Domain / Abstractions
+ ↑
+Infrastructure
 ```
 
-Connection String 位于 `src/OpsPilot.Api/appsettings.Development.json`，仅用于本地开发。数据库、缓存、认证授权、文件处理和 Agent Service 的其他能力将在对应功能具备真实需求后加入。
+### API
 
-## File upload API
+负责：
+
+* HTTP Endpoint / Controller
+* Request Binding
+* Authentication / Authorization
+* Response Mapping
+* ProblemDetails
+
+API 层保持轻量，不直接实现业务流程或基础设施逻辑。
+
+### Application
+
+负责：
+
+* 业务 Use Case
+* 流程编排
+* 调用 Domain
+* 通过抽象访问持久化、文件存储和外部服务
+
+### Domain
+
+负责：
+
+* 核心业务实体
+* 状态
+* 业务不变量
+
+Domain 不依赖 ASP.NET Core、EF Core 或其他基础设施。
+
+### Infrastructure
+
+负责具体技术实现，例如：
+
+* EF Core
+* PostgreSQL
+* File Storage
+* External Service Client
+* 其他基础设施 Adapter
+
+具体工程规范见：
+
+```text
+backend/AGENTS.md
+```
+
+---
+
+## Current Capabilities
+
+当前 Backend 已实现：
+
+* ASP.NET Core API 基础启动
+* `GET /health`
+* `ProblemDetails` 统一异常响应
+* Application / Infrastructure DI 注册
+* EF Core + PostgreSQL
+* AnalysisTask 持久化
+* AgentRun 持久化
+* FileAsset 持久化
+* EF Core Migration
+* 创建 AnalysisTask 的 Vertical Slice
+* 上传 `.xlsx` 文件的 Vertical Slice
+
+当前主要业务链路：
+
+```text
+Client
+  ↓
+POST /api/files
+  ↓
+FileAsset
+  ↓
+POST /api/analysis-tasks
+  ↓
+AnalysisTask
+```
+
+后续将在此基础上继续连接 Agent Service。
+
+---
+
+## File Management
+
+Backend 负责文件作为业务资产的生命周期。
+
+当前上传接口：
 
 ```http
 POST /api/files
 Content-Type: multipart/form-data
 ```
 
-表单字段名为 `file`。当前只接受扩展名为 `.xlsx` 的文件（大小必须大于 0 且不超过 20 MB），扩展名检查不区分大小写；请求的 `Content-Type` 会保存到 FileAsset，但不会替代扩展名校验。开发环境使用 `FileStorage:RootPath` 配置的 `LocalFileStorage`，默认目录为 `storage`，上传文件实际位于其 `uploads` 子目录，仓库已忽略 `backend/storage/`。
+表单字段：
 
-成功响应为 `201 Created`，包含 `Id`、原始文件名、ContentType、SizeBytes 和 CreatedAtUtc，不暴露服务器文件名或磁盘路径。上传流程是：先写入本地文件，再写入 `file_assets`；数据库写入失败时会尝试删除已写入的文件，并保留原始数据库异常。
+```text
+file
+```
 
-典型业务流程为：先 `POST /api/files` 获取 `FileId`，再将该 ID 传给 `POST /api/analysis-tasks`。当前 AnalysisTask 仍只把 `FileId` 当作业务引用，不验证 FileAsset 是否存在。
+当前仅接受 `.xlsx` 文件。
 
-## AnalysisTask API
+上传后 Backend：
+
+```text
+Upload
+  ↓
+Validate
+  ↓
+File Storage
+  ↓
+FileAsset
+  ↓
+PostgreSQL
+```
+
+对外返回稳定的文件资源标识：
+
+```text
+FileId
+```
+
+而不是暴露：
+
+* 服务器物理路径
+* 内部存储文件名
+* Infrastructure 实现细节
+
+`FileId` 可以继续用于 AnalysisTask、Agent Run 或跨服务文件访问。
+
+### File Boundary
+
+Backend 负责：
+
+```text
+文件上传
+文件存储
+文件 Metadata
+FileAsset
+文件访问权限
+文件生命周期
+```
+
+Backend 不负责：
+
+```text
+Workbook 解析
+Worksheet 操作
+Cell / Range 操作
+公式和样式处理
+ExcelJS
+```
+
+Excel 内容处理由 Agent Service 的 Tool Gateway 提供。
+
+---
+
+## AnalysisTask
+
+当前接口：
 
 ```http
 POST /api/analysis-tasks
 Content-Type: application/json
 ```
 
-请求中的 `FileId` 当前只是 AnalysisTask 的业务引用。接口不会验证 FileAsset 是否存在，也不会创建 AgentRun 或调用 Agent Service。
+AnalysisTask 表达一次用户发起的分析业务任务。
 
-成功响应为 `201 Created`，新任务状态为 `Pending`。空 Prompt 或空 FileId 会返回 `400 ProblemDetails`；其他未预期异常仍返回 `500 ProblemDetails`。
+典型流程：
 
-## Technology
+```text
+FileAsset
+   ↓
+AnalysisTask
+   ↓
+AgentRun
+   ↓
+Agent Service
+```
 
-- ASP.NET Core
-- EF Core
-- PostgreSQL
-- Redis
-- JWT / RBAC
-- BackgroundService
-- HttpClient
-- SignalR / SSE
-- ClosedXML / Open XML SDK
-- OpenTelemetry
+当前创建 AnalysisTask 时会建立任务记录。
 
-## Responsibilities
+AgentRun 创建、Agent Service 调度和完整任务状态流转将在后续业务链路中继续完善。
 
-- 用户管理、身份认证和权限控制
-- 文件上传与下载、Excel 文件管理
-- AnalysisTask、AgentRun 业务记录和数据库持久化
-- Redis 与后台任务
-- Agent Service 调用
-- Internal Tool API 与 Excel Processing
+---
 
-Backend 负责传统业务和 Excel 基础设施，不负责实现 Agent Loop。
+## AgentRun
 
-## Integration boundaries
+AgentRun 表达 Backend 业务层看到的一次 Agent 执行记录。
+
+它用于连接：
+
+```text
+AnalysisTask
+     ↓
+AgentRun
+     ↓
+Agent Service Execution
+```
+
+Backend 保存业务需要的 Agent Run 状态和关联关系。
+
+Agent 内部的：
+
+* Agent Loop
+* Turn
+* Context
+* Model Message
+* Tool Execution
+* Agent State
+
+属于 Agent Service 内部运行机制，不复制到 Backend 领域模型中。
+
+---
+
+## Agent Service Integration
+
+Backend 与 Agent Service 是两个独立进程。
+
+整体关系：
 
 ```text
 Web
- ↓ HTTP
+ ↓
 Backend
- ├─→ Agent Service       # 启动和管理 Agent Run
- └─← Agent Service Tool  # 提供 Excel 等业务 Tool 的 Internal API
+ ↓
+Agent Service
 ```
 
-Backend 是 Web 和 Agent Service 之间的传统业务边界；Agent Service 不直接访问 EF Core、ClosedXML 或 Backend 的数据库基础设施。
+Backend 负责业务请求和业务状态。
+
+Agent Service 负责 Agent 执行。
+
+跨服务通信应通过稳定契约，例如：
+
+```text
+HTTP
+Message Queue
+Event
+```
+
+而不是直接访问对方内部代码或数据库。
+
+后续典型流程：
+
+```text
+User Request
+     ↓
+Backend
+     ↓
+AnalysisTask
+     ↓
+AgentRun
+     ↓
+Agent Service
+     ↓
+Agent Execution
+```
+
+Agent Service 执行期间需要使用具体工具能力时，由 Agent Service 自己的 Tool Gateway 负责。
+
+---
+
+## Persistence
+
+Backend 当前使用：
+
+```text
+EF Core
+   ↓
+Npgsql
+   ↓
+PostgreSQL
+```
+
+主要持久化模型包括：
+
+```text
+AnalysisTask
+AgentRun
+FileAsset
+```
+
+数据库模型变化通过 EF Core Migration 管理。
+
+开发环境更新数据库：
+
+```bash
+dotnet ef database update \
+  --project src/OpsPilot.Infrastructure \
+  --startup-project src/OpsPilot.Api
+```
+
+---
+
+## Project Structure
+
+```text
+backend/
+├── src/
+│   ├── OpsPilot.Api/
+│   ├── OpsPilot.Application/
+│   ├── OpsPilot.Domain/
+│   └── OpsPilot.Infrastructure/
+├── tests/
+│   ├── OpsPilot.UnitTests/
+│   └── OpsPilot.IntegrationTests/
+├── AGENTS.md
+└── README.md
+```
+
+具体 Feature 的代码尽量围绕业务能力组织，而不是把所有 Request、Handler 或 DTO 堆积到全局目录。
+
+---
+
+## Development
+
+安装依赖：
+
+```bash
+cd backend
+dotnet restore
+```
+
+构建：
+
+```bash
+dotnet build
+```
+
+测试：
+
+```bash
+dotnet test
+```
+
+启动 API：
+
+```bash
+dotnet run --project src/OpsPilot.Api
+```
+
+启动本地 PostgreSQL：
+
+```bash
+docker compose up -d postgres
+```
+
+然后执行 Migration：
+
+```bash
+dotnet ef database update \
+  --project src/OpsPilot.Infrastructure \
+  --startup-project src/OpsPilot.Api
+```
+
+具体配置以：
+
+```text
+src/OpsPilot.Api/appsettings*.json
+```
+
+及环境变量为准。
+
+---
+
+## Service Boundary
+
+Backend 解决的是：
+
+> OpsPilot 的业务系统如何管理用户请求、业务状态和持久化资源。
+
+Agent Service 解决的是：
+
+> Agent 如何运行、调用模型并执行工具。
+
+Tool Gateway 解决的是：
+
+> Agent 如何访问具体可执行能力。
+
+因此：
+
+```text
+Backend
+   ↓
+业务资源与业务状态
+
+Agent Service
+   ↓
+Agent 执行
+
+Tool Gateway
+   ↓
+具体工具能力
+```
+
+这些边界应通过稳定契约连接，而不是为了调用方便逐渐混合实现细节。
+
+---
+
+## Related Documentation
+
+* [OpsPilot README](../README.md)
+* [Backend Development Rules](AGENTS.md)
+* [Agent Service](../agent-service/README.md)
+* [Tool Gateway](../agent-service/packages/tool-gateway/README.md)
