@@ -1,5 +1,0 @@
-[
-  {"service":"orders-api","metric":"http_latency_p95","unit":"milliseconds","samples":[{"timestamp":"2026-08-13T12:00:00.000Z","value":120},{"timestamp":"2026-08-13T12:08:00.000Z","value":2450}]},
-  {"service":"orders-api","metric":"http_latency_p99","unit":"milliseconds","samples":[{"timestamp":"2026-08-13T12:00:00.000Z","value":180},{"timestamp":"2026-08-13T12:08:00.000Z","value":3300}]},
-  {"service":"orders-api","metric":"dependency_latency_p95","unit":"milliseconds","samples":[{"timestamp":"2026-08-13T12:00:00.000Z","value":60},{"timestamp":"2026-08-13T12:08:00.000Z","value":2200}]}
-]

@@ -1,1 +1,0 @@
-{"service":"orders-api","upstream":["checkout-api"],"downstream":[{"service":"inventory-api","relation":"http"},{"service":"postgresql-primary","relation":"database"}]}
