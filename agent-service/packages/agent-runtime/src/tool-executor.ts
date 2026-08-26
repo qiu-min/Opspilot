@@ -15,7 +15,6 @@ import type {
   AgentLoopConfig,
   AgentTool,
   AgentToolResult,
-  ToolCallBatchOutcome,
   ToolExecutionMode,
 } from './types.js';
 
@@ -48,6 +47,12 @@ interface PreparedToolCall {
 
 interface ToolCallOutcome {
   readonly result: ToolResultMessage;
+  readonly stopReason?: 'error' | 'aborted';
+  readonly cause?: unknown;
+}
+
+interface ToolCallBatchOutcome {
+  readonly messages: ToolResultMessage[];
   readonly stopReason?: 'error' | 'aborted';
   readonly cause?: unknown;
 }
