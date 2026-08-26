@@ -62,12 +62,13 @@ const assistantMessage: AssistantMessage = {
 function createExecutionOptions(
   beforeToolCall?: ExecuteToolCallOptions['beforeToolCall'],
   afterToolCall?: ExecuteToolCallOptions['afterToolCall'],
+  selectedTool: AgentTool = tool,
 ): ExecuteToolCallOptions {
   return {
     assistantMessage,
     context: {
       messages: [],
-      tools: [tool],
+      tools: [selectedTool],
     },
     ...(beforeToolCall === undefined ? {} : { beforeToolCall }),
     ...(afterToolCall === undefined ? {} : { afterToolCall }),
@@ -219,6 +220,61 @@ it('returns error when tool arguments are invalid', async () => {
   expect(result.isError).toBe(true);
 
   expect(execute).not.toHaveBeenCalled();
+});
+
+it('passes structured AgentToolResult details through to ToolResultMessage', async () => {
+  const details = { source: 'logs', matchedEntries: 3 };
+  const structuredTool: AgentTool<typeof details> = {
+    name: 'structuredTool',
+    description: 'Returns structured details',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+    execute: async () => ({
+      content: [{ type: 'text', text: 'done' }],
+      details,
+    }),
+  };
+
+  const result = await executeToolCall(
+    { ...toolCall, name: structuredTool.name, arguments: {} },
+    [structuredTool],
+  );
+
+  expect(result.details).toBe(details);
+  expect(result).toMatchObject({
+    content: [{ type: 'text', text: 'done' }],
+    isError: false,
+  });
+});
+
+it('allows afterToolCall to override structured details', async () => {
+  const originalDetails = { source: 'tool', matchedEntries: 3 };
+  const finalDetails = { source: 'policy', matchedEntries: 0 };
+  const structuredTool: AgentTool<typeof originalDetails> = {
+    name: 'structuredTool',
+    description: 'Returns structured details',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+    execute: async () => ({
+      content: [{ type: 'text', text: 'done' }],
+      details: originalDetails,
+    }),
+  };
+
+  let receivedDetails: unknown;
+  const result = await executeToolCall(
+    { ...toolCall, name: structuredTool.name, arguments: {} },
+    [structuredTool],
+    createExecutionOptions(
+      undefined,
+      ({ result: executed }) => {
+        receivedDetails = executed.details;
+        return { details: finalDetails };
+      },
+      structuredTool,
+    ),
+  );
+
+  expect(receivedDetails).toBe(originalDetails);
+  expect(result.details).toBe(finalDetails);
 });
 
 it('allows execution when beforeToolCall returns undefined', async () => {

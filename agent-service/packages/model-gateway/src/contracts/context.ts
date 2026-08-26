@@ -119,11 +119,12 @@ export interface AssistantMessage {
   readonly reasoning?: ReasoningDecision;
 }
 
-export interface ToolResultMessage {
+export interface ToolResultMessage<TDetails = unknown> {
   readonly role: 'tool';
   readonly callId: string;
   readonly name: string;
   readonly content: readonly TextContent[];
+  readonly details?: TDetails;
   readonly isError: boolean;
 }
 
@@ -164,6 +165,7 @@ export const messageSchema = z.discriminatedUnion('role', [
       callId: callIdSchema,
       name: toolNameSchema,
       content: z.array(textContentSchema).min(1).max(100),
+      details: z.unknown().optional(),
       isError: z.boolean(),
     })
     .strict(),

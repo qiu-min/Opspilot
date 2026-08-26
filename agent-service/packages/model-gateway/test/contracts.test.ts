@@ -3,6 +3,7 @@ import {
   contextSchema,
   createModelEventStream,
   finishReasonSchema,
+  messageSchema,
   modelSchema,
   optionsSchema,
   validateContext,
@@ -47,6 +48,34 @@ describe('model gateway contracts', () => {
     expect(modelSchema.safeParse({ ...model, extra: true }).success).toBe(false);
     expect(contextSchema.safeParse({ ...context, extra: true }).success).toBe(false);
     expect(optionsSchema.safeParse({ reasoning: 'provider-high' }).success).toBe(false);
+  });
+
+  it('accepts optional arbitrary Tool Result details', () => {
+    const details = {
+      source: 'tool-runtime',
+      rows: [1, 2, 3],
+      nested: { cached: true },
+    };
+
+    expect(
+      messageSchema.safeParse({
+        role: 'tool',
+        callId: 'call_1',
+        name: 'query_logs',
+        content: [{ type: 'text', text: 'logs found' }],
+        details,
+        isError: false,
+      }),
+    ).toMatchObject({ success: true });
+    expect(
+      messageSchema.safeParse({
+        role: 'tool',
+        callId: 'call_2',
+        name: 'query_logs',
+        content: [{ type: 'text', text: 'logs found' }],
+        isError: false,
+      }),
+    ).toMatchObject({ success: true });
   });
 
   it('keeps AbortSignal outside the serializable Options schema', () => {

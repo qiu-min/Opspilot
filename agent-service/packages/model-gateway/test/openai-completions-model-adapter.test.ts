@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   OpenAiCompletionsModelAdapter,
+  toOpenAiCompletionsMessages,
   type OpenAiCompletionsClient,
   type OpenAiCompletionsRequest,
   type ResolvedProvider,
@@ -214,6 +215,29 @@ describe('OpenAI Chat Completions adapter', () => {
     ]);
     expect(sent?.response_format).toMatchObject({ type: 'json_schema' });
     expect(sent).not.toHaveProperty('reasoning_effort');
+  });
+
+  it('does not serialize Tool Result details to the Provider', () => {
+    const details = { source: 'runtime', rows: 2 };
+    const messages = toOpenAiCompletionsMessages(
+      {
+        messages: [
+          {
+            role: 'tool',
+            callId: 'call_1',
+            name: 'query_logs',
+            content: [{ type: 'text', text: 'logs found' }],
+            details,
+            isError: false,
+          },
+        ],
+      },
+      model,
+    );
+
+    expect(messages).toEqual([
+      { role: 'tool', tool_call_id: 'call_1', content: 'logs found' },
+    ]);
   });
 
   it('maps reasoning formats from resolved options without leaking format choices upward', async () => {

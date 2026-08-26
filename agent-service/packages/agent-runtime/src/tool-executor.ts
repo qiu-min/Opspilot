@@ -275,6 +275,7 @@ async function finalizeExecutedToolCall(
         finalResult = {
           ...finalResult,
           content: override.content ?? finalResult.content,
+          ...(override.details === undefined ? {} : { details: override.details }),
         };
         finalIsError = override.isError ?? finalIsError;
       }
@@ -320,6 +321,7 @@ function createToolResult(
     callId: toolCall.callId,
     name: toolCall.name,
     content: result.content,
+    ...(result.details === undefined ? {} : { details: result.details }),
     isError,
   };
 }

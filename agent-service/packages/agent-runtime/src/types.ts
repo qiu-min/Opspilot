@@ -13,12 +13,17 @@ import type {
   ToolResultMessage,
 } from '@opspilot/model-gateway';
 
-export interface AgentToolResult {
+export interface AgentToolResult<TDetails = unknown> {
   readonly content: readonly TextContent[];
+  readonly details?: TDetails;
 }
 
-export interface AgentTool extends Tool {
-  execute(callId: string, args: JsonObject, signal?: AbortSignal): Promise<AgentToolResult>;
+export interface AgentTool<TDetails = unknown> extends Tool {
+  execute(
+    callId: string,
+    args: JsonObject,
+    signal?: AbortSignal,
+  ): Promise<AgentToolResult<TDetails>>;
 }
 
 export type ToolExecutionMode = 'sequential' | 'parallel';
@@ -50,18 +55,19 @@ export interface BeforeToolCallResult {
 }
 
 /** afterToolCall 收到的执行结果和当前 ToolCall 上下文。 */
-export interface AfterToolCallContext {
+export interface AfterToolCallContext<TDetails = unknown> {
   readonly assistantMessage: AssistantMessage;
   readonly toolCall: ModelToolCall;
   readonly args: JsonObject;
-  readonly result: AgentToolResult;
+  readonly result: AgentToolResult<TDetails>;
   readonly isError: boolean;
   readonly context: AgentContext;
 }
 
 /** afterToolCall 对 Tool 内容和错误状态的最终覆盖。 */
-export interface AfterToolCallResult {
+export interface AfterToolCallResult<TDetails = unknown> {
   readonly content?: readonly TextContent[];
+  readonly details?: TDetails;
   readonly isError?: boolean;
 }
 
