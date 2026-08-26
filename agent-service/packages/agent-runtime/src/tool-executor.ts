@@ -5,14 +5,24 @@ import {
   type ModelToolCall,
   type ToolResultMessage,
 } from '@opspilot/model-gateway';
+import {
+  AgentToolExecutionError,
+  type ToolErrorDetails,
+} from './tool-errors.js';
 import type {
   AgentContext,
   AgentEventSink,
   AgentLoopConfig,
   AgentTool,
   AgentToolResult,
+  ToolCallBatchOutcome,
   ToolExecutionMode,
 } from './types.js';
+
+const INTERNAL_ERROR_MESSAGE = 'Tool execution failed due to an internal error.';
+const INTERNAL_ERROR_CODE = 'TOOL_INTERNAL_ERROR';
+const ABORTED_ERROR_MESSAGE = 'Tool execution was aborted.';
+const ABORTED_ERROR_CODE = 'TOOL_ABORTED';
 
 export interface ExecuteToolCallOptions {
   readonly assistantMessage: AssistantMessage;
@@ -36,10 +46,15 @@ interface PreparedToolCall {
   readonly args: JsonObject;
 }
 
-interface ImmediateToolCallOutcome {
+interface ToolCallOutcome {
+  readonly result: ToolResultMessage;
+  readonly stopReason?: 'error' | 'aborted';
+  readonly cause?: unknown;
+}
+
+interface ImmediateToolCallOutcome extends ToolCallOutcome {
   readonly kind: 'immediate';
   readonly toolCall: ModelToolCall;
-  readonly result: ToolResultMessage;
 }
 
 type ToolCallPreparation = PreparedToolCall | ImmediateToolCallOutcome;
@@ -47,6 +62,8 @@ type ToolCallPreparation = PreparedToolCall | ImmediateToolCallOutcome;
 interface ExecutedToolCallOutcome {
   readonly result: AgentToolResult;
   readonly isError: boolean;
+  readonly stopReason?: 'error' | 'aborted';
+  readonly cause?: unknown;
 }
 
 type ParallelToolCallEntry =
@@ -56,13 +73,24 @@ type ParallelToolCallEntry =
       readonly preparation: PreparedToolCall;
     };
 
-/** 执行一批模型工具调用，默认保持顺序执行。
- * @param options 工具调用、模型消息、工具集合、策略 hook、执行模式和事件出口。
- * @returns 按模型 ToolCall 原始顺序排列的 ToolResultMessage。
- */
+/** 供 Agent Loop 识别 Tool 批次终止原因的内部异常。 */
+export class AgentToolBatchError extends Error {
+  readonly outcome: ToolCallBatchOutcome;
+
+  constructor(outcome: ToolCallBatchOutcome) {
+    super(
+      outcome.stopReason === 'aborted' ? ABORTED_ERROR_MESSAGE : INTERNAL_ERROR_MESSAGE,
+      { cause: outcome.cause },
+    );
+    this.name = 'AgentToolBatchError';
+    this.outcome = outcome;
+  }
+}
+
+/** 执行一批模型工具调用，默认保持顺序执行。 */
 export async function executeToolCalls(
   options: ExecuteToolCallsOptions,
-): Promise<ToolResultMessage[]> {
+): Promise<ToolCallBatchOutcome> {
   if (options.toolExecution === 'parallel') {
     return await executeToolCallsParallel(options);
   }
@@ -70,35 +98,39 @@ export async function executeToolCalls(
   return await executeToolCallsSequential(options);
 }
 
-/** 顺序准备并顺序执行所有工具调用。
- * @param options 当前批次的工具执行选项。
- * @returns 按输入顺序完成的 ToolResultMessage。
- */
+/** 顺序准备并顺序执行所有工具调用。 */
 async function executeToolCallsSequential(
   options: ExecuteToolCallsOptions,
-): Promise<ToolResultMessage[]> {
-  const results: ToolResultMessage[] = [];
+): Promise<ToolCallBatchOutcome> {
+  const messages: ToolResultMessage[] = [];
 
   for (const toolCall of options.toolCalls) {
-    if (options.signal?.aborted) break;
+    if (options.signal?.aborted) {
+      return { messages, stopReason: 'aborted' };
+    }
 
     await options.emit({ type: 'tool_execution_start', toolCall });
-    const result = await executeToolCall(toolCall, options.tools, options);
-    await options.emit({ type: 'tool_execution_end', toolCall, result });
-    await emitToolResultMessage(result, options.emit);
-    results.push(result);
+    const outcome = await executeToolCallWithOutcome(toolCall, options.tools, options);
+    await options.emit({ type: 'tool_execution_end', toolCall, result: outcome.result });
+    await emitToolResultMessage(outcome.result, options.emit);
+    messages.push(outcome.result);
+
+    if (outcome.stopReason !== undefined) {
+      return {
+        messages,
+        stopReason: outcome.stopReason,
+        ...(outcome.cause === undefined ? {} : { cause: outcome.cause }),
+      };
+    }
   }
 
-  return results;
+  return { messages };
 }
 
-/** 顺序准备工具，再并发执行已经允许执行的工具。
- * @param options 当前批次的工具执行选项。
- * @returns 按输入顺序排列、但按实际完成顺序发出结束事件的结果。
- */
+/** 顺序准备工具，再并发执行已经允许执行的工具。 */
 async function executeToolCallsParallel(
   options: ExecuteToolCallsOptions,
-): Promise<ToolResultMessage[]> {
+): Promise<ToolCallBatchOutcome> {
   const entries: ParallelToolCallEntry[] = [];
 
   for (const toolCall of options.toolCalls) {
@@ -113,40 +145,62 @@ async function executeToolCallsParallel(
         result: preparation.result,
       });
       entries.push(preparation);
+      if (preparation.stopReason !== undefined) break;
     } else {
       entries.push({ kind: 'prepared', preparation });
     }
   }
 
-  const results = await Promise.all(
-    entries.map(async (entry) => {
-      if (entry.kind === 'immediate') return entry.result;
+  const outcomes = await Promise.all(
+    entries.map(async (entry): Promise<ToolCallOutcome> => {
+      if (entry.kind === 'immediate') return entry;
 
       const executed = await executePreparedToolCall(entry.preparation, options.signal);
-      const result = await finalizeExecutedToolCall(entry.preparation, executed, options);
+      const outcome = await finalizeExecutedToolCall(entry.preparation, executed, options);
       await options.emit({
         type: 'tool_execution_end',
         toolCall: entry.preparation.toolCall,
-        result,
+        result: outcome.result,
       });
-      return result;
+      return outcome;
     }),
   );
 
-  for (const [index] of entries.entries()) {
-    const result = results[index];
-    if (result !== undefined) {
-      await emitToolResultMessage(result, options.emit);
-    }
+  const messages: ToolResultMessage[] = [];
+  for (const outcome of outcomes) {
+    await emitToolResultMessage(outcome.result, options.emit);
+    messages.push(outcome.result);
   }
 
-  return results;
+  const stopReason = getBatchStopReason(outcomes, options.signal);
+  const cause = getBatchCause(outcomes, stopReason);
+  return {
+    messages,
+    ...(stopReason === undefined ? {} : { stopReason }),
+    ...(cause === undefined ? {} : { cause }),
+  };
 }
 
-/** 发布一个 ToolResult message 的生命周期事件，不修改 Agent Loop 上下文。
- * @param result 要发布的 ToolResultMessage。
- * @param emit 当前 Agent Event 接收器。
- */
+function getBatchStopReason(
+  outcomes: readonly ToolCallOutcome[],
+  signal?: AbortSignal,
+): 'error' | 'aborted' | undefined {
+  if (signal?.aborted || outcomes.some((outcome) => outcome.stopReason === 'aborted')) {
+    return 'aborted';
+  }
+  if (outcomes.some((outcome) => outcome.stopReason === 'error')) return 'error';
+  return undefined;
+}
+
+function getBatchCause(
+  outcomes: readonly ToolCallOutcome[],
+  stopReason: 'error' | 'aborted' | undefined,
+): unknown {
+  if (stopReason === undefined) return undefined;
+  return outcomes.find((outcome) => outcome.stopReason === stopReason)?.cause;
+}
+
+/** 发布一个 ToolResult message 的生命周期事件，不修改 Agent Loop 上下文。 */
 async function emitToolResultMessage(
   result: ToolResultMessage,
   emit: AgentEventSink,
@@ -155,36 +209,32 @@ async function emitToolResultMessage(
   await emit({ type: 'message_end', message: result });
 }
 
-/** 准备一个 ToolCall，只查找工具、校验参数并运行 before hook。
- * @param toolCall 模型请求执行的工具调用。
- * @param tools 当前上下文中允许使用的工具。
- * @param options 当前 assistant、上下文和 before hook 配置。
- * @returns 可执行的准备结果，或不进入 execute/after 阶段的立即错误。
- */
+/** 准备一个 ToolCall，只查找工具、校验参数并运行 before hook。 */
 async function prepareToolCall(
   toolCall: ModelToolCall,
   tools: readonly AgentTool[],
   options?: ExecuteToolCallOptions,
 ): Promise<ToolCallPreparation> {
-  const tool = tools.find((candidate) => candidate.name === toolCall.name);
+  if (options?.signal?.aborted) {
+    return createImmediateErrorOutcome(toolCall, classifyAbortedError());
+  }
 
+  const tool = tools.find((candidate) => candidate.name === toolCall.name);
   if (tool === undefined) {
-    return {
-      kind: 'immediate',
+    return createImmediateErrorOutcome(
       toolCall,
-      result: createToolErrorResult(toolCall, `Tool "${toolCall.name}" not found.`),
-    };
+      createRecoverableError(`Tool "${toolCall.name}" not found.`, 'TOOL_NOT_FOUND'),
+    );
   }
 
   let args: JsonObject;
   try {
     args = validateToolArguments(tool, toolCall);
   } catch (error: unknown) {
-    return {
-      kind: 'immediate',
+    return createImmediateErrorOutcome(
       toolCall,
-      result: createToolErrorResult(toolCall, getErrorMessage(error)),
-    };
+      createRecoverableError(getErrorMessage(error), 'INVALID_TOOL_ARGUMENTS'),
+    );
   }
 
   if (options?.beforeToolCall !== undefined) {
@@ -199,61 +249,52 @@ async function prepareToolCall(
         options.signal,
       );
 
+      if (options.signal?.aborted) {
+        return createImmediateErrorOutcome(toolCall, classifyAbortedError());
+      }
       if (decision?.block === true) {
-        return {
-          kind: 'immediate',
+        return createImmediateErrorOutcome(
           toolCall,
-          result: createToolErrorResult(
-            toolCall,
+          createRecoverableError(
             decision.reason ?? 'Tool execution was blocked.',
+            'TOOL_BLOCKED',
           ),
-        };
+        );
       }
     } catch (error: unknown) {
-      return {
-        kind: 'immediate',
-        toolCall,
-        result: createToolErrorResult(toolCall, getErrorMessage(error)),
-      };
+      return createImmediateErrorOutcome(toolCall, classifyThrownError(error, options.signal));
     }
   }
 
   return { kind: 'prepared', toolCall, tool, args };
 }
 
-/** 执行一个已准备好的 Tool，不负责 after hook 或消息封装。
- * @param prepared 已通过查找、参数校验和 before hook 的工具调用。
- * @param signal 当前 Agent Run 的取消信号。
- * @returns Tool 原始结果，以及是否由执行异常产生错误。
- */
+/** 执行一个已准备好的 Tool，不负责 after hook 或消息封装。 */
 async function executePreparedToolCall(
   prepared: PreparedToolCall,
   signal?: AbortSignal,
 ): Promise<ExecutedToolCallOutcome> {
+  if (signal?.aborted) return createExecutedErrorOutcome(classifyAbortedError());
+
   try {
     const result = await prepared.tool.execute(prepared.toolCall.callId, prepared.args, signal);
+    if (signal?.aborted) return createExecutedErrorOutcome(classifyAbortedError());
     return { result, isError: false };
   } catch (error: unknown) {
-    return {
-      result: {
-        content: [{ type: 'text', text: getErrorMessage(error) }],
-      },
-      isError: true,
-    };
+    return createExecutedErrorOutcome(classifyThrownError(error, signal));
   }
 }
 
-/** 运行 after hook，并将已执行结果封装成 ToolResultMessage。
- * @param prepared 已准备好的工具调用及参数。
- * @param executed Tool 执行结果和错误状态。
- * @param options 当前 assistant、上下文、after hook 和取消信号。
- * @returns 经过 after hook 覆盖后的标准 ToolResultMessage。
- */
+/** 运行 after hook，并将已执行结果封装成 ToolResultMessage。 */
 async function finalizeExecutedToolCall(
   prepared: PreparedToolCall,
   executed: ExecutedToolCallOutcome,
   options?: ExecuteToolCallOptions,
-): Promise<ToolResultMessage> {
+): Promise<ToolCallOutcome> {
+  if (executed.stopReason !== undefined) {
+    return createToolCallOutcome(prepared.toolCall, executed.result, executed);
+  }
+
   let finalResult = executed.result;
   let finalIsError = executed.isError;
 
@@ -271,6 +312,13 @@ async function finalizeExecutedToolCall(
         options.signal,
       );
 
+      if (options.signal?.aborted) {
+        return createToolCallOutcome(
+          prepared.toolCall,
+          createAgentToolErrorResult(classifyAbortedError()),
+          { stopReason: 'aborted' },
+        );
+      }
       if (override !== undefined) {
         finalResult = {
           ...finalResult,
@@ -280,37 +328,145 @@ async function finalizeExecutedToolCall(
         finalIsError = override.isError ?? finalIsError;
       }
     } catch (error: unknown) {
-      return createToolErrorResult(prepared.toolCall, getErrorMessage(error));
+      const classified = classifyThrownError(error, options.signal);
+      return createToolCallOutcome(
+        prepared.toolCall,
+        createAgentToolErrorResult(classified),
+        classified,
+      );
     }
   }
 
-  return createToolResult(prepared.toolCall, finalResult, finalIsError);
+  return {
+    result: createToolResult(prepared.toolCall, finalResult, finalIsError),
+  };
 }
 
-/** 执行单个 ToolCall 的完整 prepare → execute → finalize 流程。
- * @param toolCall 模型请求执行的工具调用。
- * @param tools 当前上下文中允许使用的工具。
- * @param options 当前 assistant、上下文、策略 hook 和取消信号。
- * @returns 成功结果或可恢复的 Tool error 结果。
- */
+/** 执行单个 ToolCall 的完整 prepare → execute → finalize 流程。 */
 export async function executeToolCall(
   toolCall: ModelToolCall,
   tools: readonly AgentTool[],
   options?: ExecuteToolCallOptions,
 ): Promise<ToolResultMessage> {
+  const outcome = await executeToolCallWithOutcome(toolCall, tools, options);
+  return outcome.result;
+}
+
+async function executeToolCallWithOutcome(
+  toolCall: ModelToolCall,
+  tools: readonly AgentTool[],
+  options?: ExecuteToolCallOptions,
+): Promise<ToolCallOutcome> {
   const preparation = await prepareToolCall(toolCall, tools, options);
-  if (preparation.kind === 'immediate') return preparation.result;
+  if (preparation.kind === 'immediate') return preparation;
 
   const executed = await executePreparedToolCall(preparation, options?.signal);
   return await finalizeExecutedToolCall(preparation, executed, options);
 }
 
-/** 创建最终的 ToolResultMessage。
- * @param toolCall 产生结果的模型工具调用。
- * @param result Tool 执行或策略覆盖后的内容结果。
- * @param isError 最终是否将本次 Tool execution 标记为失败。
- * @returns 标准 ToolResultMessage。
- */
+function createImmediateErrorOutcome(
+  toolCall: ModelToolCall,
+  classified: ClassifiedToolError,
+): ImmediateToolCallOutcome {
+  return {
+    kind: 'immediate',
+    toolCall,
+    result: createToolErrorResult(toolCall, classified),
+    ...(classified.stopReason === undefined ? {} : { stopReason: classified.stopReason }),
+    ...(classified.cause === undefined ? {} : { cause: classified.cause }),
+  };
+}
+
+function createExecutedErrorOutcome(
+  classified: ClassifiedToolError,
+): ExecutedToolCallOutcome {
+  return {
+    result: createAgentToolErrorResult(classified),
+    isError: true,
+    ...(classified.stopReason === undefined ? {} : { stopReason: classified.stopReason }),
+    ...(classified.cause === undefined ? {} : { cause: classified.cause }),
+  };
+}
+
+function createToolCallOutcome(
+  toolCall: ModelToolCall,
+  result: AgentToolResult | ToolResultMessage,
+  outcome: Pick<ClassifiedToolError, 'stopReason' | 'cause'>,
+): ToolCallOutcome {
+  return {
+    result: isToolResultMessage(result)
+      ? result
+      : createToolResult(toolCall, result, true),
+    ...(outcome.stopReason === undefined ? {} : { stopReason: outcome.stopReason }),
+    ...(outcome.cause === undefined ? {} : { cause: outcome.cause }),
+  };
+}
+
+interface ClassifiedToolError {
+  readonly message: string;
+  readonly details: ToolErrorDetails;
+  readonly stopReason?: 'error' | 'aborted';
+  readonly cause?: unknown;
+}
+
+function classifyThrownError(error: unknown, signal?: AbortSignal): ClassifiedToolError {
+  if (signal?.aborted) return classifyAbortedError(error);
+  if (error instanceof AgentToolExecutionError) {
+    return {
+      message: error.message,
+      details: {
+        kind: 'recoverable',
+        code: error.code,
+        ...(error.data === undefined ? {} : { data: error.data }),
+      },
+    };
+  }
+  return {
+    message: INTERNAL_ERROR_MESSAGE,
+    details: { kind: 'internal', code: INTERNAL_ERROR_CODE },
+    stopReason: 'error',
+    cause: error,
+  };
+}
+
+function classifyAbortedError(cause?: unknown): ClassifiedToolError {
+  return {
+    message: ABORTED_ERROR_MESSAGE,
+    details: { kind: 'aborted', code: ABORTED_ERROR_CODE },
+    stopReason: 'aborted',
+    ...(cause === undefined ? {} : { cause }),
+  };
+}
+
+function createRecoverableError(
+  message: string,
+  code: string,
+  data?: unknown,
+): ClassifiedToolError {
+  return {
+    message,
+    details: {
+      kind: 'recoverable',
+      code,
+      ...(data === undefined ? {} : { data }),
+    },
+  };
+}
+
+function createToolErrorResult(
+  toolCall: ModelToolCall,
+  classified: ClassifiedToolError,
+): ToolResultMessage {
+  return createToolResult(toolCall, createAgentToolErrorResult(classified), true);
+}
+
+function createAgentToolErrorResult(classified: ClassifiedToolError): AgentToolResult {
+  return {
+    content: [{ type: 'text', text: classified.message }],
+    details: classified.details,
+  };
+}
+
 function createToolResult(
   toolCall: ModelToolCall,
   result: AgentToolResult,
@@ -326,23 +482,12 @@ function createToolResult(
   };
 }
 
-/** 创建统一格式的可恢复 Tool error 结果。
- * @param toolCall 产生错误的模型工具调用。
- * @param message 展示给模型的错误文本。
- * @returns 标记为 isError 的 ToolResultMessage。
- */
-function createToolErrorResult(toolCall: ModelToolCall, message: string): ToolResultMessage {
-  return createToolResult(
-    toolCall,
-    { content: [{ type: 'text', text: message }] },
-    true,
-  );
+function isToolResultMessage(
+  result: AgentToolResult | ToolResultMessage,
+): result is ToolResultMessage {
+  return 'role' in result && result.role === 'tool';
 }
 
-/** 将未知异常转换成可展示的错误文本。
- * @param error Tool pipeline 中捕获的未知异常。
- * @returns 异常消息或其字符串表示。
- */
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

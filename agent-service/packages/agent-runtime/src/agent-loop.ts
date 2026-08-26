@@ -6,7 +6,7 @@ import type {
   StreamFn,
 } from './types.js';
 import type { AssistantMessage, Context, ToolResultMessage } from '@opspilot/model-gateway';
-import { executeToolCalls } from './tool-executor.js';
+import { AgentToolBatchError, executeToolCalls } from './tool-executor.js';
 import { defaultConvertToLlm } from './convert-to-llm.js';
 
 /**
@@ -114,7 +114,7 @@ async function runLoop(
       const toolResults: ToolResultMessage[] = [];
 
       if (assistantMessage.finishReason === 'tool_calls' && toolCalls.length > 0) {
-        const results = await executeToolCalls({
+        const outcome = await executeToolCalls({
           toolCalls,
           tools: currentContext.tools ?? [],
           assistantMessage,
@@ -126,10 +126,14 @@ async function runLoop(
           emit,
         });
 
-        for (const result of results) {
+        for (const result of outcome.messages) {
           toolResults.push(result);
           currentContext.messages.push(result);
           newMessages.push(result);
+        }
+
+        if (outcome.stopReason !== undefined) {
+          throw new AgentToolBatchError(outcome);
         }
       }
 

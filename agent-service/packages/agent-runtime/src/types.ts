@@ -18,6 +18,12 @@ export interface AgentToolResult<TDetails = unknown> {
   readonly details?: TDetails;
 }
 
+export interface ToolCallBatchOutcome {
+  readonly messages: ToolResultMessage[];
+  readonly stopReason?: 'error' | 'aborted';
+  readonly cause?: unknown;
+}
+
 export interface AgentTool<TDetails = unknown> extends Tool {
   execute(
     callId: string,

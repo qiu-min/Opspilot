@@ -11,7 +11,7 @@ import {
   type ModelToolCall,
 } from '@opspilot/model-gateway';
 
-import { Agent, defaultConvertToLlm } from '../src/index.js';
+import { Agent, AgentToolExecutionError, defaultConvertToLlm } from '../src/index.js';
 import type { AgentEvent, AgentMessage, AgentTool, StreamFn } from '../src/index.js';
 
 const model: Model = {
@@ -344,8 +344,160 @@ describe('Agent', () => {
       role: 'tool',
       callId: call.callId,
       isError: true,
+      details: { kind: 'recoverable', code: 'TOOL_NOT_FOUND' },
     });
     expect(agent.state.errorInfo).toBeUndefined();
+  });
+
+  it('continues to the next LLM turn for AgentToolExecutionError', async () => {
+    const call: ModelToolCall = {
+      callId: 'call_recoverable',
+      name: 'query_logs',
+      arguments: {},
+    };
+    const firstAssistant = assistantMessage('tool_calls', [call]);
+    const secondAssistant = assistantMessage();
+    const details = { field: 'range' };
+    const tool: AgentTool = {
+      name: 'query_logs',
+      description: 'Test tool',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      execute: async () => {
+        throw new AgentToolExecutionError('Range is invalid.', 'INVALID_RANGE', details);
+      },
+    };
+    const contexts: Context[] = [];
+    const agent = new Agent({
+      model,
+      tools: [tool],
+      streamFn: sequentialStreamFn(
+        [assistantStream(firstAssistant), assistantStream(secondAssistant)],
+        contexts,
+      ),
+    });
+
+    const result = await agent.prompt(userMessage('recoverable tool error'));
+
+    expect(result[2]).toMatchObject({
+      role: 'tool',
+      isError: true,
+      content: [{ type: 'text', text: 'Range is invalid.' }],
+      details: { kind: 'recoverable', code: 'INVALID_RANGE', data: details },
+    });
+    expect(result[3]).toBe(secondAssistant);
+    expect(contexts).toHaveLength(2);
+    expect(agent.state.errorInfo).toBeUndefined();
+  });
+
+  it('closes a ToolCall and ends the run for an internal tool error', async () => {
+    const call: ModelToolCall = {
+      callId: 'call_internal',
+      name: 'query_logs',
+      arguments: {},
+    };
+    const firstAssistant = assistantMessage('tool_calls', [call]);
+    const contexts: Context[] = [];
+    const tool: AgentTool = {
+      name: 'query_logs',
+      description: 'Test tool',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      execute: async () => {
+        throw new TypeError('secret internal failure');
+      },
+    };
+    const agent = new Agent({
+      model,
+      tools: [tool],
+      streamFn: sequentialStreamFn([assistantStream(firstAssistant)], contexts),
+    });
+
+    const result = await agent.prompt(userMessage('internal tool error'));
+    const toolResult = result[2];
+
+    expect(toolResult).toMatchObject({
+      role: 'tool',
+      isError: true,
+      content: [{ type: 'text', text: 'Tool execution failed due to an internal error.' }],
+      details: { kind: 'internal', code: 'TOOL_INTERNAL_ERROR' },
+    });
+    expect(JSON.stringify(toolResult)).not.toContain('secret internal failure');
+    expect(result[3]).toMatchObject({ role: 'assistant', finishReason: 'error' });
+    expect(contexts).toHaveLength(1);
+    expect(agent.state.errorInfo).toMatchObject({ source: 'runtime', reason: 'error' });
+  });
+
+  it('closes the active ToolCall and ends the run when aborted', async () => {
+    const firstCall: ModelToolCall = {
+      callId: 'call_abort_active',
+      name: 'slow_tool',
+      arguments: {},
+    };
+    const secondCall: ModelToolCall = {
+      callId: 'call_abort_pending',
+      name: 'second_tool',
+      arguments: {},
+    };
+    const firstAssistant = assistantMessage('tool_calls', [firstCall, secondCall]);
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const secondExecute = vi.fn(async () => ({
+      content: [{ type: 'text' as const, text: 'should not run' }],
+    }));
+    const slowTool: AgentTool = {
+      name: 'slow_tool',
+      description: 'Abortable test tool',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      execute: async (_callId, _args, signal) => {
+        markStarted();
+        await new Promise<never>((_resolve, reject) => {
+          if (signal?.aborted) {
+            reject(new Error('underlying cancellation'));
+            return;
+          }
+          signal?.addEventListener(
+            'abort',
+            () => reject(new Error('underlying cancellation')),
+            { once: true },
+          );
+        });
+        throw new Error('unreachable');
+      },
+    };
+    const secondTool: AgentTool = {
+      name: 'second_tool',
+      description: 'Must not run after abort',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      execute: secondExecute,
+    };
+    const events: AgentEvent[] = [];
+    const agent = new Agent({
+      model,
+      tools: [slowTool, secondTool],
+      streamFn: sequentialStreamFn([assistantStream(firstAssistant)]),
+    });
+    agent.subscribe((event) => {
+      events.push(event);
+    });
+
+    const run = agent.prompt(userMessage('abort tool'));
+    await started;
+    agent.abort();
+    const result = await run;
+
+    expect(result[2]).toMatchObject({
+      role: 'tool',
+      callId: firstCall.callId,
+      isError: true,
+      content: [{ type: 'text', text: 'Tool execution was aborted.' }],
+      details: { kind: 'aborted', code: 'TOOL_ABORTED' },
+    });
+    expect(result).toHaveLength(4);
+    expect(result[3]).toMatchObject({ role: 'assistant', finishReason: 'aborted' });
+    expect(secondExecute).not.toHaveBeenCalled();
+    expect(events.filter((event) => event.type === 'tool_execution_start')).toHaveLength(1);
+    expect(agent.state.errorInfo).toMatchObject({ source: 'runtime', reason: 'aborted' });
   });
 
   it('blocks a tool through beforeToolCall while preserving tool lifecycle events', async () => {
@@ -377,6 +529,7 @@ describe('Agent', () => {
       role: 'tool',
       isError: true,
       content: [{ type: 'text', text: 'Production operation requires approval.' }],
+      details: { kind: 'recoverable', code: 'TOOL_BLOCKED' },
     });
     const toolStartIndex = events.findIndex((event) => event.type === 'tool_execution_start');
     expect(events.slice(toolStartIndex, toolStartIndex + 2).map((event) => event.type)).toEqual([
@@ -386,7 +539,7 @@ describe('Agent', () => {
     expect(agent.state.errorInfo).toBeUndefined();
   });
 
-  it('keeps beforeToolCall exceptions recoverable inside the Agent run', async () => {
+  it('ends the Agent run when beforeToolCall throws an internal error', async () => {
     const call: ModelToolCall = {
       callId: 'call_before_throw',
       name: 'query_logs',
@@ -408,10 +561,20 @@ describe('Agent', () => {
     expect(result[2]).toMatchObject({
       role: 'tool',
       isError: true,
-      content: [{ type: 'text', text: 'policy failed' }],
+      content: [{ type: 'text', text: 'Tool execution failed due to an internal error.' }],
+      details: { kind: 'internal', code: 'TOOL_INTERNAL_ERROR' },
     });
     expect(result).toHaveLength(4);
-    expect(agent.state.errorInfo).toBeUndefined();
+    expect(result[3]).toMatchObject({
+      role: 'assistant',
+      finishReason: 'error',
+      errorMessage: 'Tool execution failed due to an internal error.',
+    });
+    expect(agent.state.errorInfo).toEqual({
+      source: 'runtime',
+      reason: 'error',
+      message: 'Tool execution failed due to an internal error.',
+    });
   });
 
   it('emits the finalized afterToolCall result in tool_execution_end', async () => {
@@ -451,7 +614,7 @@ describe('Agent', () => {
     expect(toolEnd?.result.content).toEqual([{ type: 'text', text: 'final result' }]);
   });
 
-  it('keeps afterToolCall exceptions recoverable inside the Agent run', async () => {
+  it('ends the Agent run when afterToolCall throws an internal error', async () => {
     const call: ModelToolCall = {
       callId: 'call_after_throw',
       name: 'query_logs',
@@ -473,10 +636,20 @@ describe('Agent', () => {
     expect(result[2]).toMatchObject({
       role: 'tool',
       isError: true,
-      content: [{ type: 'text', text: 'result policy failed' }],
+      content: [{ type: 'text', text: 'Tool execution failed due to an internal error.' }],
+      details: { kind: 'internal', code: 'TOOL_INTERNAL_ERROR' },
     });
     expect(result).toHaveLength(4);
-    expect(agent.state.errorInfo).toBeUndefined();
+    expect(result[3]).toMatchObject({
+      role: 'assistant',
+      finishReason: 'error',
+      errorMessage: 'Tool execution failed due to an internal error.',
+    });
+    expect(agent.state.errorInfo).toEqual({
+      source: 'runtime',
+      reason: 'error',
+      message: 'Tool execution failed due to an internal error.',
+    });
   });
 
   it('resets messages but keeps configuration and rejects reset while running', async () => {

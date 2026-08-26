@@ -1,4 +1,5 @@
 import { runAgentLoop } from './agent-loop.js';
+import { AgentToolBatchError } from './tool-executor.js';
 import type { AssistantMessage, ModelToolCall } from '@opspilot/model-gateway';
 import type {
   AgentEvent,
@@ -326,8 +327,17 @@ export class Agent {
     abortController: AbortController,
     runStartMessageIndex: number,
   ): Promise<readonly AgentMessage[]> {
-    const message = error instanceof Error ? error.message : String(error);
-    const aborted = abortController.signal.aborted;
+    const toolBatchError = error instanceof AgentToolBatchError ? error : undefined;
+    const stopReason = toolBatchError?.outcome.stopReason;
+    const message =
+      stopReason === 'aborted'
+        ? 'Tool execution was aborted.'
+        : stopReason === 'error'
+          ? 'Tool execution failed due to an internal error.'
+          : error instanceof Error
+            ? error.message
+            : String(error);
+    const aborted = stopReason === 'aborted' || abortController.signal.aborted;
     const reason = aborted ? 'aborted' : 'error';
     const model = this.activeRun?.currentModel ?? this._state.model;
     // 该消息由 Agent Runtime 在未预期运行异常时人工生成，用来保持 transcript 和 Agent 生命周期完整；它不是 Provider 返回的模型消息。
@@ -355,7 +365,7 @@ export class Agent {
     await this.processEvents({
       type: 'turn_end',
       message: failureMessage,
-      toolResults: [],
+      toolResults: toolBatchError?.outcome.messages ?? [],
     });
     await this.processEvents({ type: 'agent_end', messages: runMessages });
     return runMessages;

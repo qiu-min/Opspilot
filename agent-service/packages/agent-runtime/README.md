@@ -107,9 +107,17 @@ execute  → 调用 AgentTool.execute
 finalize → 执行 afterToolCall 并生成 ToolResultMessage
 ```
 
-`beforeToolCall` 阻止或抛错会生成立即 Tool error，不会调用 `execute` 或 `afterToolCall`。`execute` 抛错会转换成当前 Tool 的 `isError: true` 结果，不会阻止同一并行批次的其他工具完成。
+`beforeToolCall` 阻止会生成可恢复的 Tool error，不会调用 `execute` 或 `afterToolCall`。`AgentToolExecutionError` 表示可恢复的 Tool 错误；普通异常则生成安全的 internal Tool error，并停止当前 Tool batch。
 
-模型层返回 `error` 或 `aborted` 时，`prompt()` 会解析为本次新增消息（包含失败或取消的 `AssistantMessage`），而不是将模型失败作为普通 Runtime exception rejection。工具查找、参数校验、`beforeToolCall`、`execute` 和 `afterToolCall` 阶段的异常会转换为当前 Tool 的 `isError: true` 结果，继续按工具生命周期处理；它们不等同于 Agent Runtime failure。
+Tool batch 返回明确的 `stopReason`：
+
+* `undefined`：Tool 结果正常提交，Agent 继续下一次 LLM 调用。
+* `error`：已提交 internal Tool 结果，Agent 不再调用 LLM，并进入现有 runtime error 生命周期。
+* `aborted`：已提交已开始 Tool 的 aborted 结果，Agent 不再调用 LLM，并进入现有 aborted 生命周期。
+
+Tool 错误的 `details.kind` 仅供 UI、日志和 Trace 使用；Agent Loop 只根据 batch outcome 的 `stopReason` 控制流程。
+
+模型层返回 `error` 或 `aborted` 时，`prompt()` 会解析为本次新增消息（包含失败或取消的 `AssistantMessage`），而不是将模型失败作为普通 Runtime exception rejection。工具查找、参数校验和 `beforeToolCall` block 会生成 recoverable Tool error；`AgentToolExecutionError` 也会继续当前 Agent Loop。`execute` 或 before/after hook 抛出的其他异常会生成 internal Tool error，提交结果后进入现有 Agent Runtime failure 生命周期。
 
 ## 回合事件顺序
 

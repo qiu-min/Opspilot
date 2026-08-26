@@ -2,11 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AssistantMessage, ModelToolCall } from '@opspilot/model-gateway';
 
 import {
+  AgentToolExecutionError,
+  type AgentToolResult,
+} from '../src/index.js';
+import {
   executeToolCall,
   executeToolCalls,
   type ExecuteToolCallOptions,
 } from '../src/tool-executor.js';
-import type { AgentTool, AgentToolResult } from '../src/types.js';
+import type { AgentTool } from '../src/types.js';
 import type { ToolResultMessage } from '@opspilot/model-gateway';
 
 const execute = vi.fn();
@@ -315,6 +319,7 @@ it('blocks execution and returns the policy reason', async () => {
     callId: toolCall.callId,
     name: toolCall.name,
     content: [{ type: 'text', text: 'Production restart requires approval.' }],
+    details: { kind: 'recoverable', code: 'TOOL_BLOCKED' },
     isError: true,
   });
   expect(execute).not.toHaveBeenCalled();
@@ -333,22 +338,26 @@ it('uses the default reason when beforeToolCall blocks without one', async () =>
     { type: 'text', text: 'Tool execution was blocked.' },
   ]);
   expect(result.isError).toBe(true);
+  expect(result.details).toEqual({ kind: 'recoverable', code: 'TOOL_BLOCKED' });
   expect(execute).not.toHaveBeenCalled();
 });
 
-it('converts beforeToolCall exceptions into recoverable Tool errors', async () => {
+it('converts beforeToolCall internal exceptions into safe internal Tool errors', async () => {
   execute.mockClear();
 
   const result = await executeToolCall(
     toolCall,
     [tool],
     createExecutionOptions(() => {
-      throw new Error('policy failed');
+      throw new TypeError('policy failed');
     }),
   );
 
   expect(result.isError).toBe(true);
-  expect(result.content).toEqual([{ type: 'text', text: 'policy failed' }]);
+  expect(result.content).toEqual([
+    { type: 'text', text: 'Tool execution failed due to an internal error.' },
+  ]);
+  expect(result.details).toEqual({ kind: 'internal', code: 'TOOL_INTERNAL_ERROR' });
   expect(execute).not.toHaveBeenCalled();
 });
 
@@ -395,31 +404,29 @@ it('allows afterToolCall to override content and isError independently', async (
   expect(errorResult.isError).toBe(true);
 });
 
-it('passes tool execution errors through afterToolCall before finalizing', async () => {
+it('does not expose internal execution errors to ToolResultMessage or afterToolCall', async () => {
   execute.mockClear();
   execute.mockRejectedValue(new Error('ECONNREFUSED'));
-  let receivedIsError: boolean | undefined;
-  let receivedContent: readonly { type: 'text'; text: string }[] | undefined;
+  let afterCalled = false;
 
   const result = await executeToolCall(
     toolCall,
     [tool],
-    createExecutionOptions(undefined, ({ result: executed, isError }) => {
-      receivedIsError = isError;
-      receivedContent = executed.content;
-      return {
-        content: [{ type: 'text', text: '日志服务暂时不可用。' }],
-      };
+    createExecutionOptions(undefined, () => {
+      afterCalled = true;
+      return undefined;
     }),
   );
 
-  expect(receivedIsError).toBe(true);
-  expect(receivedContent).toEqual([{ type: 'text', text: 'ECONNREFUSED' }]);
-  expect(result.content).toEqual([{ type: 'text', text: '日志服务暂时不可用。' }]);
+  expect(afterCalled).toBe(false);
+  expect(result.content).toEqual([
+    { type: 'text', text: 'Tool execution failed due to an internal error.' },
+  ]);
+  expect(result.details).toEqual({ kind: 'internal', code: 'TOOL_INTERNAL_ERROR' });
   expect(result.isError).toBe(true);
 });
 
-it('converts afterToolCall exceptions into recoverable Tool errors', async () => {
+it('converts afterToolCall internal exceptions into safe internal Tool errors', async () => {
   execute.mockClear();
   execute.mockResolvedValue({
     content: [{ type: 'text', text: 'raw logs' }],
@@ -434,7 +441,28 @@ it('converts afterToolCall exceptions into recoverable Tool errors', async () =>
   );
 
   expect(result.isError).toBe(true);
-  expect(result.content).toEqual([{ type: 'text', text: 'result policy failed' }]);
+  expect(result.content).toEqual([
+    { type: 'text', text: 'Tool execution failed due to an internal error.' },
+  ]);
+  expect(result.details).toEqual({ kind: 'internal', code: 'TOOL_INTERNAL_ERROR' });
+});
+
+it('keeps AgentToolExecutionError recoverable with its code and data', async () => {
+  execute.mockRejectedValue(
+    new AgentToolExecutionError('Invalid range.', 'INVALID_RANGE', { start: 3, end: 1 }),
+  );
+
+  const result = await executeToolCall(toolCall, [tool]);
+
+  expect(result).toMatchObject({
+    isError: true,
+    content: [{ type: 'text', text: 'Invalid range.' }],
+    details: {
+      kind: 'recoverable',
+      code: 'INVALID_RANGE',
+      data: { start: 3, end: 1 },
+    },
+  });
 });
 
 it('does not call afterToolCall for a beforeToolCall block', async () => {
@@ -519,6 +547,32 @@ it('keeps the default tool execution mode sequential', async () => {
   expect(order).toEqual(['A execute', 'B execute', 'C execute']);
 });
 
+it('stops sequential execution after an internal error', async () => {
+  const secondExecute = vi.fn(async () => ({
+    content: [{ type: 'text' as const, text: 'should not run' }],
+  }));
+  const firstTool = createBatchTool('A', async () => {
+    throw new TypeError('secret failure');
+  });
+  const secondTool = createBatchTool('B', secondExecute);
+  const { assistantMessage, context } = createBatchContext([firstTool, secondTool]);
+
+  const outcome = await executeToolCalls({
+    toolCalls: [createBatchToolCall('A'), createBatchToolCall('B')],
+    tools: [firstTool, secondTool],
+    assistantMessage,
+    context,
+    emit: () => undefined,
+  });
+
+  expect(outcome.stopReason).toBe('error');
+  expect(outcome.messages).toHaveLength(1);
+  expect(outcome.messages[0]).toMatchObject({
+    details: { kind: 'internal', code: 'TOOL_INTERNAL_ERROR' },
+  });
+  expect(secondExecute).not.toHaveBeenCalled();
+});
+
 it('executes prepared tools concurrently in parallel mode', async () => {
   const deferred = new Map<string, ReturnType<typeof createDeferred<AgentToolResult>>>();
   const started = createDeferred<void>();
@@ -549,6 +603,49 @@ it('executes prepared tools concurrently in parallel mode', async () => {
   deferred.get('A')?.resolve({ content: [{ type: 'text', text: 'A' }] });
   deferred.get('B')?.resolve({ content: [{ type: 'text', text: 'B' }] });
   await run;
+});
+
+it('closes every started parallel ToolCall when the batch is aborted', async () => {
+  const controller = new AbortController();
+  const started = createDeferred<void>();
+  let startedCount = 0;
+  const tools = ['A', 'B'].map((name) =>
+    createBatchTool(name, async (_callId, _args, signal) => {
+      startedCount += 1;
+      if (startedCount === 2) started.resolve();
+      await new Promise<never>((_resolve, reject) => {
+        if (signal?.aborted) {
+          reject(new Error('underlying cancellation'));
+          return;
+        }
+        signal?.addEventListener('abort', () => reject(new Error('underlying cancellation')), {
+          once: true,
+        });
+      });
+      throw new Error('unreachable');
+    }),
+  );
+  const { assistantMessage, context } = createBatchContext(tools);
+  const run = executeToolCalls({
+    toolCalls: tools.map((tool) => createBatchToolCall(tool.name)),
+    tools,
+    assistantMessage,
+    context,
+    toolExecution: 'parallel',
+    signal: controller.signal,
+    emit: () => undefined,
+  });
+
+  await started.promise;
+  controller.abort();
+  const outcome = await run;
+
+  expect(outcome.stopReason).toBe('aborted');
+  expect(outcome.messages).toHaveLength(2);
+  expect(outcome.messages.map((message) => message.details)).toEqual([
+    { kind: 'aborted', code: 'TOOL_ABORTED' },
+    { kind: 'aborted', code: 'TOOL_ABORTED' },
+  ]);
 });
 
 it('prepares parallel tool calls sequentially', async () => {
@@ -585,7 +682,7 @@ it('blocks a prepared parallel tool without executing or finalizing it', async (
     return createBatchTool(name, executeSpy);
   });
   const { assistantMessage, context } = createBatchContext(tools);
-  const results = await executeToolCalls({
+  const results = (await executeToolCalls({
     toolCalls: tools.map((tool) => createBatchToolCall(tool.name)),
     tools,
     assistantMessage,
@@ -598,7 +695,7 @@ it('blocks a prepared parallel tool without executing or finalizing it', async (
       return undefined;
     },
     emit: () => undefined,
-  });
+  })).messages;
 
   expect(executeSpies.get('A')).toHaveBeenCalledTimes(1);
   expect(executeSpies.get('B')).not.toHaveBeenCalled();
@@ -642,7 +739,7 @@ it('emits parallel tool end events by completion order and returns source order 
   await Promise.resolve();
   completions.get('B')?.resolve({ content: [{ type: 'text', text: 'B' }] });
 
-  const results = await run;
+  const results = (await run).messages;
   expect(endOrder).toEqual(['C', 'A', 'B']);
   expect(results.map((result) => result.name)).toEqual(['A', 'B', 'C']);
 });
@@ -654,7 +751,7 @@ it('finalizes parallel results and emits the finalized result', async () => {
   const { assistantMessage, context } = createBatchContext(tools);
   const endResults: ToolResultMessage[] = [];
 
-  const results = await executeToolCalls({
+  const results = (await executeToolCalls({
     toolCalls: tools.map((tool) => createBatchToolCall(tool.name)),
     tools,
     assistantMessage,
@@ -666,7 +763,7 @@ it('finalizes parallel results and emits the finalized result', async () => {
     emit: (event) => {
       if (event.type === 'tool_execution_end') endResults.push(event.result);
     },
-  });
+  })).messages;
 
   expect(results.map((result) => result.content[0])).toEqual([
     { type: 'text', text: 'final-A' },
@@ -696,6 +793,12 @@ it('converts one parallel tool throw to an error without stopping other tools', 
     emit: () => undefined,
   });
 
-  expect(results[0]?.isError).toBe(true);
-  expect(results[1]).toMatchObject({ name: 'B', isError: false });
+  expect(results.stopReason).toBe('error');
+  expect(results.messages[0]).toMatchObject({
+    name: 'A',
+    isError: true,
+    content: [{ type: 'text', text: 'Tool execution failed due to an internal error.' }],
+    details: { kind: 'internal', code: 'TOOL_INTERNAL_ERROR' },
+  });
+  expect(results.messages[1]).toMatchObject({ name: 'B', isError: false });
 });
