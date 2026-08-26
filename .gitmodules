@@ -5,3 +5,6 @@
 [submodule "docs/dg-ai-notes"]
 	path = agent-service/docs/dg-ai-notes
 	url = https://github.com/buchidonggua/dg-ai-notes.git
+[submodule "agent-service/docs/excel-mcp-server"]
+	path = agent-service/docs/excel-mcp-server
+	url = https://github.com/haris-musa/excel-mcp-server.git
