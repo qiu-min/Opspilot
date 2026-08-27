@@ -1,14 +1,9 @@
 import { formatCellAddress } from '../shared/cell-reference.js';
 import { ExcelCapabilityError, ExcelCapabilityErrorCode } from '../shared/errors.js';
+import { isExcelCellScalar, type ParsedExcelCellValue } from '../shared/exceljs/cell-value.js';
 import type { AggregateGroupValue, AggregateMetricValue, AggregateOperation } from './contracts.js';
 
-export type AggregateScalar = Exclude<AggregateGroupValue, null>;
-
-export type SourceCellValue =
-  | { readonly kind: 'empty' }
-  | { readonly kind: 'value'; readonly value: AggregateScalar }
-  | { readonly kind: 'formula'; readonly hasResult: boolean; readonly result: unknown }
-  | { readonly kind: 'unsupported'; readonly valueType: string };
+export type SourceCellValue = ParsedExcelCellValue;
 
 export interface ValueContext {
   readonly sheetName: string;
@@ -46,27 +41,6 @@ export function createTypedGroupKey(values: readonly AggregateGroupValue[]): str
   return JSON.stringify(values.map((value) => encodeTypedGroupValue(value)));
 }
 
-/** Converts an ExcelJS cell value into an aggregation source value. */
-export function toSourceCellValue(value: unknown): SourceCellValue {
-  if (value === null || value === undefined) {
-    return { kind: 'empty' };
-  }
-
-  if (isFormulaValue(value)) {
-    return {
-      kind: 'formula',
-      hasResult: value.result !== undefined && value.result !== null,
-      result: value.result,
-    };
-  }
-
-  if (isAggregateScalar(value)) {
-    return { kind: 'value', value };
-  }
-
-  return { kind: 'unsupported', valueType: typeof value };
-}
-
 /** Converts a source value into a typed group value or raises a validation error. */
 export function toGroupValue(
   value: SourceCellValue | undefined,
@@ -81,7 +55,7 @@ export function toGroupValue(
   }
 
   if (value.kind === 'formula') {
-    if (value.hasResult && isAggregateScalar(value.result)) {
+    if (value.hasResult && isExcelCellScalar(value.result)) {
       return value.result;
     }
     throwInvalidAggregationValue(context, 'Formula must have a usable cached result');
@@ -211,7 +185,7 @@ function isCountableValue(value: SourceCellValue | undefined, context: ValueCont
   }
 
   if (value.kind === 'formula') {
-    if (value.hasResult && isAggregateScalar(value.result)) {
+    if (value.hasResult && isExcelCellScalar(value.result)) {
       return true;
     }
     throwInvalidAggregationValue(context, 'Formula must have a usable non-empty cached result');
@@ -260,31 +234,4 @@ function throwInvalidAggregationValue(context: ValueContext, reason: string): ne
     `Invalid value for aggregate operation '${context.operation}' in column '${context.column}' at '${context.address}'`,
     { ...context, reason },
   );
-}
-
-/** Checks whether a value is a supported non-null aggregate scalar. */
-function isAggregateScalar(value: unknown): value is AggregateScalar {
-  return (
-    typeof value === 'string' ||
-    typeof value === 'boolean' ||
-    (typeof value === 'number' && Number.isFinite(value)) ||
-    (value instanceof Date && !Number.isNaN(value.getTime()))
-  );
-}
-
-/** Checks whether a value is an Excel formula or shared-formula object. */
-function isFormulaValue(value: unknown): value is {
-  readonly result?: unknown;
-  readonly formula?: string;
-  readonly sharedFormula?: string;
-} {
-  return (
-    isRecord(value) &&
-    (typeof value.formula === 'string' || typeof value.sharedFormula === 'string')
-  );
-}
-
-/** Narrows an unknown value to a non-null record. */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }

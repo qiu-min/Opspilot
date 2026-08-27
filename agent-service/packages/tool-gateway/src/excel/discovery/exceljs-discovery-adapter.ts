@@ -200,5 +200,3 @@ function createColumnProfiles(
 
   return columns;
 }
-
-/** Checks whether a row contains at least one actual value in the range. */

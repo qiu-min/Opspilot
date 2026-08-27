@@ -1,6 +1,6 @@
 import type { Worksheet } from 'exceljs';
 
-import { formatCellAddress, formatCellRange, type CellRange } from '../shared/cell-reference.js';
+import { formatCellRange, type CellRange } from '../shared/cell-reference.js';
 import { ExcelCapabilityError, ExcelCapabilityErrorCode } from '../shared/errors.js';
 import {
   executeExcelOperation,
@@ -8,12 +8,13 @@ import {
   requireWorksheet,
   throwIfAborted,
 } from '../shared/exceljs/workbook-io.js';
-import { headerText } from '../shared/exceljs/cell-value.js';
+import { parseExcelCellValue } from '../shared/exceljs/cell-value.js';
 import {
-  findUsedRange,
-  hasActualCellValue,
-  hasActualValueInRow,
-} from '../shared/exceljs/used-range.js';
+  findHeaderContext,
+  resolveHeaderColumn,
+  type ExcelHeaderColumn,
+} from '../shared/exceljs/header.js';
+import { findUsedRange, hasActualValueInRow } from '../shared/exceljs/used-range.js';
 import type {
   AggregateDataInput,
   AggregateDataResult,
@@ -27,7 +28,6 @@ import {
   createValueContext,
   finalizeMetricAccumulator,
   toGroupValue,
-  toSourceCellValue,
   updateMetricAccumulator,
   type GroupAccumulator,
   type SourceCellValue,
@@ -121,10 +121,7 @@ export class ExcelJsAggregateAdapter implements ExcelAggregateConnector {
   }
 }
 
-interface ResolvedColumn {
-  readonly name: string;
-  readonly columnIndex: number;
-}
+type ResolvedColumn = ExcelHeaderColumn;
 
 interface ResolvedMetric {
   readonly column: ResolvedColumn;
@@ -139,12 +136,6 @@ interface AggregationPlan {
   readonly resultColumns: readonly AggregateResultColumn[];
 }
 
-interface HeaderContext {
-  readonly headerRow: number;
-  readonly availableColumns: readonly string[];
-  readonly matches: ReadonlyMap<string, readonly ResolvedColumn[]>;
-}
-
 /** Resolves all requested columns and builds the single-pass aggregation plan. */
 function createAggregationPlan(
   worksheet: Worksheet,
@@ -156,10 +147,12 @@ function createAggregationPlan(
   },
   signal: AbortSignal | undefined,
 ): AggregationPlan {
-  const header = createHeaderContext(worksheet, usedRange, input.sheetName, signal);
-  const groupBy = input.groupBy.map((column) => resolveColumn(column, header, input.sheetName));
+  const header = findHeaderContext(worksheet, usedRange, signal, 'aggregateData');
+  const groupBy = input.groupBy.map((column) =>
+    resolveHeaderColumn(column, header, input.sheetName),
+  );
   const metrics = input.metrics.map((metric) => ({
-    column: resolveColumn(metric.column, header, input.sheetName),
+    column: resolveHeaderColumn(metric.column, header, input.sheetName),
     operation: metric.operation,
   }));
   const resultColumns = createResultColumns(groupBy, input.metrics);
@@ -172,94 +165,6 @@ function createAggregationPlan(
     sourceColumns,
     resultColumns,
   };
-}
-
-/** Finds the value-based header row and indexes its exact header names. */
-function createHeaderContext(
-  worksheet: Worksheet,
-  usedRange: CellRange | undefined,
-  sheetName: string,
-  signal: AbortSignal | undefined,
-): HeaderContext {
-  if (usedRange === undefined) {
-    return {
-      headerRow: 0,
-      availableColumns: [],
-      matches: new Map(),
-    };
-  }
-
-  let headerRow: number | undefined;
-  for (let row = usedRange.start.row; row <= usedRange.end.row; row += 1) {
-    throwIfAborted(signal, 'aggregateData');
-    if (hasActualValueInRow(worksheet, row, usedRange.start.column, usedRange.end.column)) {
-      headerRow = row;
-      break;
-    }
-  }
-
-  if (headerRow === undefined) {
-    return {
-      headerRow: usedRange.start.row,
-      availableColumns: [],
-      matches: new Map(),
-    };
-  }
-
-  const matches = new Map<string, ResolvedColumn[]>();
-  const availableColumns: string[] = [];
-  for (let column = usedRange.start.column; column <= usedRange.end.column; column += 1) {
-    const cell = worksheet.findCell(headerRow, column);
-    if (!cell || !hasActualCellValue(cell)) {
-      continue;
-    }
-
-    const name = headerText(cell.value);
-    if (name === null) {
-      continue;
-    }
-
-    availableColumns.push(name);
-    const columns = matches.get(name) ?? [];
-    columns.push({ name, columnIndex: column });
-    matches.set(name, columns);
-  }
-
-  return { headerRow, availableColumns, matches };
-}
-
-/** Resolves one requested column against the exact header index. */
-function resolveColumn(name: string, header: HeaderContext, sheetName: string): ResolvedColumn {
-  const matches = header.matches.get(name) ?? [];
-  if (matches.length === 0) {
-    throw new ExcelCapabilityError(
-      ExcelCapabilityErrorCode.COLUMN_NOT_FOUND,
-      `Column '${name}' was not found in worksheet '${sheetName}'`,
-      {
-        sheetName,
-        column: name,
-        availableColumns: header.availableColumns,
-        matches: [],
-      },
-    );
-  }
-
-  if (matches.length > 1) {
-    throw new ExcelCapabilityError(
-      ExcelCapabilityErrorCode.AMBIGUOUS_COLUMN,
-      `Column '${name}' matched multiple headers in worksheet '${sheetName}'`,
-      {
-        sheetName,
-        column: name,
-        availableColumns: header.availableColumns,
-        matches: matches.map((match) =>
-          formatCellAddress({ row: header.headerRow, column: match.columnIndex }),
-        ),
-      },
-    );
-  }
-
-  return matches[0]!;
 }
 
 /** Builds and validates the group and metric output columns. */
@@ -322,7 +227,7 @@ function readSelectedValues(
   for (const column of columns) {
     values.set(
       column.columnIndex,
-      toSourceCellValue(worksheet.findCell(row, column.columnIndex)?.value),
+      parseExcelCellValue(worksheet.findCell(row, column.columnIndex)?.value),
     );
   }
   return values;

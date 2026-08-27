@@ -1,3 +1,11 @@
+export type ExcelCellScalarValue = string | number | boolean | Date;
+
+export type ParsedExcelCellValue =
+  | { readonly kind: 'empty' }
+  | { readonly kind: 'value'; readonly value: ExcelCellScalarValue }
+  | { readonly kind: 'formula'; readonly hasResult: boolean; readonly result: unknown }
+  | { readonly kind: 'unsupported'; readonly valueType: string };
+
 /** Checks whether an ExcelJS cell value contains a non-empty value. */
 export function hasNonEmptyCellValue(value: unknown): boolean {
   if (value === null || value === undefined) {
@@ -19,6 +27,37 @@ export function hasNonEmptyCellValue(value: unknown): boolean {
   }
 
   return true;
+}
+
+/** Parses a raw ExcelJS value while preserving formula cached-result state. */
+export function parseExcelCellValue(value: unknown): ParsedExcelCellValue {
+  if (value === null || value === undefined) {
+    return { kind: 'empty' };
+  }
+
+  if (isFormulaValue(value)) {
+    return {
+      kind: 'formula',
+      hasResult: value.result !== undefined && value.result !== null,
+      result: value.result,
+    };
+  }
+
+  if (isExcelCellScalar(value)) {
+    return { kind: 'value', value };
+  }
+
+  return { kind: 'unsupported', valueType: typeof value };
+}
+
+/** Checks whether a value is a supported non-null Excel scalar. */
+export function isExcelCellScalar(value: unknown): value is ExcelCellScalarValue {
+  return (
+    typeof value === 'string' ||
+    typeof value === 'boolean' ||
+    (typeof value === 'number' && Number.isFinite(value)) ||
+    (value instanceof Date && !Number.isNaN(value.getTime()))
+  );
 }
 
 /** Converts an ExcelJS cell value into text suitable for exact header matching. */
@@ -65,4 +104,16 @@ export function headerText(value: unknown): string | null {
 /** Narrows an unknown value to a non-null record. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+/** Checks whether a value is an Excel formula or shared-formula object. */
+function isFormulaValue(value: unknown): value is {
+  readonly result?: unknown;
+  readonly formula?: string;
+  readonly sharedFormula?: string;
+} {
+  return (
+    isRecord(value) &&
+    (typeof value.formula === 'string' || typeof value.sharedFormula === 'string')
+  );
 }

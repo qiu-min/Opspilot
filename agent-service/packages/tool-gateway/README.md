@@ -10,18 +10,22 @@
 
 Data
 
-* `readRange`
-* `writeData`
-* `readRangeWithMetadata`
+- `readRange`
+- `writeData`
+- `readRangeWithMetadata`
 
 Discovery
 
-* `getWorkbookInfo`
-* `getSheetProfile`
+- `getWorkbookInfo`
+- `getSheetProfile`
 
 Aggregate
 
-* `aggregateData`
+- `aggregateData`
+
+Filter
+
+- `filterData`
 
 ## Structure
 
@@ -31,13 +35,15 @@ src/
     ├── data/
     ├── discovery/
     ├── aggregate/
+    ├── filter/
     └── shared/
 ```
 
-* `data/`：Excel 数据读写能力
-* `discovery/`：Workbook / Worksheet 结构发现能力
-* `aggregate/`：数据聚合能力
-* `shared/`：Excel Capability 间复用的基础实现
+- `data/`：Excel 数据读写能力
+- `discovery/`：Workbook / Worksheet 结构发现能力
+- `aggregate/`：数据聚合能力
+- `filter/`：按精确表头和类型条件筛选数据行的能力
+- `shared/`：Excel Capability 间复用的基础实现
 
 ## Architecture
 
