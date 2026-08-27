@@ -147,6 +147,18 @@ describe('ExcelJsDataAdapter', () => {
 
       expect(result.values).toEqual([]);
     });
+
+    it('uses value-only used range when a remote cell has only validation', async () => {
+      await createValidationRangeWorkbook(filePath);
+
+      const result = await adapter.readRange({
+        filePath,
+        sheetName: 'Data',
+        startCell: 'A1',
+      });
+
+      expect(result.range).toBe('A1:F10');
+    });
   });
 
   describe('writeData', () => {
@@ -356,6 +368,47 @@ describe('ExcelJsDataAdapter', () => {
         showErrorMessage: true,
       });
     });
+
+    it('uses the selected used-range mode and keeps explicit ranges unchanged', async () => {
+      await createValidationRangeWorkbook(filePath);
+
+      const withoutValidation = await adapter.readRangeWithMetadata({
+        filePath,
+        sheetName: 'Data',
+        startCell: 'A1',
+        includeValidation: false,
+      });
+      expect(withoutValidation.range).toBe('A1:F10');
+      expect(withoutValidation.cells).toHaveLength(60);
+
+      const withValidation = await adapter.readRangeWithMetadata({
+        filePath,
+        sheetName: 'Data',
+        startCell: 'Z50000',
+        includeValidation: true,
+      });
+      expect(withValidation.range).toBe('Z50000:Z50000');
+      expect(withValidation.cells).toHaveLength(1);
+      expect(withValidation.cells[0]).toMatchObject({
+        address: 'Z50000',
+        value: null,
+        validation: {
+          hasValidation: true,
+          type: 'list',
+        },
+      });
+
+      const explicitRange = await adapter.readRangeWithMetadata({
+        filePath,
+        sheetName: 'Data',
+        startCell: 'Z50000',
+        endCell: 'Z50000',
+        includeValidation: false,
+      });
+      expect(explicitRange.range).toBe('Z50000:Z50000');
+      expect(explicitRange.cells).toHaveLength(1);
+      expect(explicitRange.cells[0]?.validation).toBeUndefined();
+    });
   });
 });
 
@@ -366,6 +419,18 @@ async function createWorkbook(
   const workbook = new Workbook();
   configure(workbook);
   await workbook.xlsx.writeFile(filePath);
+}
+
+async function createValidationRangeWorkbook(filePath: string): Promise<void> {
+  await createWorkbook(filePath, (workbook) => {
+    const worksheet = workbook.addWorksheet('Data');
+    worksheet.getCell('A1').value = 'header';
+    worksheet.getCell('F10').value = 'tail';
+    worksheet.getCell('Z50000').dataValidation = {
+      type: 'list',
+      formulae: ['"Yes,No"'],
+    };
+  });
 }
 
 async function readWorkbook(filePath: string): Promise<Workbook> {

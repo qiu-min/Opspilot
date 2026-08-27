@@ -36,7 +36,7 @@ import {
   requireWorksheet,
   saveWorkbook,
 } from '../shared/exceljs/workbook-io.js';
-import { findUsedRange } from '../shared/exceljs/used-range.js';
+import { findUsedRange, type UsedRangeMode } from '../shared/exceljs/used-range.js';
 
 export class ExcelJsDataAdapter implements ExcelDataConnector {
   async readRange(input: ReadRangeInput, signal?: AbortSignal): Promise<ReadRangeResult> {
@@ -46,7 +46,7 @@ export class ExcelJsDataAdapter implements ExcelDataConnector {
       const workbook = await openWorkbook(validated.filePath, signal);
       const worksheet = requireWorksheet(workbook, validated.sheetName);
       const requested = parseRequestedRange(validated.startCell, validated.endCell);
-      const resolved = resolveReadRange(worksheet, requested, false);
+      const resolved = resolveReadRange(worksheet, requested, 'values', false);
 
       if (!resolved.hasData) {
         return {
@@ -124,7 +124,10 @@ export class ExcelJsDataAdapter implements ExcelDataConnector {
       const workbook = await openWorkbook(validated.filePath, signal);
       const worksheet = requireWorksheet(workbook, validated.sheetName);
       const requested = parseRequestedRange(validated.startCell, validated.endCell);
-      const resolved = resolveReadRange(worksheet, requested, true);
+      const usedRangeMode: UsedRangeMode = validated.includeValidation
+        ? 'valuesAndMetadata'
+        : 'values';
+      const resolved = resolveReadRange(worksheet, requested, usedRangeMode, true);
 
       if (!resolved.hasData) {
         return {
@@ -234,19 +237,23 @@ function parseSingleCell(reference: string): CellCoordinate {
 function resolveReadRange(
   worksheet: Worksheet,
   requested: RequestedRange,
+  usedRangeMode: UsedRangeMode,
   metadataMode: boolean,
 ): ResolvedReadRange {
-  const usedRange = findUsedRange(worksheet, 'valuesAndMetadata');
+  const usedRange = findUsedRange(worksheet, usedRangeMode);
+  const rangeForExplicitRequest = requested.isExplicit
+    ? findUsedRange(worksheet, 'valuesAndMetadata')
+    : usedRange;
 
   if (
-    requested.range.start.row > (usedRange?.end.row ?? 0) ||
-    requested.range.start.column > (usedRange?.end.column ?? 0)
+    requested.range.start.row > (rangeForExplicitRequest?.end.row ?? 0) ||
+    requested.range.start.column > (rangeForExplicitRequest?.end.column ?? 0)
   ) {
     return { range: requested.range, hasData: false };
   }
 
   if (requested.isExplicit) {
-    return { range: requested.range, hasData: Boolean(usedRange) };
+    return { range: requested.range, hasData: Boolean(rangeForExplicitRequest) };
   }
 
   if (!usedRange) {
@@ -515,15 +522,4 @@ function isEmptyData(input: WriteDataInput): boolean {
     (Array.isArray(data) &&
       (data.length === 0 || data.some((row) => Array.isArray(row) && row.length === 0)))
   );
-}
-
-function throwIfAborted(signal: AbortSignal | undefined, operation: string): void {
-  if (signal?.aborted) {
-    throw new ExcelCapabilityError(
-      ExcelCapabilityErrorCode.EXCEL_DATA_OPERATION_FAILED,
-      `Excel data operation '${operation}' was cancelled`,
-      { operation },
-      signal.reason,
-    );
-  }
 }

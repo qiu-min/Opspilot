@@ -21,8 +21,8 @@ export async function executeExcelOperation<T>(
     }
 
     throw new ExcelCapabilityError(
-      ExcelCapabilityErrorCode.EXCEL_DATA_OPERATION_FAILED,
-      'Failed to ' + operation + ' Excel data',
+      ExcelCapabilityErrorCode.EXCEL_OPERATION_FAILED,
+      "Failed to execute Excel operation '" + operation + "'",
       { operation, filePath },
       cause,
     );
@@ -96,8 +96,8 @@ export function requireWorksheet(workbook: Workbook, sheetName: string): Workshe
 export function throwIfAborted(signal: AbortSignal | undefined, operation: string): void {
   if (signal?.aborted) {
     throw new ExcelCapabilityError(
-      ExcelCapabilityErrorCode.EXCEL_DATA_OPERATION_FAILED,
-      "Excel data operation '" + operation + "' was cancelled",
+      ExcelCapabilityErrorCode.EXCEL_OPERATION_FAILED,
+      "Excel operation '" + operation + "' was cancelled",
       { operation },
       signal.reason,
     );

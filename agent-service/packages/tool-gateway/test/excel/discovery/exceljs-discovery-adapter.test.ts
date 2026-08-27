@@ -137,7 +137,8 @@ describe('ExcelJsDiscoveryAdapter', () => {
       controller.abort('cancelled by caller');
 
       await expect(adapter.getWorkbookInfo({ filePath }, controller.signal)).rejects.toMatchObject({
-        code: ExcelCapabilityErrorCode.EXCEL_DATA_OPERATION_FAILED,
+        code: ExcelCapabilityErrorCode.EXCEL_OPERATION_FAILED,
+        message: "Excel operation 'getWorkbookInfo' was cancelled",
       });
     });
   });
@@ -289,7 +290,8 @@ describe('ExcelJsDiscoveryAdapter', () => {
       await expect(
         adapter.getSheetProfile({ filePath, sheetName: 'Data' }, controller.signal),
       ).rejects.toMatchObject({
-        code: ExcelCapabilityErrorCode.EXCEL_DATA_OPERATION_FAILED,
+        code: ExcelCapabilityErrorCode.EXCEL_OPERATION_FAILED,
+        message: "Excel operation 'getSheetProfile' was cancelled",
       });
     });
   });
