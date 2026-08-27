@@ -6,7 +6,7 @@
 
 ## Current status
 
-当前阶段只完成 Tool Gateway 的目录清理和 Capability 结构预留。早期故障诊断 Demo 的 Log、Metric、Runbook、Service Topology Fixture 及其测试已移除；Excel Capability 尚未实现任何具体功能。
+当前已实现第一批 Excel Capability：`readRange`、`writeData` 和 `readRangeWithMetadata`。早期故障诊断 Demo 的 Log、Metric、Runbook、Service Topology Fixture 及其测试已移除。
 
 当前公开入口只保留 Capability 目录的出口：
 
