@@ -167,7 +167,12 @@ function equalsValue(
 
   const actualScalar = toComparableScalar(actual, context);
   if (actualScalar === undefined) {
-    return false;
+    throwInvalidFilterValue(
+      context,
+      'string, number, boolean, or Date',
+      describeParsedValue(actual),
+      'Actual value cannot be compared for equality',
+    );
   }
   return strictValueEquals(actualScalar, expected);
 }
@@ -318,6 +323,24 @@ function describeValue(value: unknown): string {
     return 'null';
   }
   return typeof value;
+}
+
+function describeParsedValue(value: ParsedExcelCellValue): string {
+  switch (value.kind) {
+    case 'empty':
+      return 'empty';
+
+    case 'value':
+      return describeValue(value.value);
+
+    case 'formula':
+      return value.hasResult
+        ? `formula result (${describeValue(value.result)})`
+        : 'formula without cached result';
+
+    case 'unsupported':
+      return value.valueType;
+  }
 }
 
 /** Throws a consistent invalid-filter-value error with cell details. */
