@@ -58,6 +58,23 @@ export function hasActualCellValue(cell: Cell): boolean {
   return cell.value !== null && cell.value !== undefined;
 }
 
+/** Checks whether a worksheet row contains at least one actual cell value. */
+export function hasActualValueInRow(
+  worksheet: Worksheet,
+  rowNumber: number,
+  startColumn: number,
+  endColumn: number,
+): boolean {
+  for (let column = startColumn; column <= endColumn; column += 1) {
+    const cell = worksheet.findCell(rowNumber, column);
+    if (cell && hasActualCellValue(cell)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 /** Checks whether a cell contributes content for the selected used-range mode. */
 function hasCellContent(cell: Cell, mode: UsedRangeMode): boolean {
   return (

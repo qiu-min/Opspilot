@@ -1,5 +1,7 @@
 import type { ExcelInferredType } from './contracts.js';
 
+import { hasNonEmptyCellValue } from '../shared/exceljs/cell-value.js';
+
 /** Infers one aggregate type from the valid values in a column. */
 export function inferColumnType(values: readonly unknown[]): ExcelInferredType {
   const types = new Set<ExcelInferredType>();
@@ -25,66 +27,7 @@ export function inferColumnType(values: readonly unknown[]): ExcelInferredType {
 
 /** Checks whether a value is suitable for sampling or type inference. */
 export function isValidSample(value: unknown): boolean {
-  if (value === null || value === undefined) {
-    return false;
-  }
-
-  if (typeof value === 'string') {
-    return value.length > 0;
-  }
-
-  if (isRecord(value) && typeof value.text === 'string') {
-    return value.text.length > 0;
-  }
-
-  if (isRecord(value) && Array.isArray(value.richText)) {
-    return value.richText.some(
-      (run) => isRecord(run) && typeof run.text === 'string' && run.text.length > 0,
-    );
-  }
-
-  return true;
-}
-
-/** Converts a sampled value into displayable header text. */
-export function headerText(value: unknown): string | null {
-  if (!isValidSample(value)) {
-    return null;
-  }
-
-  if (typeof value === 'string') {
-    return value;
-  }
-
-  if (isRecord(value) && typeof value.text === 'string') {
-    return value.text;
-  }
-
-  if (isRecord(value) && Array.isArray(value.richText)) {
-    const text = value.richText
-      .filter(isRecord)
-      .map((run) => (typeof run.text === 'string' ? run.text : ''))
-      .join('');
-    return text.length === 0 ? null : text;
-  }
-
-  if (value instanceof Date) {
-    return value.toISOString();
-  }
-
-  if (isRecord(value) && typeof value.formula === 'string') {
-    return value.formula;
-  }
-
-  if (isRecord(value) && typeof value.sharedFormula === 'string') {
-    return value.sharedFormula;
-  }
-
-  if (isRecord(value) && typeof value.error === 'string') {
-    return value.error;
-  }
-
-  return String(value);
+  return hasNonEmptyCellValue(value);
 }
 
 /** Infers the type of one Excel value. */

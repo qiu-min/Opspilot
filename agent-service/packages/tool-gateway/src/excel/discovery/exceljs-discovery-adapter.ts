@@ -1,4 +1,4 @@
-import type { Cell, Worksheet } from 'exceljs';
+import type { Worksheet } from 'exceljs';
 
 import { formatCellRange, formatColumnLetter, type CellRange } from '../shared/cell-reference.js';
 import {
@@ -8,7 +8,8 @@ import {
   requireWorksheet,
   throwIfAborted,
 } from '../shared/exceljs/workbook-io.js';
-import { findUsedRange, hasActualCellValue } from '../shared/exceljs/used-range.js';
+import { headerText } from '../shared/exceljs/cell-value.js';
+import { findUsedRange, hasActualValueInRow } from '../shared/exceljs/used-range.js';
 import type { ExcelDiscoveryConnector } from './connector.js';
 import type {
   GetSheetProfileInput,
@@ -19,7 +20,7 @@ import type {
   WorkbookSheetSummary,
 } from './contracts.js';
 import { getSheetProfileInputSchema, getWorkbookInfoInputSchema } from './schemas.js';
-import { headerText, inferColumnType, isValidSample } from './type-inference.js';
+import { inferColumnType, isValidSample } from './type-inference.js';
 
 export class ExcelJsDiscoveryAdapter implements ExcelDiscoveryConnector {
   /** Inspects workbook structure and returns sheet summaries. */
@@ -201,18 +202,3 @@ function createColumnProfiles(
 }
 
 /** Checks whether a row contains at least one actual value in the range. */
-function hasActualValueInRow(
-  worksheet: Worksheet,
-  rowNumber: number,
-  startColumn: number,
-  endColumn: number,
-): boolean {
-  for (let column = startColumn; column <= endColumn; column += 1) {
-    const cell: Cell | undefined = worksheet.findCell(rowNumber, column);
-    if (cell && hasActualCellValue(cell)) {
-      return true;
-    }
-  }
-
-  return false;
-}

@@ -35,7 +35,8 @@ src/
 │   │   ├── cell-reference.ts
 │   │   └── exceljs/
 │   │       ├── workbook-io.ts
-│   │       └── used-range.ts
+│   │       ├── used-range.ts
+│   │       └── cell-value.ts
 │   ├── data/
 │   │   ├── contracts.ts
 │   │   ├── schemas.ts
@@ -54,6 +55,7 @@ src/
 │   │   ├── schemas.ts
 │   │   ├── connector.ts
 │   │   ├── exceljs-aggregate-adapter.ts
+│   │   ├── aggregation-engine.ts
 │   │   └── index.ts
 │   └── index.ts
 └── index.ts

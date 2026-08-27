@@ -96,7 +96,7 @@ describe('ExcelJsAggregateAdapter', () => {
         ['South', 5, 1],
         [null, 15, 1],
       ],
-      sourceRowCount: 5,
+      sourceRowCount: 4,
       resultRowCount: 3,
     });
   });
@@ -135,6 +135,79 @@ describe('ExcelJsAggregateAdapter', () => {
       ['a', 'b|c', 40],
     ]);
     expect(result.resultRowCount).toBe(4);
+  });
+
+  it('skips completely blank rows without creating a null group', async () => {
+    await createWorkbook(filePath, (workbook) => {
+      const worksheet = workbook.addWorksheet('Data');
+      worksheet.getCell('A1').value = 'Region';
+      worksheet.getCell('B1').value = 'Amount';
+      worksheet.getCell('A2').value = 'East';
+      worksheet.getCell('B2').value = 10;
+      worksheet.getCell('A4').value = 'South';
+      worksheet.getCell('B4').value = 20;
+    });
+
+    const result = await adapter.aggregateData({
+      filePath,
+      sheetName: 'Data',
+      groupBy: ['Region'],
+      metrics: [{ column: 'Amount', operation: 'sum' }],
+    });
+
+    expect(result.rows).toEqual([
+      ['East', 10],
+      ['South', 20],
+    ]);
+    expect(result.sourceRowCount).toBe(2);
+  });
+
+  it('keeps a null group when another column has data', async () => {
+    await createWorkbook(filePath, (workbook) => {
+      const worksheet = workbook.addWorksheet('Data');
+      worksheet.getCell('A1').value = 'Region';
+      worksheet.getCell('B1').value = 'Amount';
+      worksheet.getCell('A2').value = 'East';
+      worksheet.getCell('B2').value = 10;
+      worksheet.getCell('B3').value = 20;
+    });
+
+    const result = await adapter.aggregateData({
+      filePath,
+      sheetName: 'Data',
+      groupBy: ['Region'],
+      metrics: [{ column: 'Amount', operation: 'sum' }],
+    });
+
+    expect(result.rows).toEqual([
+      ['East', 10],
+      [null, 20],
+    ]);
+    expect(result.sourceRowCount).toBe(2);
+  });
+
+  it('keeps rows with an empty metric when another column has data', async () => {
+    await createWorkbook(filePath, (workbook) => {
+      const worksheet = workbook.addWorksheet('Data');
+      worksheet.getCell('A1').value = 'Region';
+      worksheet.getCell('B1').value = 'Amount';
+      worksheet.getCell('A2').value = 'East';
+      worksheet.getCell('B2').value = 10;
+      worksheet.getCell('A3').value = 'South';
+    });
+
+    const result = await adapter.aggregateData({
+      filePath,
+      sheetName: 'Data',
+      groupBy: ['Region'],
+      metrics: [{ column: 'Amount', operation: 'sum' }],
+    });
+
+    expect(result.rows).toEqual([
+      ['East', 10],
+      ['South', 0],
+    ]);
+    expect(result.sourceRowCount).toBe(2);
   });
 
   it('returns the specified alias and preserves source metadata', async () => {
