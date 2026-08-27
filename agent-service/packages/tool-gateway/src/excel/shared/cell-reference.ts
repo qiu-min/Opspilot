@@ -27,11 +27,23 @@ export function parseCellRange(reference: string): CellRange {
 }
 
 export function formatCellAddress(coordinate: CellCoordinate): string {
-  return `${formatColumn(coordinate.column)}${coordinate.row}`;
+  return `${formatColumnLetter(coordinate.column)}${coordinate.row}`;
 }
 
 export function formatCellRange(range: CellRange): string {
   return `${formatCellAddress(range.start)}:${formatCellAddress(range.end)}`;
+}
+
+export function formatColumnLetter(column: number): string {
+  if (!Number.isSafeInteger(column) || column < 1) {
+    throw new ExcelCapabilityError(
+      ExcelCapabilityErrorCode.INVALID_CELL_REFERENCE,
+      "Invalid column number: '" + column + "'",
+      { column },
+    );
+  }
+
+  return formatColumn(column);
 }
 
 function parseCell(reference: string, cell: string): CellCoordinate {

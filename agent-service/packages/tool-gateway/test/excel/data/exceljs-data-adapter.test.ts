@@ -5,10 +5,7 @@ import { join } from 'node:path';
 import { Workbook } from 'exceljs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import {
-  ExcelCapabilityErrorCode,
-  ExcelJsDataAdapter,
-} from '../../src/index.js';
+import { ExcelCapabilityErrorCode, ExcelJsDataAdapter } from '../../../src/index.js';
 
 describe('ExcelJsDataAdapter', () => {
   let directory: string;

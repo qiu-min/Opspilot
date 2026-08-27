@@ -5,7 +5,7 @@ import type {
   ReadRangeWithMetadataResult,
   WriteDataInput,
   WriteDataResult,
-} from '../contracts.js';
+} from './contracts.js';
 
 export interface ExcelDataConnector {
   readRange(input: ReadRangeInput, signal?: AbortSignal): Promise<ReadRangeResult>;

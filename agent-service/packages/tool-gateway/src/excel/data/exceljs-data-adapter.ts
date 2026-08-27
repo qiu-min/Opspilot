@@ -1,29 +1,19 @@
-import {
-  Workbook,
-  type Cell,
-  type CellValue,
-  type DataValidation,
-  type Worksheet,
-} from 'exceljs';
+import { type CellValue, type DataValidation, type Worksheet } from 'exceljs';
 
-import {
-  ExcelCapabilityError,
-  ExcelCapabilityErrorCode,
-  isExcelCapabilityError,
-} from '../errors.js';
+import { ExcelCapabilityError, ExcelCapabilityErrorCode } from '../shared/errors.js';
 import {
   formatCellAddress,
   formatCellRange,
   parseCellRange,
   type CellCoordinate,
   type CellRange,
-} from '../cell-reference.js';
+} from '../shared/cell-reference.js';
 import {
   readRangeInputSchema,
   readRangeWithMetadataInputSchema,
   writeDataInputSchema,
-} from '../schemas.js';
-import type { ExcelDataConnector } from '../connectors/excel-data-connector.js';
+} from './schemas.js';
+import type { ExcelDataConnector } from './connector.js';
 import type {
   ExcelCellValidation,
   ExcelCellValue,
@@ -38,15 +28,23 @@ import type {
   ReadRangeWithMetadataResult,
   WriteDataInput,
   WriteDataResult,
-} from '../contracts.js';
+} from './contracts.js';
+import {
+  executeExcelOperation,
+  getActiveWorksheet,
+  openWorkbook,
+  requireWorksheet,
+  saveWorkbook,
+} from '../shared/exceljs/workbook-io.js';
+import { findUsedRange } from '../shared/exceljs/used-range.js';
 
 export class ExcelJsDataAdapter implements ExcelDataConnector {
   async readRange(input: ReadRangeInput, signal?: AbortSignal): Promise<ReadRangeResult> {
     const validated = readRangeInputSchema.parse(input);
 
-    return this.execute('readRange', validated.filePath, signal, async () => {
-      const workbook = await this.openWorkbook(validated.filePath, signal);
-      const worksheet = this.requireWorksheet(workbook, validated.sheetName);
+    return executeExcelOperation('readRange', validated.filePath, signal, async () => {
+      const workbook = await openWorkbook(validated.filePath, signal);
+      const worksheet = requireWorksheet(workbook, validated.sheetName);
       const requested = parseRequestedRange(validated.startCell, validated.endCell);
       const resolved = resolveReadRange(worksheet, requested, false);
 
@@ -85,11 +83,11 @@ export class ExcelJsDataAdapter implements ExcelDataConnector {
   async writeData(input: WriteDataInput, signal?: AbortSignal): Promise<WriteDataResult> {
     const validated = parseWriteDataInput(input);
 
-    return this.execute('writeData', validated.filePath, signal, async () => {
-      const workbook = await this.openWorkbook(validated.filePath, signal);
+    return executeExcelOperation('writeData', validated.filePath, signal, async () => {
+      const workbook = await openWorkbook(validated.filePath, signal);
       const worksheet = validated.sheetName
-        ? workbook.getWorksheet(validated.sheetName) ?? workbook.addWorksheet(validated.sheetName)
-        : this.requireActiveWorksheet(workbook);
+        ? (workbook.getWorksheet(validated.sheetName) ?? workbook.addWorksheet(validated.sheetName))
+        : (getActiveWorksheet(workbook) ?? noActiveWorksheet());
       const start = parseSingleCell(validated.startCell);
 
       for (let rowOffset = 0; rowOffset < validated.data.length; rowOffset += 1) {
@@ -100,7 +98,7 @@ export class ExcelJsDataAdapter implements ExcelDataConnector {
         }
       }
 
-      await this.saveWorkbook(workbook, validated.filePath, signal);
+      await saveWorkbook(workbook, validated.filePath, signal);
 
       const end: CellCoordinate = {
         row: start.row + validated.data.length - 1,
@@ -122,9 +120,9 @@ export class ExcelJsDataAdapter implements ExcelDataConnector {
   ): Promise<ReadRangeWithMetadataResult> {
     const validated = readRangeWithMetadataInputSchema.parse(input);
 
-    return this.execute('readRangeWithMetadata', validated.filePath, signal, async () => {
-      const workbook = await this.openWorkbook(validated.filePath, signal);
-      const worksheet = this.requireWorksheet(workbook, validated.sheetName);
+    return executeExcelOperation('readRangeWithMetadata', validated.filePath, signal, async () => {
+      const workbook = await openWorkbook(validated.filePath, signal);
+      const worksheet = requireWorksheet(workbook, validated.sheetName);
       const requested = parseRequestedRange(validated.startCell, validated.endCell);
       const resolved = resolveReadRange(worksheet, requested, true);
 
@@ -164,103 +162,13 @@ export class ExcelJsDataAdapter implements ExcelDataConnector {
       };
     });
   }
+}
 
-  private async execute<T>(
-    operation: string,
-    filePath: string,
-    signal: AbortSignal | undefined,
-    action: () => Promise<T>,
-  ): Promise<T> {
-    try {
-      throwIfAborted(signal, operation);
-      return await action();
-    } catch (cause) {
-      if (isExcelCapabilityError(cause)) {
-        throw cause;
-      }
-
-      throw new ExcelCapabilityError(
-        ExcelCapabilityErrorCode.EXCEL_DATA_OPERATION_FAILED,
-        `Failed to ${operation} Excel data`,
-        { operation, filePath },
-        cause,
-      );
-    }
-  }
-
-  private async openWorkbook(filePath: string, signal?: AbortSignal): Promise<Workbook> {
-    throwIfAborted(signal, 'openWorkbook');
-    const workbook = new Workbook();
-
-    try {
-      await workbook.xlsx.readFile(filePath);
-      throwIfAborted(signal, 'openWorkbook');
-      return workbook;
-    } catch (cause) {
-      if (isExcelCapabilityError(cause)) {
-        throw cause;
-      }
-
-      throw new ExcelCapabilityError(
-        ExcelCapabilityErrorCode.WORKBOOK_OPEN_FAILED,
-        `Failed to open workbook '${filePath}'`,
-        { filePath },
-        cause,
-      );
-    }
-  }
-
-  private async saveWorkbook(
-    workbook: Workbook,
-    filePath: string,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    throwIfAborted(signal, 'saveWorkbook');
-
-    try {
-      await workbook.xlsx.writeFile(filePath);
-      throwIfAborted(signal, 'saveWorkbook');
-    } catch (cause) {
-      if (isExcelCapabilityError(cause)) {
-        throw cause;
-      }
-
-      throw new ExcelCapabilityError(
-        ExcelCapabilityErrorCode.WORKBOOK_SAVE_FAILED,
-        `Failed to save workbook '${filePath}'`,
-        { filePath },
-        cause,
-      );
-    }
-  }
-
-  private requireWorksheet(workbook: Workbook, sheetName: string): Worksheet {
-    const worksheet = workbook.getWorksheet(sheetName);
-    if (!worksheet) {
-      throw new ExcelCapabilityError(
-        ExcelCapabilityErrorCode.WORKSHEET_NOT_FOUND,
-        `Worksheet '${sheetName}' not found`,
-        { sheetName },
-      );
-    }
-
-    return worksheet;
-  }
-
-  private requireActiveWorksheet(workbook: Workbook): Worksheet {
-    const activeTab = workbook.views?.[0]?.activeTab;
-    const worksheet =
-      activeTab === undefined ? workbook.worksheets[0] : workbook.worksheets[activeTab];
-
-    if (!worksheet) {
-      throw new ExcelCapabilityError(
-        ExcelCapabilityErrorCode.NO_ACTIVE_WORKSHEET,
-        'No active worksheet found in workbook',
-      );
-    }
-
-    return worksheet;
-  }
+function noActiveWorksheet(): never {
+  throw new ExcelCapabilityError(
+    ExcelCapabilityErrorCode.NO_ACTIVE_WORKSHEET,
+    'No active worksheet found in workbook',
+  );
 }
 
 interface RequestedRange {
@@ -296,10 +204,7 @@ function parseRequestedRange(startCell: string, endCell: string | undefined): Re
     );
   }
 
-  if (
-    startRange.start.row > endRange.end.row ||
-    startRange.start.column > endRange.end.column
-  ) {
+  if (startRange.start.row > endRange.end.row || startRange.start.column > endRange.end.column) {
     throw new ExcelCapabilityError(
       ExcelCapabilityErrorCode.INVALID_CELL_REFERENCE,
       `Range start must not be after its end: '${startCell}:${endCell}'`,
@@ -331,7 +236,7 @@ function resolveReadRange(
   requested: RequestedRange,
   metadataMode: boolean,
 ): ResolvedReadRange {
-  const usedRange = findUsedRange(worksheet);
+  const usedRange = findUsedRange(worksheet, 'valuesAndMetadata');
 
   if (
     requested.range.start.row > (usedRange?.end.row ?? 0) ||
@@ -359,42 +264,6 @@ function resolveReadRange(
   return { range: usedRange, hasData: true };
 }
 
-function findUsedRange(worksheet: Worksheet): CellRange | undefined {
-  let top = Number.POSITIVE_INFINITY;
-  let left = Number.POSITIVE_INFINITY;
-  let bottom = 0;
-  let right = 0;
-
-  worksheet.eachRow({ includeEmpty: true }, (row) => {
-    row.eachCell({ includeEmpty: true }, (cell) => {
-      if (!hasCellContent(cell)) {
-        return;
-      }
-
-      top = Math.min(top, cell.fullAddress.row);
-      left = Math.min(left, cell.fullAddress.col);
-      bottom = Math.max(bottom, cell.fullAddress.row);
-      right = Math.max(right, cell.fullAddress.col);
-    });
-  });
-
-  if (bottom === 0 || right === 0) {
-    return undefined;
-  }
-
-  return {
-    start: { row: top, column: left },
-    end: { row: bottom, column: right },
-  };
-}
-
-function hasCellContent(cell: Cell): boolean {
-  return (
-    (cell.value !== null && cell.value !== undefined) ||
-    cell.dataValidation !== undefined
-  );
-}
-
 function normalizeCellValue(value: CellValue): ExcelCellValue {
   if (value === null || value === undefined) {
     return null;
@@ -411,9 +280,7 @@ function normalizeCellValue(value: CellValue): ExcelCellValue {
   if (typeof value.formula === 'string') {
     return {
       formula: value.formula,
-      ...(value.result !== undefined
-        ? { result: normalizeFormulaResult(value.result) }
-        : {}),
+      ...(value.result !== undefined ? { result: normalizeFormulaResult(value.result) } : {}),
       ...(typeof value.date1904 === 'boolean' ? { date1904: value.date1904 } : {}),
     };
   }
@@ -422,9 +289,7 @@ function normalizeCellValue(value: CellValue): ExcelCellValue {
     return {
       sharedFormula: value.sharedFormula,
       ...(typeof value.formula === 'string' ? { formula: value.formula } : {}),
-      ...(value.result !== undefined
-        ? { result: normalizeFormulaResult(value.result) }
-        : {}),
+      ...(value.result !== undefined ? { result: normalizeFormulaResult(value.result) } : {}),
       ...(typeof value.date1904 === 'boolean' ? { date1904: value.date1904 } : {}),
     };
   }
@@ -538,16 +403,10 @@ function mapDataValidation(dataValidation: DataValidation | undefined): ExcelCel
     type: dataValidation.type,
     ...(dataValidation.operator !== undefined ? { operator: dataValidation.operator } : {}),
     formulae,
-    ...(dataValidation.allowBlank !== undefined
-      ? { allowBlank: dataValidation.allowBlank }
-      : {}),
+    ...(dataValidation.allowBlank !== undefined ? { allowBlank: dataValidation.allowBlank } : {}),
     ...(dataValidation.error !== undefined ? { error: dataValidation.error } : {}),
-    ...(dataValidation.errorTitle !== undefined
-      ? { errorTitle: dataValidation.errorTitle }
-      : {}),
-    ...(dataValidation.errorStyle !== undefined
-      ? { errorStyle: dataValidation.errorStyle }
-      : {}),
+    ...(dataValidation.errorTitle !== undefined ? { errorTitle: dataValidation.errorTitle } : {}),
+    ...(dataValidation.errorStyle !== undefined ? { errorStyle: dataValidation.errorStyle } : {}),
     ...(dataValidation.prompt !== undefined ? { prompt: dataValidation.prompt } : {}),
     ...(dataValidation.promptTitle !== undefined
       ? { promptTitle: dataValidation.promptTitle }

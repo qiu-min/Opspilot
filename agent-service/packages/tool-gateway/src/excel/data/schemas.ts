@@ -29,6 +29,4 @@ export const readRangeWithMetadataInputSchema = z.object({
 
 export type ReadRangeInputSchema = z.input<typeof readRangeInputSchema>;
 export type WriteDataInputSchema = z.input<typeof writeDataInputSchema>;
-export type ReadRangeWithMetadataInputSchema = z.input<
-  typeof readRangeWithMetadataInputSchema
->;
+export type ReadRangeWithMetadataInputSchema = z.input<typeof readRangeWithMetadataInputSchema>;
