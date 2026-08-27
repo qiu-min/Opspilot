@@ -19,6 +19,10 @@ Discovery
 - `getWorkbookInfo`
 - `getSheetProfile`
 
+Aggregate
+
+- `aggregateData`
+
 Discovery 用于“大表读取前的结构侦察”：Agent 可以先了解 Workbook / Worksheet 的大小、Sheet 状态、Header 和列类型，避免默认把整个 Workbook 数据送入模型上下文。早期故障诊断 Demo 的 Log、Metric、Runbook、Service Topology Fixture 及其测试已移除。
 
 当前公开入口只保留 Capability 目录的出口：
@@ -45,6 +49,12 @@ src/
 │   │   ├── exceljs-discovery-adapter.ts
 │   │   ├── type-inference.ts
 │   │   └── index.ts
+│   ├── aggregate/
+│   │   ├── contracts.ts
+│   │   ├── schemas.ts
+│   │   ├── connector.ts
+│   │   ├── exceljs-aggregate-adapter.ts
+│   │   └── index.ts
 │   └── index.ts
 └── index.ts
 ```
@@ -63,6 +73,7 @@ test/
 Excel Capability 的边界：
 
 - `data/` 和 `discovery/` 分别维护各自的稳定 Contract、Zod Schema、Connector 和 ExcelJS Adapter。
+- `aggregate/` 负责在内存中对 Excel 数据执行分组聚合，不向 Agent 返回原始整表。
 - `shared/` 只放跨能力复用的错误模型、A1 地址、Workbook IO 和 used-range 扫描。
 - Discovery 的 used range 只按实际单元格值计算；Data 保留现有数据验证相关行为。
 - ExcelJS 类型限制在 Adapter 与共享实现内部，不泄漏到公开 Contract。

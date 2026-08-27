@@ -141,7 +141,7 @@ TypeScript 保持严格类型。
 * 有副作用的操作考虑 Retry 与 Idempotency。
 * 架构或模块职责发生变化时同步更新 README。
 * 修改范围尽量保持与当前任务一致。
-
+* 函数注释用一句话概括
 ### 禁止
 
 * 不在 `AGENTS.md` 中规定具体业务能力属于哪个 package。

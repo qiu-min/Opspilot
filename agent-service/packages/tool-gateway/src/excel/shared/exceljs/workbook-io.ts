@@ -6,6 +6,7 @@ import {
   isExcelCapabilityError,
 } from '../errors.js';
 
+/** Executes an Excel operation and normalizes unexpected failures. */
 export async function executeExcelOperation<T>(
   operation: string,
   filePath: string,
@@ -29,6 +30,7 @@ export async function executeExcelOperation<T>(
   }
 }
 
+/** Opens an Excel workbook after checking cancellation. */
 export async function openWorkbook(filePath: string, signal?: AbortSignal): Promise<Workbook> {
   throwIfAborted(signal, 'openWorkbook');
   const workbook = new Workbook();
@@ -51,6 +53,7 @@ export async function openWorkbook(filePath: string, signal?: AbortSignal): Prom
   }
 }
 
+/** Saves an Excel workbook after checking cancellation. */
 export async function saveWorkbook(
   workbook: Workbook,
   filePath: string,
@@ -75,11 +78,13 @@ export async function saveWorkbook(
   }
 }
 
+/** Returns the workbook's active worksheet when one is available. */
 export function getActiveWorksheet(workbook: Workbook): Worksheet | undefined {
   const activeTab = workbook.views?.[0]?.activeTab;
   return activeTab === undefined ? workbook.worksheets[0] : workbook.worksheets[activeTab];
 }
 
+/** Returns a named worksheet or throws a worksheet-not-found error. */
 export function requireWorksheet(workbook: Workbook, sheetName: string): Worksheet {
   const worksheet = workbook.getWorksheet(sheetName);
   if (!worksheet) {
@@ -93,6 +98,7 @@ export function requireWorksheet(workbook: Workbook, sheetName: string): Workshe
   return worksheet;
 }
 
+/** Throws the standardized cancellation error when the operation is aborted. */
 export function throwIfAborted(signal: AbortSignal | undefined, operation: string): void {
   if (signal?.aborted) {
     throw new ExcelCapabilityError(

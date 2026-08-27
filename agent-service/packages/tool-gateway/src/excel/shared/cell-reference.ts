@@ -10,6 +10,7 @@ export interface CellRange {
   readonly end: CellCoordinate;
 }
 
+/** Parses an A1-style cell or range reference into numeric coordinates. */
 export function parseCellRange(reference: string): CellRange {
   const parts = reference.split(':');
   if (parts.length > 2 || parts.some((part) => part.length === 0)) {
@@ -26,14 +27,17 @@ export function parseCellRange(reference: string): CellRange {
   return { start, end };
 }
 
+/** Formats a cell coordinate as an A1-style address. */
 export function formatCellAddress(coordinate: CellCoordinate): string {
   return `${formatColumnLetter(coordinate.column)}${coordinate.row}`;
 }
 
+/** Formats a cell range as an A1-style range reference. */
 export function formatCellRange(range: CellRange): string {
   return `${formatCellAddress(range.start)}:${formatCellAddress(range.end)}`;
 }
 
+/** Converts a one-based column number to its Excel letter representation. */
 export function formatColumnLetter(column: number): string {
   if (!Number.isSafeInteger(column) || column < 1) {
     throw new ExcelCapabilityError(
@@ -46,6 +50,7 @@ export function formatColumnLetter(column: number): string {
   return formatColumn(column);
 }
 
+/** Parses one A1-style cell reference into numeric coordinates. */
 function parseCell(reference: string, cell: string): CellCoordinate {
   const match = /^([A-Za-z]+)(\d+)$/.exec(cell);
   if (!match) {
@@ -72,6 +77,7 @@ function parseCell(reference: string, cell: string): CellCoordinate {
   return { row, column };
 }
 
+/** Converts a validated column number into Excel letters. */
 function formatColumn(column: number): string {
   let current = column;
   let result = '';
@@ -85,6 +91,7 @@ function formatColumn(column: number): string {
   return result;
 }
 
+/** Creates a consistent invalid-cell-reference error. */
 function invalidCellReference(
   reference: string,
   reason = 'Invalid A1 cell reference',

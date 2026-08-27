@@ -39,6 +39,7 @@ import {
 import { findUsedRange, type UsedRangeMode } from '../shared/exceljs/used-range.js';
 
 export class ExcelJsDataAdapter implements ExcelDataConnector {
+  /** Reads a value-oriented range from an Excel worksheet. */
   async readRange(input: ReadRangeInput, signal?: AbortSignal): Promise<ReadRangeResult> {
     const validated = readRangeInputSchema.parse(input);
 
@@ -80,6 +81,7 @@ export class ExcelJsDataAdapter implements ExcelDataConnector {
     });
   }
 
+  /** Writes a rectangular data set to an Excel worksheet. */
   async writeData(input: WriteDataInput, signal?: AbortSignal): Promise<WriteDataResult> {
     const validated = parseWriteDataInput(input);
 
@@ -114,6 +116,7 @@ export class ExcelJsDataAdapter implements ExcelDataConnector {
     });
   }
 
+  /** Reads worksheet cells with optional validation metadata. */
   async readRangeWithMetadata(
     input: ReadRangeWithMetadataInput,
     signal?: AbortSignal,
@@ -167,6 +170,7 @@ export class ExcelJsDataAdapter implements ExcelDataConnector {
   }
 }
 
+/** Throws when no worksheet is available for an active-sheet write. */
 function noActiveWorksheet(): never {
   throw new ExcelCapabilityError(
     ExcelCapabilityErrorCode.NO_ACTIVE_WORKSHEET,
@@ -184,6 +188,7 @@ interface ResolvedReadRange {
   readonly hasData: boolean;
 }
 
+/** Validates and combines the requested start and end cells. */
 function parseRequestedRange(startCell: string, endCell: string | undefined): RequestedRange {
   const startRange = parseCellRange(startCell);
   if (endCell === undefined) {
@@ -221,6 +226,7 @@ function parseRequestedRange(startCell: string, endCell: string | undefined): Re
   };
 }
 
+/** Parses a reference that must identify one cell. */
 function parseSingleCell(reference: string): CellCoordinate {
   const range = parseCellRange(reference);
   if (!isSingleCell(range)) {
@@ -234,6 +240,7 @@ function parseSingleCell(reference: string): CellCoordinate {
   return range.start;
 }
 
+/** Resolves the effective read range while preserving explicit-range behavior. */
 function resolveReadRange(
   worksheet: Worksheet,
   requested: RequestedRange,
@@ -271,6 +278,7 @@ function resolveReadRange(
   return { range: usedRange, hasData: true };
 }
 
+/** Converts an ExcelJS cell value into the public Excel value model. */
 function normalizeCellValue(value: CellValue): ExcelCellValue {
   if (value === null || value === undefined) {
     return null;
@@ -327,6 +335,7 @@ function normalizeCellValue(value: CellValue): ExcelCellValue {
   throw new Error('Unsupported Excel cell value');
 }
 
+/** Converts a formula result into the public formula-result model. */
 function normalizeFormulaResult(value: unknown): ExcelFormulaResult {
   if (isScalarValue(value) && value !== null) {
     return value;
@@ -339,6 +348,7 @@ function normalizeFormulaResult(value: unknown): ExcelFormulaResult {
   throw new Error('Unsupported Excel formula result');
 }
 
+/** Converts a public Excel value into an ExcelJS cell value. */
 function toExcelJsCellValue(value: ExcelCellValue): CellValue {
   if (isScalarValue(value)) {
     return value;
@@ -386,10 +396,12 @@ function toExcelJsCellValue(value: ExcelCellValue): CellValue {
   throw new Error('Unsupported Excel cell value');
 }
 
+/** Converts a public formula result into an ExcelJS formula result. */
 function toExcelJsFormulaResult(value: ExcelFormulaResult): ExcelFormulaResult {
   return value;
 }
 
+/** Maps ExcelJS validation details into the public validation model. */
 function mapDataValidation(dataValidation: DataValidation | undefined): ExcelCellValidation {
   if (dataValidation === undefined) {
     return { hasValidation: false, formulae: [] };
@@ -427,10 +439,12 @@ function mapDataValidation(dataValidation: DataValidation | undefined): ExcelCel
   };
 }
 
+/** Checks whether a cell range contains exactly one cell. */
 function isSingleCell(range: CellRange): boolean {
   return range.start.row === range.end.row && range.start.column === range.end.column;
 }
 
+/** Checks whether a value is a supported scalar Excel value. */
 function isScalarValue(value: unknown): value is ExcelScalarValue {
   return (
     value === null ||
@@ -441,10 +455,12 @@ function isScalarValue(value: unknown): value is ExcelScalarValue {
   );
 }
 
+/** Narrows an unknown value to a non-null record. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+/** Checks whether a value is a supported Excel error value. */
 function isExcelErrorValue(value: unknown): value is ExcelErrorValue['error'] {
   return (
     value === '#N/A' ||
@@ -457,30 +473,35 @@ function isExcelErrorValue(value: unknown): value is ExcelErrorValue['error'] {
   );
 }
 
+/** Checks whether a public value contains a formula. */
 function isFormulaValue(
   value: ExcelCellValue,
 ): value is Extract<ExcelCellValue, { formula: string }> {
   return isRecord(value) && typeof value.formula === 'string';
 }
 
+/** Checks whether a public value contains a shared formula. */
 function isSharedFormulaValue(
   value: ExcelCellValue,
 ): value is Extract<ExcelCellValue, { sharedFormula: string }> {
   return isRecord(value) && typeof value.sharedFormula === 'string';
 }
 
+/** Checks whether a public value contains a hyperlink. */
 function isHyperlinkValue(
   value: ExcelCellValue,
 ): value is Extract<ExcelCellValue, { hyperlink: string }> {
   return isRecord(value) && typeof value.hyperlink === 'string';
 }
 
+/** Checks whether a public value contains rich text runs. */
 function isRichTextValue(
   value: ExcelCellValue,
 ): value is Extract<ExcelCellValue, { richText: readonly { readonly text: string }[] }> {
   return isRecord(value) && Array.isArray(value.richText);
 }
 
+/** Checks whether a value is valid as a validation formula. */
 function isValidationFormula(value: unknown): value is ExcelValidationFormula {
   return isScalarValue(value);
 }
@@ -492,6 +513,7 @@ interface ValidatedWriteDataInput {
   readonly startCell: string;
 }
 
+/** Validates write input and maps empty data to the public error model. */
 function parseWriteDataInput(input: WriteDataInput): ValidatedWriteDataInput {
   try {
     const validated = writeDataInputSchema.parse(input);
@@ -514,6 +536,7 @@ function parseWriteDataInput(input: WriteDataInput): ValidatedWriteDataInput {
   }
 }
 
+/** Checks whether write input contains no usable data. */
 function isEmptyData(input: WriteDataInput): boolean {
   const data: unknown = input?.data;
   return (

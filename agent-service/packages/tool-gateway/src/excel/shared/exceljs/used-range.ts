@@ -4,6 +4,7 @@ import { parseCellRange, type CellRange } from '../cell-reference.js';
 
 export type UsedRangeMode = 'values' | 'valuesAndMetadata';
 
+/** Finds the smallest range containing values and, when requested, metadata. */
 export function findUsedRange(
   worksheet: Worksheet,
   mode: UsedRangeMode = 'valuesAndMetadata',
@@ -52,10 +53,12 @@ export function findUsedRange(
   };
 }
 
+/** Checks whether a cell contains an actual value. */
 export function hasActualCellValue(cell: Cell): boolean {
   return cell.value !== null && cell.value !== undefined;
 }
 
+/** Checks whether a cell contributes content for the selected used-range mode. */
 function hasCellContent(cell: Cell, mode: UsedRangeMode): boolean {
   return (
     hasActualCellValue(cell) || (mode === 'valuesAndMetadata' && cell.dataValidation !== undefined)
@@ -68,6 +71,7 @@ interface WorksheetWithDataValidations extends Worksheet {
   };
 }
 
+/** Extends used-range bounds with worksheet-level data-validation ranges. */
 function updateValidationBounds(
   worksheet: Worksheet,
   updateRangeBounds: (range: CellRange) => void,

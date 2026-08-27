@@ -1,5 +1,6 @@
 import type { ExcelInferredType } from './contracts.js';
 
+/** Infers one aggregate type from the valid values in a column. */
 export function inferColumnType(values: readonly unknown[]): ExcelInferredType {
   const types = new Set<ExcelInferredType>();
 
@@ -22,6 +23,7 @@ export function inferColumnType(values: readonly unknown[]): ExcelInferredType {
   return 'mixed';
 }
 
+/** Checks whether a value is suitable for sampling or type inference. */
 export function isValidSample(value: unknown): boolean {
   if (value === null || value === undefined) {
     return false;
@@ -44,6 +46,7 @@ export function isValidSample(value: unknown): boolean {
   return true;
 }
 
+/** Converts a sampled value into displayable header text. */
 export function headerText(value: unknown): string | null {
   if (!isValidSample(value)) {
     return null;
@@ -84,6 +87,7 @@ export function headerText(value: unknown): string | null {
   return String(value);
 }
 
+/** Infers the type of one Excel value. */
 function inferValueType(value: unknown): ExcelInferredType {
   if (
     isRecord(value) &&
@@ -119,10 +123,12 @@ function inferValueType(value: unknown): ExcelInferredType {
   return 'mixed';
 }
 
+/** Narrows an unknown value to a non-null record. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+/** Checks whether a value is an Excel error code. */
 function isExcelError(value: unknown): boolean {
   return (
     value === '#N/A' ||

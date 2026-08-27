@@ -22,6 +22,7 @@ import { getSheetProfileInputSchema, getWorkbookInfoInputSchema } from './schema
 import { headerText, inferColumnType, isValidSample } from './type-inference.js';
 
 export class ExcelJsDiscoveryAdapter implements ExcelDiscoveryConnector {
+  /** Inspects workbook structure and returns sheet summaries. */
   async getWorkbookInfo(
     input: GetWorkbookInfoInput,
     signal?: AbortSignal,
@@ -44,6 +45,7 @@ export class ExcelJsDiscoveryAdapter implements ExcelDiscoveryConnector {
     });
   }
 
+  /** Profiles one worksheet's used range, headers, and sampled column types. */
   async getSheetProfile(
     input: GetSheetProfileInput,
     signal?: AbortSignal,
@@ -82,6 +84,7 @@ export class ExcelJsDiscoveryAdapter implements ExcelDiscoveryConnector {
   }
 }
 
+/** Summarizes a worksheet using its value-based used range. */
 function summarizeWorksheet(worksheet: Worksheet, index: number): WorkbookSheetSummary {
   const usedRange = findUsedRange(worksheet, 'values');
 
@@ -95,6 +98,7 @@ function summarizeWorksheet(worksheet: Worksheet, index: number): WorkbookSheetS
   };
 }
 
+/** Builds an empty profile for a worksheet with no values. */
 function emptySheetProfile(sheetName: string): GetSheetProfileResult {
   return {
     sheetName,
@@ -107,6 +111,7 @@ function emptySheetProfile(sheetName: string): GetSheetProfileResult {
   };
 }
 
+/** Finds the first row containing an actual value. */
 function findHeaderRow(
   worksheet: Worksheet,
   usedRange: CellRange,
@@ -127,6 +132,7 @@ interface SampleBuckets {
   readonly sampledRowCount: number;
 }
 
+/** Collects per-column samples after the detected header row. */
 function createSampleBuckets(
   usedRange: CellRange,
   headerRow: number | null,
@@ -172,6 +178,7 @@ function createSampleBuckets(
   return { values, sampledRowCount };
 }
 
+/** Builds public column profiles from headers and samples. */
 function createColumnProfiles(
   worksheet: Worksheet,
   usedRange: CellRange,
@@ -193,6 +200,7 @@ function createColumnProfiles(
   return columns;
 }
 
+/** Checks whether a row contains at least one actual value in the range. */
 function hasActualValueInRow(
   worksheet: Worksheet,
   rowNumber: number,

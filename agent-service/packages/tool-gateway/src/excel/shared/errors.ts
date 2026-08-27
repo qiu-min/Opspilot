@@ -6,6 +6,10 @@ export const ExcelCapabilityErrorCode = {
   WORKBOOK_OPEN_FAILED: 'WORKBOOK_OPEN_FAILED',
   WORKBOOK_SAVE_FAILED: 'WORKBOOK_SAVE_FAILED',
   EXCEL_OPERATION_FAILED: 'EXCEL_OPERATION_FAILED',
+  COLUMN_NOT_FOUND: 'COLUMN_NOT_FOUND',
+  AMBIGUOUS_COLUMN: 'AMBIGUOUS_COLUMN',
+  INVALID_AGGREGATION_VALUE: 'INVALID_AGGREGATION_VALUE',
+  DUPLICATE_OUTPUT_COLUMN: 'DUPLICATE_OUTPUT_COLUMN',
 } as const;
 
 export type ExcelCapabilityErrorCode =
@@ -33,6 +37,7 @@ export class ExcelCapabilityError extends Error {
   }
 }
 
+/** Checks whether an unknown value is an Excel capability error. */
 export function isExcelCapabilityError(error: unknown): error is ExcelCapabilityError {
   return error instanceof ExcelCapabilityError;
 }
