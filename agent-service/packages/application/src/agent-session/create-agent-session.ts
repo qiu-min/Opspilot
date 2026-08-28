@@ -31,8 +31,6 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
     sessionContext.model,
     sessionContext.thinkingLevel,
     isNewSession,
-    options.model !== undefined,
-    options.thinkingLevel !== undefined,
   );
 
   const agent = new Agent({
@@ -56,7 +54,13 @@ function resolveModel(
   sessionModel: ReturnType<SessionManager['buildSessionContext']>['model'],
   isNewSession: boolean,
 ): Model {
-  if (options.model !== undefined) return options.model;
+  if (options.model !== undefined) {
+    const canonicalModel = options.modelGateway.getModel(options.model.provider, options.model.id);
+    if (canonicalModel !== undefined) return canonicalModel;
+    throw new Error(
+      `Explicit model ${options.model.provider}/${options.model.id} is not registered in the model gateway.`,
+    );
+  }
 
   if (sessionModel !== null) {
     const restored = options.modelGateway.getModel(sessionModel.provider, sessionModel.modelId);
@@ -88,8 +92,6 @@ function persistInitialOrOverriddenState(
   restoredModel: ReturnType<SessionManager['buildSessionContext']>['model'],
   restoredThinkingLevel: AgentThinkingLevel,
   isNewSession: boolean,
-  hasModelOverride: boolean,
-  hasThinkingOverride: boolean,
 ): void {
   if (isNewSession) {
     sessionManager.appendModelChange(model.provider, model.id);
@@ -98,15 +100,14 @@ function persistInitialOrOverriddenState(
   }
 
   if (
-    hasModelOverride &&
-    (restoredModel === null ||
-      restoredModel.provider !== model.provider ||
-      restoredModel.modelId !== model.id)
+    restoredModel === null ||
+    restoredModel.provider !== model.provider ||
+    restoredModel.modelId !== model.id
   ) {
     sessionManager.appendModelChange(model.provider, model.id);
   }
 
-  if (hasThinkingOverride && thinkingLevel !== restoredThinkingLevel) {
+  if (thinkingLevel !== restoredThinkingLevel) {
     sessionManager.appendThinkingLevelChange(thinkingLevel);
   }
 }

@@ -30,8 +30,11 @@ export class AgentSession {
   }
 
   /** 将一条或多条用户消息交给 Agent Runtime 执行。 */
-  public prompt(input: AgentMessage | readonly AgentMessage[]): Promise<readonly AgentMessage[]> {
-    return this.agent.prompt(input);
+  public async prompt(
+    input: AgentMessage | readonly AgentMessage[],
+  ): Promise<readonly AgentMessage[]> {
+    this.assertNotDisposed();
+    return await this.agent.prompt(input);
   }
 
   /** 请求停止当前 Agent Run。 */
@@ -46,6 +49,7 @@ export class AgentSession {
 
   /** 代理 Agent Runtime 的事件订阅。 */
   public subscribe(listener: AgentEventListener): () => void {
+    this.assertNotDisposed();
     return this.agent.subscribe(listener);
   }
 
@@ -57,8 +61,15 @@ export class AgentSession {
   /** 取消内部持久化监听；重复调用不会产生副作用。 */
   public dispose(): void {
     if (this.disposed) return;
+    if (this.agent.state.isRunning) {
+      throw new Error('Cannot dispose AgentSession while Agent is running. Wait for idle first.');
+    }
     this.disposed = true;
     this.unsubscribeAgent();
+  }
+
+  private assertNotDisposed(): void {
+    if (this.disposed) throw new Error('AgentSession is disposed.');
   }
 
   private handleAgentEvent(event: AgentEvent): void {
