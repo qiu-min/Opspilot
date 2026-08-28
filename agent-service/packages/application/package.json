@@ -8,5 +8,11 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opspilot/agent-runtime": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0"
   }
 }
