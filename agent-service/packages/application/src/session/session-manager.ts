@@ -181,6 +181,14 @@ export class SessionManager {
       switch (entry.type) {
         case 'message':
           messages.push(cloneValue(entry.message));
+
+          if (entry.message.role === 'assistant') {
+            model = {
+              provider: entry.message.provider,
+              modelId: entry.message.model,
+            };
+          }
+
           break;
         case 'thinking_level_change':
           thinkingLevel = entry.thinkingLevel;
@@ -217,7 +225,9 @@ export class SessionManager {
 
   private restoreEntries(entries: readonly SessionEntry[]): void {
     for (const entry of entries) {
-      validateEntry(entry);
+      // session-jsonl validates durable log shape and append order before this
+      // method is called. This guard only protects the in-memory index if the
+      // restore source changes in the future.
       if (this.byId.has(entry.id)) {
         throw new SessionTreeError(`Duplicate session entry id: ${entry.id}`);
       }
@@ -227,22 +237,7 @@ export class SessionManager {
       this.byId.set(restored.id, restored);
     }
 
-    validateParentReferences(this.entries, this.byId);
     this.leafId = this.entries.at(-1)?.id ?? null;
-    validateAcyclic(this.entries, this.byId);
-
-    if (this.entries.length > 0 && this.entries[0].parentId !== null) {
-      throw new SessionTreeError(
-        `First session entry must have parentId null: ${this.entries[0].id}`,
-      );
-    }
-    for (const entry of this.entries.slice(1)) {
-      if (entry.parentId === null) {
-        throw new SessionTreeError(
-          `Only the first session entry may have parentId null: ${entry.id}`,
-        );
-      }
-    }
   }
 }
 
@@ -266,78 +261,6 @@ function validateHeader(header: SessionHeader): void {
     throw new SessionTreeError('Session header id must be a non-empty string.');
   if (!isTimestamp(header.timestamp))
     throw new SessionTreeError('Session header timestamp is invalid.');
-}
-
-function validateEntry(entry: SessionEntry): void {
-  if (!isNonEmptyString(entry.id))
-    throw new SessionTreeError('Session entry id must be a non-empty string.');
-  if (!isTimestamp(entry.timestamp))
-    throw new SessionTreeError(`Session entry ${entry.id} has an invalid timestamp.`);
-  if (!(entry.parentId === null || isNonEmptyString(entry.parentId))) {
-    throw new SessionTreeError(`Session entry ${entry.id} has an invalid parentId.`);
-  }
-
-  switch (entry.type) {
-    case 'message':
-      if (!entry.message || typeof entry.message !== 'object') {
-        throw new SessionTreeError(`Message entry ${entry.id} has an invalid message.`);
-      }
-      break;
-    case 'model_change':
-      if (!isNonEmptyString(entry.provider) || !isNonEmptyString(entry.modelId)) {
-        throw new SessionTreeError(`Model change entry ${entry.id} is incomplete.`);
-      }
-      break;
-    case 'thinking_level_change':
-      if (!isNonEmptyString(entry.thinkingLevel)) {
-        throw new SessionTreeError(`Thinking level entry ${entry.id} is incomplete.`);
-      }
-      break;
-    default:
-      throw new SessionTreeError(
-        `Unsupported session entry type: ${(entry as { type: string }).type}.`,
-      );
-  }
-}
-
-function validateAcyclic(
-  entries: readonly SessionEntry[],
-  byId: ReadonlyMap<string, SessionEntry>,
-): void {
-  for (const entry of entries) {
-    const visited = new Set<string>();
-    let current: SessionEntry | undefined = entry;
-    while (current) {
-      if (visited.has(current.id)) {
-        throw new SessionTreeError(`Session entry parentId cycle detected at: ${current.id}`);
-      }
-      visited.add(current.id);
-      if (current.parentId === null) {
-        current = undefined;
-      } else {
-        const parentId = current.parentId;
-        current = byId.get(parentId);
-        if (!current) {
-          throw new SessionTreeError(
-            `Session entry ${entry.id} references missing parent: ${parentId}`,
-          );
-        }
-      }
-    }
-  }
-}
-
-function validateParentReferences(
-  entries: readonly SessionEntry[],
-  byId: ReadonlyMap<string, SessionEntry>,
-): void {
-  for (const entry of entries) {
-    if (entry.parentId !== null && !byId.has(entry.parentId)) {
-      throw new SessionTreeError(
-        `Session entry ${entry.id} references missing parent: ${entry.parentId}`,
-      );
-    }
-  }
 }
 
 function cloneEntry(entry: SessionEntry): SessionEntry {

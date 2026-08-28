@@ -65,6 +65,7 @@ export function parseSessionJsonl(content: string): LoadedSessionFile {
 
   const header = parseHeader(records[0], 1);
   const entries = records.slice(1).map((record, index) => parseEntry(record, index + 2));
+  validateAppendOnlyOrder(entries);
   return { header, entries };
 }
 
@@ -146,6 +147,32 @@ function parseEntry(value: unknown, lineNumber: number): SessionEntry {
       return value as unknown as ThinkingLevelChangeEntry;
     default:
       throw new SessionJsonlError(`Unsupported session entry type: ${value.type}.`);
+  }
+}
+
+function validateAppendOnlyOrder(entries: readonly SessionEntry[]): void {
+  const seenIds = new Set<string>();
+
+  for (const entry of entries) {
+    if (seenIds.has(entry.id)) {
+      throw new SessionJsonlError(
+        `Duplicate session entry id: ${entry.id} (parentId=${String(entry.parentId)}).`,
+      );
+    }
+
+    if (entry.parentId === null) {
+      if (seenIds.size > 0) {
+        throw new SessionJsonlError(
+          `Session entry ${entry.id} has parentId=null after the first entry; only the first SessionEntry may have parentId=null.`,
+        );
+      }
+    } else if (!seenIds.has(entry.parentId)) {
+      throw new SessionJsonlError(
+        `Session entry ${entry.id} references a parent that has not appeared yet: ${entry.parentId}.`,
+      );
+    }
+
+    seenIds.add(entry.id);
   }
 }
 

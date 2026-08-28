@@ -91,8 +91,8 @@ describe('SessionManager append and tree behavior', () => {
     expect(session.buildSessionContext().thinkingLevel).toBe('high');
 
     session.branch(branchPoint.id);
-    session.appendModelChange('provider-branch', 'model-branch');
     session.appendMessage(assistantMessage('branch'));
+    session.appendModelChange('provider-branch', 'model-branch');
 
     const context = session.buildSessionContext();
     expect(context.messages.map((message) => (message as { role: string }).role)).toEqual([
@@ -150,7 +150,7 @@ describe('SessionManager JSONL persistence', () => {
 });
 
 describe('SessionManager invalid JSONL files', () => {
-  it('rejects missing, empty, malformed, unsupported, duplicate, and cyclic files', () => {
+  it('rejects missing, empty, malformed, unsupported, duplicate, and invalid-order files', () => {
     const directory = temporaryDirectory();
     const missing = join(directory, 'missing.jsonl');
     expect(() => SessionManager.load(missing)).toThrow('Session file does not exist');
@@ -219,7 +219,7 @@ describe('SessionManager invalid JSONL files', () => {
         ]
           .map(JSON.stringify)
           .join('\n') + '\n',
-        'parentId cycle detected',
+        'parent that has not appeared yet',
       ],
     ];
 
@@ -228,5 +228,110 @@ describe('SessionManager invalid JSONL files', () => {
       writeFileSync(filePath, content, 'utf8');
       expect(() => SessionManager.load(filePath), name).toThrow(expectedError);
     }
+  });
+
+  it('rejects a forward parent reference and a second root', () => {
+    const directory = temporaryDirectory();
+    const header = { type: 'session', version: 1, id: 's', timestamp: '2026-01-01T00:00:00.000Z' };
+    const root = {
+      type: 'message',
+      id: 'A',
+      parentId: null,
+      timestamp: '2026-01-01T00:00:01.000Z',
+      message: userMessage('A'),
+    };
+
+    const forwardParentPath = join(directory, 'forward-parent.jsonl');
+    writeFileSync(
+      forwardParentPath,
+      [
+        header,
+        root,
+        {
+          type: 'message',
+          id: 'C',
+          parentId: 'D',
+          timestamp: '2026-01-01T00:00:02.000Z',
+          message: userMessage('C'),
+        },
+        {
+          type: 'message',
+          id: 'D',
+          parentId: 'A',
+          timestamp: '2026-01-01T00:00:03.000Z',
+          message: userMessage('D'),
+        },
+      ]
+        .map(JSON.stringify)
+        .join('\n') + '\n',
+      'utf8',
+    );
+    expect(() => SessionManager.load(forwardParentPath)).toThrow(
+      'Session entry C references a parent that has not appeared yet: D',
+    );
+
+    const secondRootPath = join(directory, 'second-root.jsonl');
+    writeFileSync(
+      secondRootPath,
+      [
+        header,
+        root,
+        {
+          type: 'message',
+          id: 'B',
+          parentId: null,
+          timestamp: '2026-01-01T00:00:02.000Z',
+          message: userMessage('B'),
+        },
+      ]
+        .map(JSON.stringify)
+        .join('\n') + '\n',
+      'utf8',
+    );
+    expect(() => SessionManager.load(secondRootPath)).toThrow(
+      'Session entry B has parentId=null after the first entry',
+    );
+  });
+
+  it('loads a valid branch whose parent appeared earlier in the file', () => {
+    const directory = temporaryDirectory();
+    const filePath = join(directory, 'valid-branch.jsonl');
+    const records = [
+      { type: 'session', version: 1, id: 's', timestamp: '2026-01-01T00:00:00.000Z' },
+      {
+        type: 'message',
+        id: 'A',
+        parentId: null,
+        timestamp: '2026-01-01T00:00:01.000Z',
+        message: userMessage('A'),
+      },
+      {
+        type: 'message',
+        id: 'B',
+        parentId: 'A',
+        timestamp: '2026-01-01T00:00:02.000Z',
+        message: assistantMessage('B'),
+      },
+      {
+        type: 'message',
+        id: 'C',
+        parentId: 'B',
+        timestamp: '2026-01-01T00:00:03.000Z',
+        message: userMessage('C'),
+      },
+      {
+        type: 'message',
+        id: 'D',
+        parentId: 'B',
+        timestamp: '2026-01-01T00:00:04.000Z',
+        message: userMessage('D'),
+      },
+    ];
+    writeFileSync(filePath, records.map(JSON.stringify).join('\n') + '\n', 'utf8');
+
+    const session = SessionManager.load(filePath);
+    expect(session.getLeafId()).toBe('D');
+    expect(session.getBranch().map((entry) => entry.id)).toEqual(['A', 'B', 'D']);
+    expect(session.getEntries().map((entry) => entry.id)).toEqual(['A', 'B', 'C', 'D']);
   });
 });
