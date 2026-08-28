@@ -221,6 +221,22 @@ describe('SessionManager invalid JSONL files', () => {
           .join('\n') + '\n',
         'parent that has not appeared yet',
       ],
+      [
+        'invalid-thinking-level.jsonl',
+        [
+          { type: 'session', version: 1, id: 's', timestamp: '2026-01-01T00:00:00.000Z' },
+          {
+            type: 'thinking_level_change',
+            id: 'thinking',
+            parentId: null,
+            timestamp: '2026-01-01T00:00:01.000Z',
+            thinkingLevel: 'ultra',
+          },
+        ]
+          .map(JSON.stringify)
+          .join('\n') + '\n',
+        'invalid thinkingLevel',
+      ],
     ];
 
     for (const [name, content, expectedError] of cases) {

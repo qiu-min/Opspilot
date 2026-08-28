@@ -1,4 +1,8 @@
-import { runAgentLoopWithOutcome, type AgentLoopTermination, type AgentLoopOutcome } from './agent-loop.js';
+import {
+  runAgentLoopWithOutcome,
+  type AgentLoopTermination,
+  type AgentLoopOutcome,
+} from './agent-loop.js';
 import type { AssistantMessage, ModelToolCall } from '@opspilot/model-gateway';
 import type {
   AgentEvent,
@@ -27,6 +31,7 @@ class AgentEventListenerError extends Error {
 type MutableAgentState = {
   systemPrompt?: string;
   model: AgentOptions['model'];
+  thinkingLevel: NonNullable<AgentOptions['thinkingLevel']>;
   tools: AgentTool[];
   messages: AgentMessage[];
   isRunning: boolean;
@@ -76,6 +81,7 @@ export class Agent {
     this._state = {
       systemPrompt: options.systemPrompt,
       model: options.model,
+      thinkingLevel: options.thinkingLevel ?? 'off',
       tools: [...(options.tools ?? [])],
       messages: [...(options.messages ?? [])],
       isRunning: false,
@@ -93,13 +99,13 @@ export class Agent {
     return {
       systemPrompt: this._state.systemPrompt,
       model: this._state.model,
+      thinkingLevel: this._state.thinkingLevel,
       tools: [...this._state.tools],
       messages: [...this._state.messages],
       isRunning: this._state.isRunning,
       streamingMessage: this._state.streamingMessage,
       errorMessage: this._state.errorMessage,
-      errorInfo:
-        this._state.errorInfo === undefined ? undefined : { ...this._state.errorInfo },
+      errorInfo: this._state.errorInfo === undefined ? undefined : { ...this._state.errorInfo },
       pendingToolCalls: [...this._state.pendingToolCalls],
     };
   }
@@ -221,6 +227,7 @@ export class Agent {
 
     return {
       model: this._state.model,
+      thinkingLevel: this._state.thinkingLevel,
       transformContext: this.transformContext,
       convertToLlm: this.convertToLlm,
       prepareNextTurn:
@@ -304,10 +311,7 @@ export class Agent {
     try {
       const outcome = await executor(abortController.signal);
       if (outcome.termination !== undefined) {
-        return await this.handleRunTermination(
-          outcome.termination,
-          runStartMessageIndex,
-        );
+        return await this.handleRunTermination(outcome.termination, runStartMessageIndex);
       }
       return outcome.messages;
     } catch (error: unknown) {
@@ -445,8 +449,7 @@ export class Agent {
       case 'turn_end':
         if (
           event.message.role === 'assistant' &&
-          (event.message.finishReason === 'error' ||
-            event.message.finishReason === 'aborted') &&
+          (event.message.finishReason === 'error' || event.message.finishReason === 'aborted') &&
           event.message.errorMessage !== undefined
         ) {
           this._state.errorMessage = event.message.errorMessage;

@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentMessage } from '@opspilot/agent-runtime';
-import { appendSessionEntry, createSessionFile, loadSessionFile } from './session-jsonl.js';
+import {
+  appendSessionEntry,
+  createSessionFile,
+  isAgentThinkingLevel,
+  loadSessionFile,
+} from './session-jsonl.js';
 import type {
   ModelChangeEntry,
   SessionContext,
@@ -9,6 +14,7 @@ import type {
   SessionMessageEntry,
   ThinkingLevelChangeEntry,
 } from './session-types.js';
+import type { AgentThinkingLevel } from '@opspilot/agent-runtime';
 
 export const CURRENT_SESSION_VERSION = 1;
 
@@ -109,9 +115,9 @@ export class SessionManager {
     }));
   }
 
-  public appendThinkingLevelChange(thinkingLevel: string): ThinkingLevelChangeEntry {
-    if (!isNonEmptyString(thinkingLevel)) {
-      throw new Error('Thinking level must be a non-empty string.');
+  public appendThinkingLevelChange(thinkingLevel: AgentThinkingLevel): ThinkingLevelChangeEntry {
+    if (!isAgentThinkingLevel(thinkingLevel)) {
+      throw new Error(`Unsupported thinking level: ${String(thinkingLevel)}.`);
     }
 
     return this.appendEntry((id, parentId, timestamp) => ({
@@ -173,7 +179,7 @@ export class SessionManager {
   }
 
   public buildSessionContext(): SessionContext {
-    let thinkingLevel = 'off';
+    let thinkingLevel: SessionContext['thinkingLevel'] = 'off';
     let model: SessionContext['model'] = null;
     const messages: AgentMessage[] = [];
 

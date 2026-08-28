@@ -32,11 +32,11 @@ Agent Runtime 必须保持业务无关。Runtime 不允许出现 `FileId`、`Exc
 
 ## Application
 
-Application 当前只建立 Conversation / Session 的目录骨架，尚未实现具体业务逻辑或 API。
+Application 当前提供 SessionManager、JSONL session tree、最小 AgentSession 及 createAgentSession 组合入口；Conversation 业务逻辑和 API 仍未实现。
 
 Conversation 未来负责编排一次用户 Conversation Turn：接收 `sessionId`、用户消息和文件引用，加载 Session，构建 Agent Context，调用 Agent Runtime，接收 Runtime 结果与事件，并更新 Session。未来核心用例可以命名为 `RunConversationTurn`，本次尚未实现。
 
-Session 未来负责生命周期和会话树语义。消息树不使用 PostgreSQL 保存，计划使用 JSONL / filesystem 持久化；`SessionManager`、JSONL Store、具体 SessionEntry 类型和相关读写流程均尚未实现。
+Session 负责生命周期和会话树语义。消息树不使用 PostgreSQL 保存，使用 JSONL / filesystem 持久化；更完整的 Session switching、分支管理扩展和上层业务用例仍待实现。
 
 ## Core Packages
 

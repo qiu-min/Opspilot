@@ -11,7 +11,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@opspilot/agent-runtime": "workspace:*"
+    "@opspilot/agent-runtime": "workspace:*",
+    "@opspilot/model-gateway": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

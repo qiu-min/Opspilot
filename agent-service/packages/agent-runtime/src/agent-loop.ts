@@ -6,6 +6,7 @@ import type {
   StreamFn,
 } from './types.js';
 import type { AssistantMessage, Context, ToolResultMessage } from '@opspilot/model-gateway';
+import type { Options } from '@opspilot/model-gateway';
 import { executeToolCalls } from './tool-executor.js';
 import { defaultConvertToLlm } from './convert-to-llm.js';
 
@@ -38,14 +39,7 @@ export async function runAgentLoop(
   emit: AgentEventSink,
   signal?: AbortSignal,
 ): Promise<AgentMessage[]> {
-  const outcome = await runAgentLoopWithOutcome(
-    prompts,
-    context,
-    config,
-    streamFn,
-    emit,
-    signal,
-  );
+  const outcome = await runAgentLoopWithOutcome(prompts, context, config, streamFn, emit, signal);
   return outcome.messages;
 }
 
@@ -256,7 +250,11 @@ async function streamAssistantResponse(
     messages: [...llmMessages],
     tools: context.tools,
   };
-  const stream = streamFn(config.model, llmContext, { signal });
+  const options: Options =
+    config.thinkingLevel === undefined || config.thinkingLevel === 'off'
+      ? { signal }
+      : { signal, reasoning: config.thinkingLevel };
+  const stream = streamFn(config.model, llmContext, options);
   let partialMessage: AssistantMessage | null = null;
   let addedPartial = false;
 

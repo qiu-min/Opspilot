@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import type { AgentThinkingLevel } from '@opspilot/agent-runtime';
 import type {
   ModelChangeEntry,
   SessionEntry,
@@ -19,6 +20,18 @@ export class SessionJsonlError extends Error {
 export interface LoadedSessionFile {
   readonly header: SessionHeader;
   readonly entries: SessionEntry[];
+}
+
+const agentThinkingLevels: readonly AgentThinkingLevel[] = [
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+];
+
+export function isAgentThinkingLevel(value: unknown): value is AgentThinkingLevel {
+  return typeof value === 'string' && agentThinkingLevels.includes(value as AgentThinkingLevel);
 }
 
 export function serializeSessionRecord(record: SessionFileEntry): string {
@@ -139,9 +152,9 @@ function parseEntry(value: unknown, lineNumber: number): SessionEntry {
       }
       return value as unknown as ModelChangeEntry;
     case 'thinking_level_change':
-      if (!isNonEmptyString(value.thinkingLevel)) {
+      if (!isAgentThinkingLevel(value.thinkingLevel)) {
         throw new SessionJsonlError(
-          `Thinking level entry ${value.id} is incomplete (line ${lineNumber}).`,
+          `Thinking level entry ${value.id} has an invalid thinkingLevel (line ${lineNumber}).`,
         );
       }
       return value as unknown as ThinkingLevelChangeEntry;

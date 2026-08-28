@@ -7,11 +7,14 @@ import type {
   ModelEventStream,
   ModelStreamEvent,
   ModelToolCall,
+  ModelThinkingLevel,
   Options,
   TextContent,
   Tool,
   ToolResultMessage,
 } from '@opspilot/model-gateway';
+
+export type AgentThinkingLevel = ModelThinkingLevel;
 
 export interface AgentToolResult<TDetails = unknown> {
   readonly content: readonly TextContent[];
@@ -83,6 +86,7 @@ export interface AgentErrorInfo {
 export interface AgentState {
   readonly systemPrompt?: string;
   readonly model: Model;
+  readonly thinkingLevel: AgentThinkingLevel;
   readonly tools: readonly AgentTool[];
   readonly messages: readonly AgentMessage[];
   readonly isRunning: boolean;
@@ -95,6 +99,7 @@ export interface AgentState {
 export interface AgentOptions {
   readonly model: Model;
   readonly streamFn: StreamFn;
+  readonly thinkingLevel?: AgentThinkingLevel;
   readonly systemPrompt?: string;
   readonly tools?: readonly AgentTool[];
   readonly messages?: readonly AgentMessage[];
@@ -134,6 +139,7 @@ export type AgentEventListener = AgentEventSink;
 
 export interface AgentLoopConfig {
   readonly model: Model;
+  readonly thinkingLevel?: AgentThinkingLevel;
   readonly transformContext?: (
     messages: readonly AgentMessage[],
     signal?: AbortSignal,

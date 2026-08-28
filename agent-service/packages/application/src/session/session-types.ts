@@ -1,7 +1,7 @@
-import type { AgentMessage } from '@opspilot/agent-runtime';
+import type { AgentMessage, AgentThinkingLevel } from '@opspilot/agent-runtime';
 
 export interface SessionHeader {
-  type: "session";
+  type: 'session';
   version: number;
   id: string;
   timestamp: string;
@@ -15,33 +15,28 @@ export interface SessionEntryBase {
 }
 
 export interface SessionMessageEntry extends SessionEntryBase {
-  type: "message";
+  type: 'message';
   message: AgentMessage;
 }
 
 export interface ModelChangeEntry extends SessionEntryBase {
-  type: "model_change";
+  type: 'model_change';
   provider: string;
   modelId: string;
 }
 
 export interface ThinkingLevelChangeEntry extends SessionEntryBase {
-  type: "thinking_level_change";
-  thinkingLevel: string;
+  type: 'thinking_level_change';
+  thinkingLevel: AgentThinkingLevel;
 }
 
-export type SessionEntry =
-  | SessionMessageEntry
-  | ModelChangeEntry
-  | ThinkingLevelChangeEntry;
+export type SessionEntry = SessionMessageEntry | ModelChangeEntry | ThinkingLevelChangeEntry;
 
-export type SessionFileEntry =
-  | SessionHeader
-  | SessionEntry;
+export type SessionFileEntry = SessionHeader | SessionEntry;
 
 export interface SessionContext {
   messages: AgentMessage[];
-  thinkingLevel: string;
+  thinkingLevel: AgentThinkingLevel;
   model: {
     provider: string;
     modelId: string;

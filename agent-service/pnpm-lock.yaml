@@ -314,6 +314,9 @@ importers:
       '@opspilot/agent-runtime':
         specifier: workspace:*
         version: link:../agent-runtime
+      '@opspilot/model-gateway':
+        specifier: workspace:*
+        version: link:../model-gateway
     devDependencies:
       '@types/node':
         specifier: ^26.2.0
