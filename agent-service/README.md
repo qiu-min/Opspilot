@@ -1,249 +1,64 @@
 # OpsPilot Agent Service
 
-`agent-service/` 是 OpsPilot 的 TypeScript / Node.js Agent 执行服务。
+`agent-service/` 是 OpsPilot 的 TypeScript / Node.js Agent Service。当前业务层方向是 Conversation / Session；底层继续提供业务无关的 Agent Runtime、Model Gateway、Tool Gateway 和 Observability 基础设施。
 
-它提供模型访问、Agent Runtime、Tool 执行与外部能力集成等 Agent 侧基础能力，并通过稳定契约与 OpsPilot 的其他服务协作。
-
-具体 package 的实现细节和内部设计由各 package README 说明。
-
----
-
-## Responsibilities
-
-Agent Service 主要负责：
-
-* 统一模型访问与 Provider 适配
-* Agent 生命周期与 Agent Loop
-* Agent State、Context 与消息处理
-* Tool Calling 与 Tool Execution
-* 外部能力和业务工具集成
-* Streaming 与生命周期事件
-* Cancellation 与错误传播
-* Agent 侧 Observability
-* Agent 执行入口与运行环境
-
-Agent Service 不承担 Web UI 或传统 ASP.NET Core 业务后端职责。
-
-跨进程职责以仓库根目录及对应子项目 README 为准。
-
----
-
-## Architecture
-
-整体结构：
+## Current Direction
 
 ```text
-External Request / Task
+Conversation / Session
           ↓
-     Agent Service
+Application Use Case
           ↓
-    Agent Runtime
-      ↙       ↘
-Model Gateway  Tools
-                 ↓
-            Tool Gateway
-                 ↓
-        External Capability
-```
-
-核心原则：
-
-* Agent Runtime 不感知具体模型 Provider。
-* Agent Runtime 不包含具体业务 Tool 的实现。
-* Model Provider 差异由模型访问边界吸收。
-* 外部能力通过 Tool 边界接入 Agent。
-* package 之间通过明确的公开契约协作。
-
----
-
-## Packages
-
-```text
-agent-service/
-├── apps/
-├── packages/
-│   ├── model-gateway/
-│   ├── agent-runtime/
-│   ├── tool-gateway/
-│   ├── observability/
-│   ├── application/
-│   ├── domain/
-│   ├── db/
-│   └── shared/
-├── config/
-├── docs/
-├── AGENTS.md
-├── PROJECT.md
-└── README.md
-```
-
-### model-gateway
-
-统一不同模型 Provider 的访问方式，为上层提供稳定的模型调用、消息、Tool Declaration、Streaming 和错误契约。
-
-详细设计见：
-
-```text
-packages/model-gateway/README.md
-```
-
-### agent-runtime
-
-提供通用 Agent 运行机制，包括生命周期、Agent Loop、State、Context、Tool Execution 和运行事件。
-
-它保持领域无关，不直接实现具体业务能力。
-
-详细设计见：
-
-```text
-packages/agent-runtime/README.md
-```
-
-### tool-gateway
-
-负责 Agent 可调用能力与具体外部能力之间的执行边界，包括契约、输入验证、Connector / Adapter 和具体工具能力实现。
-
-Excel 文件操作属于 Agent Service 的 Tool 能力之一，具体实现放在 Tool Gateway 边界内，并使用 ExcelJS 处理 `.xlsx` 文件。
-
-Tool Gateway 的详细职责、Excel 能力和契约设计见：
-
-```text
-packages/tool-gateway/README.md
-```
-
-### observability
-
-提供 Agent Service 的日志、Trace 和可观测性相关基础能力。
-
-具体实现以 package README 和源码为准。
-
-### Other Packages
-
-`application`、`domain`、`db`、`shared` 等 package 为 Agent Service 内现有应用与基础代码。
-
-其具体职责由对应 package 和项目文档定义，不在本 README 中展开。
-
----
-
-## Service Boundary
-
-OpsPilot 的主要进程关系：
-
-```text
-Web
- ↓
-Backend
- ↓
-Agent Service
-```
-
-Backend 与 Agent Service 是独立进程，通过稳定的 API、消息或其他明确契约通信。
-
-Agent Service 内部需要使用文件、数据库或其他外部资源时，也应通过明确边界访问，而不是跨进程直接依赖其他项目的内部实现。
-
-具体跨服务契约由相关功能文档定义。
-
----
-
-## Tool Integration
-
-Agent Runtime 使用统一 Tool Contract 调用工具：
-
-```text
-Model Tool Call
-      ↓
 Agent Runtime
-      ↓
-Agent Tool
-      ↓
+          ↓
 Tool Gateway
-      ↓
-Connector / Adapter
-      ↓
-External Capability
 ```
 
-具体 Tool 的业务语义和实现不进入 Agent Runtime。
-
-例如 Excel 能力：
+当前 Agent Service 的结构：
 
 ```text
-Agent Tool
-    ↓
-Tool Gateway
-    ↓
-ExcelJS
-    ↓
-.xlsx
+Agent Service
+├── Application
+│   ├── Conversations
+│   └── Sessions
+├── Agent Runtime
+├── Model Gateway
+└── Tool Gateway
 ```
 
-更细的 Excel Tool 契约、文件解析和 Workbook 操作方式由 `tool-gateway` 文档维护。
+Application 是业务编排边界，可以理解 OpsPilot 的 `Conversation`、`Session` 和 `FileReference` 等概念，并负责把这些概念转换为 Runtime 可消费的输入。
 
----
+Agent Runtime 必须保持业务无关。Runtime 不允许出现 `FileId`、`Excel`、`OpsPilot Session`、`Conversation` 等业务概念，也不直接依赖 Application 的业务模型。Model Gateway 负责模型 Provider 边界，Tool Gateway 负责 Tool Contract、输入校验和外部能力适配。
+
+## Application
+
+Application 当前只建立 Conversation / Session 的目录骨架，尚未实现具体业务逻辑或 API。
+
+Conversation 未来负责编排一次用户 Conversation Turn：接收 `sessionId`、用户消息和文件引用，加载 Session，构建 Agent Context，调用 Agent Runtime，接收 Runtime 结果与事件，并更新 Session。未来核心用例可以命名为 `RunConversationTurn`，本次尚未实现。
+
+Session 未来负责生命周期和会话树语义。消息树不使用 PostgreSQL 保存，计划使用 JSONL / filesystem 持久化；`SessionManager`、JSONL Store、具体 SessionEntry 类型和相关读写流程均尚未实现。
+
+## Core Packages
+
+- `packages/agent-runtime`：业务无关的 Agent 生命周期、Loop、State、Context、Tool Execution 和事件能力。
+- `packages/model-gateway`：模型调用、Provider 适配、消息和流式响应契约。
+- `packages/tool-gateway`：Tool Contract、运行时校验、Connector / Adapter 和外部能力边界。
+- `packages/observability`：Agent Service 可观测性边界。
+
+这些核心 package 的实现和公开契约保持独立，Application 通过明确边界使用它们。
+
+## API Boundary
+
+`apps/api` 保留为 Agent Service 的 API 项目和通用 HTTP 基础设施，但当前不实现 Conversation API，也不提供 Session 创建、消息提交、SSE、WebSocket、Controller、Route 或业务 DTO。本次不连接 ASP.NET Backend。
 
 ## Development
-
-安装依赖：
 
 ```bash
 cd agent-service
 pnpm install
-```
-
-常用验证命令：
-
-```bash
 pnpm typecheck
 pnpm test
 pnpm build
 ```
 
-启动仓库级基础设施：
-
-```bash
-docker compose -f ../docker-compose.yml up -d
-```
-
-开发具体 package 时可以使用：
-
-```bash
-pnpm --filter <package-name> typecheck
-pnpm --filter <package-name> test
-pnpm --filter <package-name> build
-```
-
-具体启动方式、环境变量和 package 开发命令以对应 README 和 `package.json` 为准。
-
----
-
-## Documentation
-
-文档按层级维护：
-
-```text
-/README.md
-    ↓
-OpsPilot 整体架构
-
-agent-service/README.md
-    ↓
-Agent Service 进程级架构
-
-packages/*/README.md
-    ↓
-具体 package 职责与边界
-
-源码 / 测试
-    ↓
-具体实现
-```
-
-相关文档：
-
-* [OpsPilot README](../README.md)
-* [Agent Service Project](PROJECT.md)
-* [Model Gateway](packages/model-gateway/README.md)
-* [Agent Runtime](packages/agent-runtime/README.md)
-* [Tool Gateway](packages/tool-gateway/README.md)
-
-历史 Demo 和已经废弃的设计应放入 `docs/legacy/`，避免与当前架构说明混合。
+各 package 的具体职责和边界以其源码及 package README 为准。

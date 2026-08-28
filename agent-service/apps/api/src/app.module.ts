@@ -1,15 +1,13 @@
 import { DynamicModule, Module } from '@nestjs/common';
 
-import { AlertsModule } from './alerts/alerts.module.js';
 import {
   ApplicationBindingsModule,
   type ApplicationBindingsOptions,
 } from './application-bindings.module.js';
 import { CommonModule } from './common/common.module.js';
-import { IncidentsModule } from './incidents/incidents.module.js';
 
 @Module({
-  imports: [CommonModule, AlertsModule, IncidentsModule],
+  imports: [CommonModule],
 })
 export class ApiModule {
   static register(bindings: ApplicationBindingsOptions): DynamicModule {
@@ -18,8 +16,6 @@ export class ApiModule {
       imports: [
         CommonModule,
         ApplicationBindingsModule.register(bindings),
-        AlertsModule,
-        IncidentsModule,
       ],
     };
   }

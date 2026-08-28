@@ -1,13 +1,12 @@
 {
   "name": "opspilot",
   "version": "0.1.0",
-  "description": "AI-assisted incident-response system.",
+  "description": "OpsPilot Agent Service runtime and application foundation.",
   "private": true,
   "scripts": {
     "dev:api": "pnpm --filter @opspilot/api-runtime dev",
-    "dev:worker": "pnpm --filter @opspilot/worker dev",
+    "build": "pnpm -r --if-present build",
     "build:api": "pnpm --filter @opspilot/api-runtime build",
-    "build:worker": "pnpm --filter @opspilot/worker build",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
     "test": "pnpm -r --if-present test",

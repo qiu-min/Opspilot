@@ -8,8 +8,7 @@ import { RequestContextMiddleware } from './request-context.middleware.js';
 import { RequestLoggingMiddleware } from './request-logging.middleware.js';
 
 /**
- * Shared API-level contracts. Concrete infrastructure bindings live in the
- * persistence module so controllers never need to import the database layer.
+ * Shared API-level middleware, validation, logging, and error handling.
  */
 @Module({
   providers: [

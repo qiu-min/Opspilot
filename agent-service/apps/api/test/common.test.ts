@@ -1,5 +1,4 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
-import { IncidentNotFoundError } from '@opspilot/application';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { EventEmitter } from 'node:events';
@@ -62,8 +61,8 @@ describe('request context and lifecycle logging', () => {
       {
         requestId: '0d9ef0c6-ce1b-4906-b472-83e651731e88',
         method: 'GET',
-        path: '/incidents/example',
-        originalUrl: '/incidents/example?token=must-not-log',
+        path: '/health/example',
+        originalUrl: '/health/example?token=must-not-log',
       } as never,
       response as never,
       () => undefined,
@@ -71,7 +70,7 @@ describe('request context and lifecycle logging', () => {
     response.emit('finish');
 
     expect(records).toHaveLength(2);
-    expect(records[0]).toMatchObject({ event: 'api.request.started', path: '/incidents/example' });
+    expect(records[0]).toMatchObject({ event: 'api.request.started', path: '/health/example' });
     expect(records[1]).toMatchObject({
       event: 'api.request.completed',
       statusCode: 201,
@@ -85,7 +84,7 @@ describe('ApiExceptionFilter', () => {
   it.each([
     [new BadRequestException(), 400, 'VALIDATION_ERROR'],
     [new RequestValidationError({ title: ['Required'] }), 400, 'VALIDATION_ERROR'],
-    [new IncidentNotFoundError('0d9ef0c6-ce1b-4906-b472-83e651731e88'), 404, 'NOT_FOUND'],
+    [new NotFoundException(), 404, 'NOT_FOUND'],
     [new ConflictException(), 409, 'CONFLICT'],
     [new Error('Prisma database password secret'), 500, 'INTERNAL_ERROR'],
   ])('formats %s safely', (exception, statusCode, code) => {

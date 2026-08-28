@@ -2,7 +2,6 @@ export const apiErrorCodes = [
   'VALIDATION_ERROR',
   'NOT_FOUND',
   'CONFLICT',
-  'IDEMPOTENCY_CONFLICT',
   'INTERNAL_ERROR',
 ] as const;
 

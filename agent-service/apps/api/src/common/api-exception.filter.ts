@@ -7,7 +7,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { ExceptionFilter } from '@nestjs/common';
-import { IncidentNotFoundError } from '@opspilot/application';
 import type { Response } from 'express';
 
 import type { ApiErrorCode, ApiErrorResponse } from './api-error.js';
@@ -51,22 +50,11 @@ function mapException(exception: unknown): MappedError {
       details: exception.details,
     };
   }
-  if (
-    exception instanceof IncidentNotFoundError ||
-    exception instanceof NotFoundException ||
-    (exception instanceof Error && exception.name === 'IncidentNotFoundError')
-  ) {
+  if (exception instanceof NotFoundException) {
     return { statusCode: 404, code: 'NOT_FOUND', message: 'Resource not found.' };
   }
   if (exception instanceof ConflictException) {
-    const response = exception.getResponse();
-    const code: ApiErrorCode =
-      typeof response === 'object' &&
-      response !== null &&
-      (response as Record<string, unknown>).code === 'IDEMPOTENCY_CONFLICT'
-        ? 'IDEMPOTENCY_CONFLICT'
-        : 'CONFLICT';
-    return { statusCode: 409, code, message: 'Conflict.' };
+    return { statusCode: 409, code: 'CONFLICT', message: 'Conflict.' };
   }
   if (exception instanceof HttpException && exception.getStatus() === 400) {
     return { statusCode: 400, code: 'VALIDATION_ERROR', message: 'Request validation failed.' };
