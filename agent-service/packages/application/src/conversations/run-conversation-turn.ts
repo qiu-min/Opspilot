@@ -1,0 +1,63 @@
+import type { Model, ModelGateway } from '@opspilot/model-gateway';
+
+import { createAgentSession } from '../agent-session/create-agent-session.js';
+import type { SessionStore } from '../session-store/session-store.js';
+import type { ToolDefinition } from '../tools/tool-definition.js';
+import { wrapToolDefinitions } from '../tools/wrap-tool-definition.js';
+import type { RunConversationTurnInput, RunConversationTurnResult } from './conversation-types.js';
+
+/** Dependencies used to run one application-level conversation turn. */
+export interface RunConversationTurnOptions {
+  readonly sessionStore: SessionStore;
+  readonly modelGateway: ModelGateway;
+  readonly toolDefinitions: readonly ToolDefinition[];
+  readonly defaultModel?: Model;
+  readonly systemPrompt?: string;
+}
+
+/** Orchestrates session loading, AgentSession execution, and turn results. */
+export class RunConversationTurn {
+  private readonly sessionStore: SessionStore;
+  private readonly modelGateway: ModelGateway;
+  private readonly toolDefinitions: readonly ToolDefinition[];
+  private readonly defaultModel?: Model;
+  private readonly systemPrompt?: string;
+
+  public constructor(options: RunConversationTurnOptions) {
+    this.sessionStore = options.sessionStore;
+    this.modelGateway = options.modelGateway;
+    this.toolDefinitions = [...options.toolDefinitions];
+    this.defaultModel = options.defaultModel;
+    this.systemPrompt = options.systemPrompt;
+  }
+
+  /** Executes one turn and returns only the messages produced by that turn. */
+  public async execute(input: RunConversationTurnInput): Promise<RunConversationTurnResult> {
+    const sessionManager =
+      input.sessionId === undefined
+        ? this.sessionStore.create()
+        : this.sessionStore.load(input.sessionId);
+    const sessionId = sessionManager.getHeader().id;
+    const tools = wrapToolDefinitions(this.toolDefinitions, { sessionId });
+    const agentSession = createAgentSession({
+      sessionManager,
+      modelGateway: this.modelGateway,
+      model: input.model ?? (input.sessionId === undefined ? this.defaultModel : undefined),
+      thinkingLevel: input.thinkingLevel,
+      tools,
+      systemPrompt: this.systemPrompt,
+    });
+
+    try {
+      const messages = await agentSession.prompt(input.message);
+
+      return {
+        sessionId,
+        leafId: sessionManager.getLeafId(),
+        messages,
+      };
+    } finally {
+      agentSession.dispose();
+    }
+  }
+}
