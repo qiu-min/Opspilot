@@ -1,4 +1,4 @@
-import { Body, Controller, Optional, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, HttpCode, Optional, Post, Req, Res } from '@nestjs/common';
 import { RunConversationTurn } from '@opspilot/application';
 import type { Request, Response } from 'express';
 
@@ -8,6 +8,7 @@ import {
   mapConversationTurnResult,
   type ConversationTurnResponse,
 } from './conversation.mapper.js';
+import { serializeConversationEvent } from './conversation-event.serializer.js';
 import {
   conversationTurnRequestSchema,
   type ConversationTurnRequest,
@@ -23,6 +24,7 @@ export class ConversationsController {
   ) {}
 
   @Post('turns')
+  @HttpCode(200)
   async runTurn(
     @Body(new ZodValidationPipe(conversationTurnRequestSchema))
     request: ConversationTurnRequest,
@@ -32,6 +34,7 @@ export class ConversationsController {
   }
 
   @Post('turns/stream')
+  @HttpCode(200)
   async streamTurn(
     @Body(new ZodValidationPipe(conversationTurnRequestSchema))
     request: ConversationTurnRequest,
@@ -58,7 +61,7 @@ export class ConversationsController {
         {
           onEvent: (event) => {
             if (disconnected || !canWrite(response)) return;
-            if (writeSseEvent(response, event.type, event)) {
+            if (writeSsePayload(response, event.type, serializeConversationEvent(event))) {
               started = true;
             } else {
               disconnected = true;
@@ -72,6 +75,7 @@ export class ConversationsController {
         writeSseEvent(response, 'done', {
           sessionId: result.sessionId,
           leafId: result.leafId,
+          status: mapConversationTurnResult(result).status,
         })
       ) {
         started = true;
@@ -104,9 +108,12 @@ function canWrite(response: Response): boolean {
 }
 
 function writeSseEvent(response: Response, eventType: string, data: unknown): boolean {
+  return writeSsePayload(response, eventType, JSON.stringify(data));
+}
+
+function writeSsePayload(response: Response, eventType: string, serialized: string): boolean {
   if (!canWrite(response)) return false;
 
-  const serialized = JSON.stringify(data);
   try {
     response.write(`event: ${eventType}\ndata: ${serialized}\n\n`);
     return true;

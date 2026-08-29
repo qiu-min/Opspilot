@@ -5,8 +5,11 @@ import type { ConversationTurnRequest } from './conversation.schemas.js';
 export interface ConversationTurnResponse {
   readonly sessionId: string;
   readonly leafId: string | null;
+  readonly status: ConversationTurnStatus;
   readonly output: string;
 }
+
+export type ConversationTurnStatus = 'completed' | 'error' | 'aborted';
 
 export function mapConversationTurnRequest(
   request: ConversationTurnRequest,
@@ -23,23 +26,41 @@ export function mapConversationTurnRequest(
 export function mapConversationTurnResult(
   result: RunConversationTurnResult,
 ): ConversationTurnResponse {
+  const assistantMessage = getFinalAssistantMessage(result);
+
   return {
     sessionId: result.sessionId,
     leafId: result.leafId,
-    output: getFinalAssistantText(result),
+    status: getConversationTurnStatus(assistantMessage?.finishReason),
+    output: getAssistantText(assistantMessage),
   };
 }
 
-function getFinalAssistantText(result: RunConversationTurnResult): string {
+type AssistantMessage = Extract<
+  RunConversationTurnResult['messages'][number],
+  { readonly role: 'assistant' }
+>;
+
+function getFinalAssistantMessage(result: RunConversationTurnResult): AssistantMessage | undefined {
   for (let index = result.messages.length - 1; index >= 0; index -= 1) {
     const message = result.messages[index];
-    if (message?.role !== 'assistant') continue;
-
-    return message.content
-      .filter((content) => content.type === 'text')
-      .map((content) => content.text)
-      .join('');
+    if (message?.role === 'assistant') return message;
   }
 
-  return '';
+  return undefined;
+}
+
+function getConversationTurnStatus(finishReason: string | undefined): ConversationTurnStatus {
+  if (finishReason === 'error') return 'error';
+  if (finishReason === 'aborted') return 'aborted';
+  return 'completed';
+}
+
+function getAssistantText(message: AssistantMessage | undefined): string {
+  if (message === undefined) return '';
+
+  return message.content
+    .filter((content) => content.type === 'text')
+    .map((content) => content.text)
+    .join('');
 }

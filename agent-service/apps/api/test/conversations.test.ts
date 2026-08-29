@@ -42,24 +42,7 @@ class FakeResponse extends EventEmitter {
   }
 }
 
-const turnResult: RunConversationTurnResult = {
-  sessionId: 'session-1',
-  leafId: 'leaf-1',
-  messages: [
-    {
-      role: 'user',
-      content: [{ type: 'text', text: 'hello' }],
-    },
-    {
-      role: 'assistant',
-      api: 'test-api',
-      provider: 'test-provider',
-      model: 'test-model',
-      content: [{ type: 'text', text: 'hello back' }],
-      finishReason: 'stop',
-    },
-  ],
-};
+const turnResult = createTurnResult('stop');
 
 describe('Conversation API', () => {
   let app: INestApplication | undefined;
@@ -86,10 +69,11 @@ describe('Conversation API', () => {
       message: 'hello',
     });
 
-    expect(response.statusCode).toBe(201);
+    expect(response.statusCode).toBe(200);
     expect(JSON.parse(response.body)).toEqual({
       sessionId: 'session-1',
       leafId: 'leaf-1',
+      status: 'completed',
       output: 'hello back',
     });
     expect(execute.mock.calls[0]).toHaveLength(1);
@@ -108,6 +92,48 @@ describe('Conversation API', () => {
     expect(JSON.parse(response.body)).toMatchObject({
       code: 'VALIDATION_ERROR',
     });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['error', 'error'],
+    ['aborted', 'aborted'],
+  ] as const)(
+    'returns Agent finishReason %s as status %s without leaking errorMessage',
+    async (finishReason, status) => {
+      const execute = vi.fn<RunConversationTurn['execute']>(async () =>
+        createTurnResult(finishReason, 'provider secret'),
+      );
+      const server = await startServer(execute);
+      app = server.app;
+
+      const response = await postJson(server.port, '/conversations/turns', {
+        message: 'hello',
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(JSON.parse(response.body)).toEqual({
+        sessionId: 'session-1',
+        leafId: 'leaf-1',
+        status,
+        output: '',
+      });
+      expect(response.body).not.toContain('provider secret');
+    },
+  );
+
+  it('rejects a non-v4 sessionId before calling Application', async () => {
+    const execute = vi.fn<RunConversationTurn['execute']>(async () => turnResult);
+    const server = await startServer(execute);
+    app = server.app;
+
+    const response = await postJson(server.port, '/conversations/turns', {
+      sessionId: 'abc',
+      message: 'hello',
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.body)).toMatchObject({ code: 'VALIDATION_ERROR' });
     expect(execute).not.toHaveBeenCalled();
   });
 
@@ -135,7 +161,7 @@ describe('Conversation API', () => {
       [
         'event: agent_start\ndata: {"type":"agent_start"}\n\n',
         'event: tool_execution_start\ndata: {"type":"tool_execution_start","toolCall":{"callId":"call-1","name":"lookup","arguments":{"query":"hello"}}}\n\n',
-        'event: done\ndata: {"sessionId":"session-1","leafId":"leaf-1"}\n\n',
+        'event: done\ndata: {"sessionId":"session-1","leafId":"leaf-1","status":"completed"}\n\n',
       ].join(''),
     );
     expect(response.writableEnded).toBe(true);
@@ -155,13 +181,35 @@ describe('Conversation API', () => {
       message: 'hello',
     });
 
+    expect(response.statusCode).toBe(200);
     expect(response.headers['content-type']).toBe('text/event-stream');
     expect(response.body).toBe(
       [
         'event: agent_start\ndata: {"type":"agent_start"}\n\n',
-        'event: done\ndata: {"sessionId":"session-1","leafId":"leaf-1"}\n\n',
+        'event: done\ndata: {"sessionId":"session-1","leafId":"leaf-1","status":"completed"}\n\n',
       ].join(''),
     );
+  });
+
+  it('sanitizes Agent error events and sends done with error status', async () => {
+    const errorResult = createTurnResult('error', 'provider secret');
+    const execute: RunConversationTurn['execute'] = async (_input, options) => {
+      options?.onEvent?.({ type: 'agent_end', messages: errorResult.messages });
+      return errorResult;
+    };
+    const server = await startServer(execute);
+    app = server.app;
+
+    const response = await postJson(server.port, '/conversations/turns/stream', {
+      message: 'hello',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain(
+      'event: done\ndata: {"sessionId":"session-1","leafId":"leaf-1","status":"error"}\n\n',
+    );
+    expect(response.body).not.toContain('errorMessage');
+    expect(response.body).not.toContain('provider secret');
   });
 
   it('delegates a stream error before the first event to the API exception filter', async () => {
@@ -269,4 +317,29 @@ function postJson(port: number, path: string, body: unknown): Promise<HttpRespon
     request.on('error', reject);
     request.end(JSON.stringify(body));
   });
+}
+
+function createTurnResult(
+  finishReason: 'stop' | 'error' | 'aborted',
+  errorMessage?: string,
+): RunConversationTurnResult {
+  return {
+    sessionId: 'session-1',
+    leafId: 'leaf-1',
+    messages: [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'hello' }],
+      },
+      {
+        role: 'assistant',
+        api: 'test-api',
+        provider: 'test-provider',
+        model: 'test-model',
+        content: finishReason === 'stop' ? [{ type: 'text', text: 'hello back' }] : [],
+        finishReason,
+        ...(errorMessage === undefined ? {} : { errorMessage }),
+      },
+    ],
+  };
 }
