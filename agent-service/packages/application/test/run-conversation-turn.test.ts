@@ -24,6 +24,11 @@ import {
 
 const directories: string[] = [];
 
+interface Deferred<T> {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+}
+
 const model: Model = {
   provider: 'test-provider',
   id: 'test-model',
@@ -100,20 +105,51 @@ function assistantStream(message: AgentMessage, streamModel: Model): ModelEventS
   });
 }
 
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function waitingAssistantStream(
+  message: AgentMessage,
+  streamModel: Model,
+  started: Deferred<void>,
+  release: Deferred<void>,
+): ModelEventStream {
+  if (message.role !== 'assistant') throw new Error('Expected an assistant message.');
+
+  return createModelEventStream(async (controller) => {
+    controller.emit({
+      type: 'start',
+      model: streamModel,
+      partial: { ...message, content: [], finishReason: 'pending' },
+    });
+    started.resolve(undefined);
+    await release.promise;
+    controller.complete(message);
+  });
+}
+
 function createGateway(
   streams: readonly ModelEventStream[],
   registeredModels: readonly Model[] = [model],
   onStream?: () => void,
 ): ModelGateway & {
   readonly requestedModels: Model[];
+  readonly requestedContexts: Context[];
   readonly requestedOptions: (Options | undefined)[];
   readonly stream: ReturnType<typeof vi.fn>;
 } {
   let streamIndex = 0;
   const requestedModels: Model[] = [];
+  const requestedContexts: Context[] = [];
   const requestedOptions: (Options | undefined)[] = [];
-  const stream = vi.fn((requestedModel: Model, _context: Context, options?: Options) => {
+  const stream = vi.fn((requestedModel: Model, context: Context, options?: Options) => {
     requestedModels.push(requestedModel);
+    requestedContexts.push(context);
     requestedOptions.push(options);
     onStream?.();
     const next = streams[streamIndex++];
@@ -131,6 +167,7 @@ function createGateway(
       throw new Error('complete is not used by this test.');
     },
     requestedModels,
+    requestedContexts,
     requestedOptions,
   };
 }
@@ -381,5 +418,115 @@ describe('RunConversationTurn', () => {
       'prompt persistence failed',
     );
     expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it('serializes concurrent turns for one existing session after loading under the lock', async () => {
+    const { store } = createStore();
+    const initialRunner = new RunConversationTurn({
+      sessionStore: store,
+      modelGateway: createGateway([assistantStream(assistantMessage('history response'), model)]),
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+    const initialResult = await initialRunner.execute({ message: userMessage('history') });
+    const loadMessageCounts: number[] = [];
+    const sessionStore: SessionStore = {
+      create: () => store.create(),
+      load: (sessionId) => {
+        const sessionManager = store.load(sessionId);
+        loadMessageCounts.push(messageEntries(sessionManager).length);
+        return sessionManager;
+      },
+    };
+    const firstStarted = createDeferred<void>();
+    const releaseFirst = createDeferred<void>();
+    const firstResponse = assistantMessage('first response');
+    const secondResponse = assistantMessage('second response');
+    const gateway = createGateway([
+      waitingAssistantStream(firstResponse, model, firstStarted, releaseFirst),
+      assistantStream(secondResponse, model),
+    ]);
+    const runner = new RunConversationTurn({
+      sessionStore,
+      modelGateway: gateway,
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+
+    const firstRun = runner.execute({
+      sessionId: initialResult.sessionId,
+      message: userMessage('user-1'),
+    });
+    await firstStarted.promise;
+    const secondRun = runner.execute({
+      sessionId: initialResult.sessionId,
+      message: userMessage('user-2'),
+    });
+    await Promise.resolve();
+
+    expect(loadMessageCounts).toEqual([2]);
+    releaseFirst.resolve(undefined);
+    await Promise.all([firstRun, secondRun]);
+
+    const loaded = store.load(initialResult.sessionId);
+    expect(loadMessageCounts).toEqual([2, 4]);
+    expect(messageEntries(loaded)).toEqual([
+      userMessage('history'),
+      assistantMessage('history response'),
+      userMessage('user-1'),
+      firstResponse,
+      userMessage('user-2'),
+      secondResponse,
+    ]);
+    expect(gateway.requestedContexts[1]?.messages).toEqual([
+      userMessage('history'),
+      assistantMessage('history response'),
+      userMessage('user-1'),
+      firstResponse,
+      userMessage('user-2'),
+    ]);
+  });
+
+  it('allows turns for different existing sessions to run concurrently', async () => {
+    const { store } = createStore();
+    const firstSession = store.create();
+    firstSession.appendModelChange(model.provider, model.id);
+    const secondSession = store.create();
+    secondSession.appendModelChange(model.provider, model.id);
+    const firstStarted = createDeferred<void>();
+    const secondStarted = createDeferred<void>();
+    const firstRelease = createDeferred<void>();
+    const secondRelease = createDeferred<void>();
+    const gateway = createGateway([
+      waitingAssistantStream(assistantMessage('first response'), model, firstStarted, firstRelease),
+      waitingAssistantStream(
+        assistantMessage('second response'),
+        model,
+        secondStarted,
+        secondRelease,
+      ),
+    ]);
+    const runner = new RunConversationTurn({
+      sessionStore: store,
+      modelGateway: gateway,
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+
+    const firstRun = runner.execute({
+      sessionId: firstSession.getHeader().id,
+      message: userMessage('first input'),
+    });
+    const secondRun = runner.execute({
+      sessionId: secondSession.getHeader().id,
+      message: userMessage('second input'),
+    });
+
+    await Promise.all([firstStarted.promise, secondStarted.promise]);
+    firstRelease.resolve(undefined);
+    secondRelease.resolve(undefined);
+    await Promise.all([firstRun, secondRun]);
+
+    expect(gateway.requestedContexts).toHaveLength(2);
   });
 });

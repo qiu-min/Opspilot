@@ -5,6 +5,10 @@ import type { SessionStore } from '../session-store/session-store.js';
 import type { ToolDefinition } from '../tools/tool-definition.js';
 import { wrapToolDefinitions } from '../tools/wrap-tool-definition.js';
 import type { RunConversationTurnInput, RunConversationTurnResult } from './conversation-types.js';
+import {
+  InMemorySessionRunCoordinator,
+  type SessionRunCoordinator,
+} from './session-run-coordinator.js';
 
 /** Dependencies used to run one application-level conversation turn. */
 export interface RunConversationTurnOptions {
@@ -13,6 +17,7 @@ export interface RunConversationTurnOptions {
   readonly toolDefinitions: readonly ToolDefinition[];
   readonly defaultModel?: Model;
   readonly systemPrompt?: string;
+  readonly sessionRunCoordinator?: SessionRunCoordinator;
 }
 
 /** Orchestrates session loading, AgentSession execution, and turn results. */
@@ -22,6 +27,7 @@ export class RunConversationTurn {
   private readonly toolDefinitions: readonly ToolDefinition[];
   private readonly defaultModel?: Model;
   private readonly systemPrompt?: string;
+  private readonly sessionRunCoordinator: SessionRunCoordinator;
 
   public constructor(options: RunConversationTurnOptions) {
     this.sessionStore = options.sessionStore;
@@ -29,10 +35,23 @@ export class RunConversationTurn {
     this.toolDefinitions = [...options.toolDefinitions];
     this.defaultModel = options.defaultModel;
     this.systemPrompt = options.systemPrompt;
+    this.sessionRunCoordinator =
+      options.sessionRunCoordinator ?? new InMemorySessionRunCoordinator();
   }
 
   /** Executes one turn and returns only the messages produced by that turn. */
   public async execute(input: RunConversationTurnInput): Promise<RunConversationTurnResult> {
+    if (input.sessionId !== undefined) {
+      return await this.sessionRunCoordinator.runExclusive(input.sessionId, () =>
+        this.executeTurn(input),
+      );
+    }
+
+    return await this.executeTurn(input);
+  }
+
+  /** Loads or creates the session and runs the complete AgentSession lifecycle. */
+  private async executeTurn(input: RunConversationTurnInput): Promise<RunConversationTurnResult> {
     const sessionManager =
       input.sessionId === undefined
         ? this.sessionStore.create()
