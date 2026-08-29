@@ -187,7 +187,7 @@ describe('SessionManager invalid JSONL files', () => {
             message: userMessage('b'),
           },
         ]
-          .map(JSON.stringify)
+          .map((entry) => JSON.stringify(entry))
           .join('\n') + '\n',
         'Duplicate session entry id: a',
       ],
@@ -217,7 +217,7 @@ describe('SessionManager invalid JSONL files', () => {
             message: userMessage('b'),
           },
         ]
-          .map(JSON.stringify)
+          .map((entry) => JSON.stringify(entry))
           .join('\n') + '\n',
         'parent that has not appeared yet',
       ],
@@ -233,7 +233,7 @@ describe('SessionManager invalid JSONL files', () => {
             thinkingLevel: 'ultra',
           },
         ]
-          .map(JSON.stringify)
+          .map((entry) => JSON.stringify(entry))
           .join('\n') + '\n',
         'invalid thinkingLevel',
       ],
@@ -278,7 +278,7 @@ describe('SessionManager invalid JSONL files', () => {
           message: userMessage('D'),
         },
       ]
-        .map(JSON.stringify)
+        .map((entry) => JSON.stringify(entry))
         .join('\n') + '\n',
       'utf8',
     );
@@ -300,7 +300,7 @@ describe('SessionManager invalid JSONL files', () => {
           message: userMessage('B'),
         },
       ]
-        .map(JSON.stringify)
+        .map((entry) => JSON.stringify(entry))
         .join('\n') + '\n',
       'utf8',
     );
@@ -343,7 +343,7 @@ describe('SessionManager invalid JSONL files', () => {
         message: userMessage('D'),
       },
     ];
-    writeFileSync(filePath, records.map(JSON.stringify).join('\n') + '\n', 'utf8');
+    writeFileSync(filePath, records.map((record) => JSON.stringify(record)).join('\n') + '\n', 'utf8');
 
     const session = SessionManager.load(filePath);
     expect(session.getLeafId()).toBe('D');
