@@ -274,12 +274,21 @@ importers:
       '@opspilot/api':
         specifier: workspace:*
         version: link:../api
+      '@opspilot/application':
+        specifier: workspace:*
+        version: link:../../packages/application
+      '@opspilot/model-gateway':
+        specifier: workspace:*
+        version: link:../../packages/model-gateway
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
       rxjs:
         specifier: ^7.8.1
         version: 7.8.1
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@nestjs/testing':
         specifier: ^11.0.0

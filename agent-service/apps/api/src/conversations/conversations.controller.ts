@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, Optional, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, HttpCode, Post, Req, Res } from '@nestjs/common';
 import { RunConversationTurn } from '@opspilot/application';
 import type { Request, Response } from 'express';
 
@@ -18,10 +18,7 @@ const SSE_ERROR_MESSAGE = 'Internal server error.';
 
 @Controller('conversations')
 export class ConversationsController {
-  constructor(
-    @Optional()
-    private readonly runConversationTurn?: RunConversationTurn,
-  ) {}
+  constructor(private readonly runConversationTurn: RunConversationTurn) {}
 
   @Post('turns')
   @HttpCode(200)
@@ -29,7 +26,7 @@ export class ConversationsController {
     @Body(new ZodValidationPipe(conversationTurnRequestSchema))
     request: ConversationTurnRequest,
   ): Promise<ConversationTurnResponse> {
-    const result = await this.getRunConversationTurn().execute(mapConversationTurnRequest(request));
+    const result = await this.runConversationTurn.execute(mapConversationTurnRequest(request));
     return mapConversationTurnResult(result);
   }
 
@@ -56,19 +53,16 @@ export class ConversationsController {
     response.on('close', onClose);
 
     try {
-      const result = await this.getRunConversationTurn().execute(
-        mapConversationTurnRequest(request),
-        {
-          onEvent: (event) => {
-            if (disconnected || !canWrite(response)) return;
-            if (writeSsePayload(response, event.type, serializeConversationEvent(event))) {
-              started = true;
-            } else {
-              disconnected = true;
-            }
-          },
+      const result = await this.runConversationTurn.execute(mapConversationTurnRequest(request), {
+        onEvent: (event) => {
+          if (disconnected || !canWrite(response)) return;
+          if (writeSsePayload(response, event.type, serializeConversationEvent(event))) {
+            started = true;
+          } else {
+            disconnected = true;
+          }
         },
-      );
+      });
 
       if (
         !disconnected &&
@@ -93,13 +87,6 @@ export class ConversationsController {
       incomingRequest.off('close', onClose);
       response.off('close', onClose);
     }
-  }
-
-  private getRunConversationTurn(): RunConversationTurn {
-    if (this.runConversationTurn === undefined) {
-      throw new Error('RunConversationTurn application binding is not configured.');
-    }
-    return this.runConversationTurn;
   }
 }
 
