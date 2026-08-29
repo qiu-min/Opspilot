@@ -32,9 +32,9 @@ Agent Runtime 必须保持业务无关。Runtime 不允许出现 `FileId`、`Exc
 
 ## Application
 
-Application 当前提供 SessionManager、JSONL session tree、最小 AgentSession 及 createAgentSession 组合入口；Conversation 业务逻辑和 API 仍未实现。
+Application 当前提供 SessionManager、JSONL session tree、最小 AgentSession、createAgentSession 及 RunConversationTurn 组合入口。
 
-Conversation 未来负责编排一次用户 Conversation Turn：接收 `sessionId`、用户消息和文件引用，加载 Session，构建 Agent Context，调用 Agent Runtime，接收 Runtime 结果与事件，并更新 Session。未来核心用例可以命名为 `RunConversationTurn`，本次尚未实现。
+Conversation 当前通过 `RunConversationTurn` 编排一次用户 Conversation Turn：接收 `sessionId` 和用户消息，加载或创建 Session，调用 Agent Runtime，接收 Runtime 结果与事件，并更新 filesystem JSONL Session。
 
 Session 负责生命周期和会话树语义。消息树不使用 PostgreSQL 保存，使用 JSONL / filesystem 持久化；更完整的 Session switching、分支管理扩展和上层业务用例仍待实现。
 
@@ -49,7 +49,14 @@ Session 负责生命周期和会话树语义。消息树不使用 PostgreSQL 保
 
 ## API Boundary
 
-`apps/api` 保留为 Agent Service 的 API 项目和通用 HTTP 基础设施，但当前不实现 Conversation API，也不提供 Session 创建、消息提交、SSE、WebSocket、Controller、Route 或业务 DTO。本次不连接 ASP.NET Backend。
+`apps/api` 提供当前 Conversation API；`apps/api-runtime` 负责 composition root 和 bootstrap。本次不连接 ASP.NET Backend。
+
+当前接口：
+
+- `POST /conversations/turns`：执行一次普通 JSON Conversation Turn。
+- `POST /conversations/turns/stream`：以 SSE 透传 AgentEvent，并发送最终 `done` 事件。
+
+Session 使用 filesystem JSONL 持久化；API 通过 Application 的 `RunConversationTurn` 访问，不直接操作 SessionManager 或 Model Gateway。
 
 ## Development
 
@@ -60,5 +67,15 @@ pnpm typecheck
 pnpm test
 pnpm build
 ```
+
+启动 Agent Service：
+
+1. `pnpm install`
+2. 复制 `.env.example` 为 `.env`
+3. 在 `.env` 中配置 `MOONSHOT_API_KEY`
+4. 根据需要设置 `DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID`
+5. 执行 `pnpm dev:api`
+
+默认模型由 `DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID` 显式指定。`api-runtime` 会加载 `agent-service/.env`，并装配 Model Gateway、`RunConversationTurn` 和 filesystem SessionStore。
 
 各 package 的具体职责和边界以其源码及 package README 为准。

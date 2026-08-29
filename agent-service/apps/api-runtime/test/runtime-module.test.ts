@@ -1,6 +1,7 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { ApiModule } from '@opspilot/api';
 import { RunConversationTurn } from '@opspilot/application';
@@ -51,19 +52,46 @@ describe('API runtime composition root', () => {
     });
   });
 
-  it('rejects invalid or incomplete runtime environment configuration', () => {
+  it('uses stable default paths independent of process.cwd()', async () => {
+    const originalWorkingDirectory = process.cwd();
+    const temporaryWorkingDirectory = await mkdtemp(join(tmpdir(), 'opspilot-api-runtime-cwd-'));
+
+    try {
+      process.chdir(temporaryWorkingDirectory);
+      expect(
+        loadRuntimeConfig({
+          DEFAULT_MODEL_PROVIDER: testProviderId,
+          DEFAULT_MODEL_ID: testModelId,
+          SESSION_DIRECTORY: '',
+          MODEL_CONFIG_PATH: '',
+        }),
+      ).toMatchObject({
+        sessionDirectory: fileURLToPath(new URL('../../../data/sessions', import.meta.url)),
+        modelConfigPath: fileURLToPath(
+          new URL('../../../config/model-providers.json', import.meta.url),
+        ),
+      });
+    } finally {
+      process.chdir(originalWorkingDirectory);
+      await rm(temporaryWorkingDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('allows explicit runtime path overrides', () => {
     expect(
       loadRuntimeConfig({
+        SESSION_DIRECTORY: 'custom/sessions',
+        MODEL_CONFIG_PATH: 'custom/models.json',
         DEFAULT_MODEL_PROVIDER: testProviderId,
         DEFAULT_MODEL_ID: testModelId,
       }),
     ).toMatchObject({
-      port: 3000,
-      host: '127.0.0.1',
-      sessionDirectory: 'data/sessions',
-      modelConfigPath: 'config/model-providers.json',
+      sessionDirectory: 'custom/sessions',
+      modelConfigPath: 'custom/models.json',
     });
+  });
 
+  it('rejects invalid or incomplete runtime environment configuration', () => {
     expect(() =>
       loadRuntimeConfig({
         PORT: 'not-a-port',
@@ -73,6 +101,14 @@ describe('API runtime composition root', () => {
     ).toThrow('Runtime configuration is invalid.');
 
     expect(() => loadRuntimeConfig({})).toThrow('Runtime configuration is invalid.');
+  });
+
+  it('starts the built entrypoint with the package start script', async () => {
+    const packageJson = JSON.parse(
+      await readFile(new URL('../package.json', import.meta.url), 'utf8'),
+    ) as { readonly scripts?: { readonly start?: string } };
+
+    expect(packageJson.scripts?.start).toBe('node dist/main.js');
   });
 
   it('requires RunConversationTurn when compiling the API module', async () => {

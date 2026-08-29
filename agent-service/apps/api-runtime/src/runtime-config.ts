@@ -1,9 +1,13 @@
+import { fileURLToPath } from 'node:url';
+
 import { z } from 'zod';
 
 const defaultPort = 3000;
 const defaultHost = '127.0.0.1';
-const defaultSessionDirectory = 'data/sessions';
-const defaultModelConfigPath = 'config/model-providers.json';
+const defaultSessionDirectory = fileURLToPath(new URL('../../../data/sessions', import.meta.url));
+const defaultModelConfigPath = fileURLToPath(
+  new URL('../../../config/model-providers.json', import.meta.url),
+);
 
 export const runtimeConfigSchema = z.object({
   port: z.coerce.number().int().min(1).max(65_535).default(defaultPort),
@@ -18,10 +22,10 @@ export type RuntimeConfig = z.infer<typeof runtimeConfigSchema>;
 
 export function loadRuntimeConfig(environment: NodeJS.ProcessEnv = process.env): RuntimeConfig {
   const parsed = runtimeConfigSchema.safeParse({
-    port: environment.PORT,
-    host: environment.HOST,
-    sessionDirectory: environment.SESSION_DIRECTORY,
-    modelConfigPath: environment.MODEL_CONFIG_PATH,
+    port: optionalEnvironmentValue(environment.PORT),
+    host: optionalEnvironmentValue(environment.HOST),
+    sessionDirectory: optionalEnvironmentValue(environment.SESSION_DIRECTORY),
+    modelConfigPath: optionalEnvironmentValue(environment.MODEL_CONFIG_PATH),
     defaultProviderId: environment.DEFAULT_MODEL_PROVIDER,
     defaultModelId: environment.DEFAULT_MODEL_ID,
   });
@@ -31,4 +35,8 @@ export function loadRuntimeConfig(environment: NodeJS.ProcessEnv = process.env):
   }
 
   return parsed.data;
+}
+
+function optionalEnvironmentValue(value: string | undefined): string | undefined {
+  return value === undefined || value.trim() === '' ? undefined : value;
 }

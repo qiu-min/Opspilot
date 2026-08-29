@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "pnpm --filter @opspilot/api build && tsx watch --tsconfig tsconfig.json src/main.ts",
     "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
