@@ -1,4 +1,8 @@
-export type { RunConversationTurnInput, RunConversationTurnResult } from './conversation-types.js';
+export type {
+  RunConversationTurnExecutionOptions,
+  RunConversationTurnInput,
+  RunConversationTurnResult,
+} from './conversation-types.js';
 export {
   InMemorySessionRunCoordinator,
   type SessionRunCoordinator,

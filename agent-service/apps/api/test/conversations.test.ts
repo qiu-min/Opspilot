@@ -1,0 +1,272 @@
+import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
+import { EventEmitter } from 'node:events';
+
+import { RunConversationTurn } from '@opspilot/application';
+import type { RunConversationTurnInput, RunConversationTurnResult } from '@opspilot/application';
+import { Test } from '@nestjs/testing';
+import type { INestApplication } from '@nestjs/common';
+import type { Request, Response } from 'express';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { ApiModule } from '../src/index.js';
+import { ConversationsController } from '../src/conversations/conversations.controller.js';
+
+interface HttpResponse {
+  readonly statusCode: number;
+  readonly headers: IncomingHttpHeaders;
+  readonly body: string;
+}
+
+class FakeResponse extends EventEmitter {
+  readonly headers: Record<string, string> = {};
+  readonly chunks: string[] = [];
+  headersSent = false;
+  writableEnded = false;
+  destroyed = false;
+
+  setHeader(name: string, value: string): this {
+    this.headers[name.toLowerCase()] = value;
+    return this;
+  }
+
+  write(chunk: string): boolean {
+    this.headersSent = true;
+    this.chunks.push(chunk);
+    return true;
+  }
+
+  end(): this {
+    this.writableEnded = true;
+    this.emit('close');
+    return this;
+  }
+}
+
+const turnResult: RunConversationTurnResult = {
+  sessionId: 'session-1',
+  leafId: 'leaf-1',
+  messages: [
+    {
+      role: 'user',
+      content: [{ type: 'text', text: 'hello' }],
+    },
+    {
+      role: 'assistant',
+      api: 'test-api',
+      provider: 'test-provider',
+      model: 'test-model',
+      content: [{ type: 'text', text: 'hello back' }],
+      finishReason: 'stop',
+    },
+  ],
+};
+
+describe('Conversation API', () => {
+  let app: INestApplication | undefined;
+
+  afterEach(async () => {
+    await app?.close();
+    app = undefined;
+  });
+
+  it('runs a JSON turn, maps the user string, and returns the public result', async () => {
+    const execute = vi.fn<RunConversationTurn['execute']>(async (input) => {
+      expect(input).toEqual({
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'hello' }],
+        },
+      });
+      return turnResult;
+    });
+    const server = await startServer(execute);
+    app = server.app;
+
+    const response = await postJson(server.port, '/conversations/turns', {
+      message: 'hello',
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(JSON.parse(response.body)).toEqual({
+      sessionId: 'session-1',
+      leafId: 'leaf-1',
+      output: 'hello back',
+    });
+    expect(execute.mock.calls[0]).toHaveLength(1);
+  });
+
+  it('rejects an invalid JSON turn body', async () => {
+    const execute = vi.fn<RunConversationTurn['execute']>(async () => turnResult);
+    const server = await startServer(execute);
+    app = server.app;
+
+    const response = await postJson(server.port, '/conversations/turns', {
+      message: '   ',
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.body)).toMatchObject({
+      code: 'VALIDATION_ERROR',
+    });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('writes AgentEvents in order, forwards tool events, and sends done', async () => {
+    const execute: RunConversationTurn['execute'] = async (_input, options) => {
+      options?.onEvent?.({ type: 'agent_start' });
+      options?.onEvent?.({
+        type: 'tool_execution_start',
+        toolCall: { callId: 'call-1', name: 'lookup', arguments: { query: 'hello' } },
+      });
+      return turnResult;
+    };
+    const controller = new ConversationsController({ execute } as RunConversationTurn);
+    const request = new EventEmitter() as Request;
+    const response = new FakeResponse();
+
+    await controller.streamTurn({ message: 'hello' }, request, response as unknown as Response);
+
+    expect(response.headers).toMatchObject({
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive',
+    });
+    expect(response.chunks.join('')).toBe(
+      [
+        'event: agent_start\ndata: {"type":"agent_start"}\n\n',
+        'event: tool_execution_start\ndata: {"type":"tool_execution_start","toolCall":{"callId":"call-1","name":"lookup","arguments":{"query":"hello"}}}\n\n',
+        'event: done\ndata: {"sessionId":"session-1","leafId":"leaf-1"}\n\n',
+      ].join(''),
+    );
+    expect(response.writableEnded).toBe(true);
+    expect(request.listenerCount('close')).toBe(0);
+    expect(response.listenerCount('close')).toBe(0);
+  });
+
+  it('serves the stream endpoint with SSE events and headers', async () => {
+    const execute: RunConversationTurn['execute'] = async (_input, options) => {
+      options?.onEvent?.({ type: 'agent_start' });
+      return turnResult;
+    };
+    const server = await startServer(execute);
+    app = server.app;
+
+    const response = await postJson(server.port, '/conversations/turns/stream', {
+      message: 'hello',
+    });
+
+    expect(response.headers['content-type']).toBe('text/event-stream');
+    expect(response.body).toBe(
+      [
+        'event: agent_start\ndata: {"type":"agent_start"}\n\n',
+        'event: done\ndata: {"sessionId":"session-1","leafId":"leaf-1"}\n\n',
+      ].join(''),
+    );
+  });
+
+  it('delegates a stream error before the first event to the API exception filter', async () => {
+    const execute: RunConversationTurn['execute'] = async () => {
+      throw new Error('provider secret');
+    };
+    const server = await startServer(execute);
+    app = server.app;
+
+    const response = await postJson(server.port, '/conversations/turns/stream', {
+      message: 'hello',
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(JSON.parse(response.body)).toMatchObject({
+      code: 'INTERNAL_ERROR',
+      message: 'Internal server error.',
+    });
+    expect(response.body).not.toContain('provider secret');
+  });
+
+  it('sends an SSE error after the stream has started', async () => {
+    const execute: RunConversationTurn['execute'] = async (_input, options) => {
+      options?.onEvent?.({ type: 'agent_start' });
+      throw new Error('provider secret');
+    };
+    const controller = new ConversationsController({ execute } as RunConversationTurn);
+    const request = new EventEmitter() as Request;
+    const response = new FakeResponse();
+
+    await controller.streamTurn({ message: 'hello' }, request, response as unknown as Response);
+
+    expect(response.chunks.join('')).toContain(
+      'event: error\ndata: {"message":"Internal server error."}\n\n',
+    );
+    expect(response.chunks.join('')).not.toContain('provider secret');
+    expect(response.writableEnded).toBe(true);
+  });
+
+  it('does not write more events after the client disconnects', async () => {
+    const request = new EventEmitter() as Request;
+    const response = new FakeResponse();
+    const execute: RunConversationTurn['execute'] = async (_input, options) => {
+      options?.onEvent?.({ type: 'agent_start' });
+      request.emit('close');
+      options?.onEvent?.({ type: 'agent_end', messages: turnResult.messages });
+      return turnResult;
+    };
+    const controller = new ConversationsController({ execute } as RunConversationTurn);
+
+    await controller.streamTurn({ message: 'hello' }, request, response as unknown as Response);
+
+    expect(response.chunks.join('')).toBe('event: agent_start\ndata: {"type":"agent_start"}\n\n');
+    expect(response.writableEnded).toBe(true);
+  });
+});
+
+async function startServer(execute: RunConversationTurn['execute']): Promise<{
+  readonly app: INestApplication;
+  readonly port: number;
+}> {
+  const module = await Test.createTestingModule({
+    imports: [
+      ApiModule.register({
+        providers: [{ provide: RunConversationTurn, useValue: { execute } }],
+        exports: [RunConversationTurn],
+      }),
+    ],
+  }).compile();
+
+  const testApp = module.createNestApplication({ bodyParser: false });
+  await testApp.init();
+  await testApp.listen(0, '127.0.0.1');
+
+  const address = testApp.getHttpServer().address();
+  if (address === null || typeof address === 'string') {
+    throw new Error('Test server did not expose a TCP address.');
+  }
+  return { app: testApp, port: address.port };
+}
+
+function postJson(port: number, path: string, body: unknown): Promise<HttpResponse> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(
+      {
+        host: '127.0.0.1',
+        port,
+        path,
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+      },
+      (response) => {
+        const chunks: string[] = [];
+        response.setEncoding('utf8');
+        response.on('data', (chunk: string) => chunks.push(chunk));
+        response.on('end', () => {
+          resolve({
+            statusCode: response.statusCode ?? 0,
+            headers: response.headers,
+            body: chunks.join(''),
+          });
+        });
+      },
+    );
+    request.on('error', reject);
+    request.end(JSON.stringify(body));
+  });
+}

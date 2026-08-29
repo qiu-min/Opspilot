@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AgentMessage, AgentToolResult } from '@opspilot/agent-runtime';
+import type { AgentEvent, AgentMessage, AgentToolResult } from '@opspilot/agent-runtime';
 import type {
   Context,
   ModelToolCall,
@@ -180,7 +180,7 @@ function messageEntries(sessionManager: SessionManager): AgentMessage[] {
 }
 
 describe('RunConversationTurn', () => {
-  it('creates a session, runs a prompt, and persists only the turn messages', async () => {
+  it('keeps the original behavior when onEvent is omitted', async () => {
     const { directory, store } = createStore();
     const inputMessage = userMessage('hello');
     const response = assistantMessage('world');
@@ -281,8 +281,16 @@ describe('RunConversationTurn', () => {
       toolDefinitions: [definition],
       defaultModel: model,
     });
+    const events: AgentEvent[] = [];
 
-    const result = await runner.execute({ message: userMessage('use lookup') });
+    const result = await runner.execute(
+      { message: userMessage('use lookup') },
+      {
+        onEvent: (event) => {
+          events.push(event);
+        },
+      },
+    );
 
     expect(receivedContext).toEqual({ sessionId: result.sessionId });
     expect(receivedSignal).toBe(gateway.requestedOptions[0]?.signal);
@@ -293,6 +301,58 @@ describe('RunConversationTurn', () => {
       content: toolResult.content,
       details: toolResult.details,
       isError: false,
+    });
+    expect(
+      events
+        .filter(
+          (event): event is Extract<AgentEvent, { type: 'tool_execution_start' }> =>
+            event.type === 'tool_execution_start',
+        )
+        .map((event) => event.toolCall.callId),
+    ).toEqual([call.callId]);
+    expect(
+      events
+        .filter(
+          (event): event is Extract<AgentEvent, { type: 'tool_execution_end' }> =>
+            event.type === 'tool_execution_end',
+        )
+        .map((event) => event.toolCall.callId),
+    ).toEqual([call.callId]);
+  });
+
+  it('forwards AgentSession events to the execution listener', async () => {
+    const { store } = createStore();
+    const gateway = createGateway([assistantStream(assistantMessage('done'), model)]);
+    const runner = new RunConversationTurn({
+      sessionStore: store,
+      modelGateway: gateway,
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+    const events: AgentEvent[] = [];
+
+    await runner.execute(
+      { message: userMessage('hello') },
+      {
+        onEvent: (event) => {
+          events.push(event);
+        },
+      },
+    );
+
+    expect(events[0]).toEqual({ type: 'agent_start' });
+    expect(events.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        'turn_start',
+        'message_start',
+        'message_end',
+        'turn_end',
+        'agent_end',
+      ]),
+    );
+    expect(events.at(-1)).toEqual({
+      type: 'agent_end',
+      messages: expect.any(Array),
     });
   });
 
@@ -418,6 +478,45 @@ describe('RunConversationTurn', () => {
       'prompt persistence failed',
     );
     expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it('unsubscribes before disposing when the event listener fails', async () => {
+    const { store } = createStore();
+    const order: string[] = [];
+    const originalSubscribe = AgentSession.prototype.subscribe;
+    const originalDispose = AgentSession.prototype.dispose;
+    vi.spyOn(AgentSession.prototype, 'subscribe').mockImplementation(function (
+      this: AgentSession,
+      listener,
+    ) {
+      const unsubscribe = originalSubscribe.call(this, listener);
+      return () => {
+        order.push('unsubscribe');
+        unsubscribe();
+      };
+    });
+    vi.spyOn(AgentSession.prototype, 'dispose').mockImplementation(function (this: AgentSession) {
+      order.push('dispose');
+      originalDispose.call(this);
+    });
+    const runner = new RunConversationTurn({
+      sessionStore: store,
+      modelGateway: createGateway([assistantStream(assistantMessage('done'), model)]),
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+
+    await expect(
+      runner.execute(
+        { message: userMessage('hello') },
+        {
+          onEvent: () => {
+            throw new Error('event listener failed');
+          },
+        },
+      ),
+    ).rejects.toThrow('event listener failed');
+    expect(order).toEqual(['unsubscribe', 'dispose']);
   });
 
   it('serializes concurrent turns for one existing session after loading under the lock', async () => {

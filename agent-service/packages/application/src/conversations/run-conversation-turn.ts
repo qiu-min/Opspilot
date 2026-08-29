@@ -4,7 +4,11 @@ import { createAgentSession } from '../agent-session/create-agent-session.js';
 import type { SessionStore } from '../session-store/session-store.js';
 import type { ToolDefinition } from '../tools/tool-definition.js';
 import { wrapToolDefinitions } from '../tools/wrap-tool-definition.js';
-import type { RunConversationTurnInput, RunConversationTurnResult } from './conversation-types.js';
+import type {
+  RunConversationTurnExecutionOptions,
+  RunConversationTurnInput,
+  RunConversationTurnResult,
+} from './conversation-types.js';
 import {
   InMemorySessionRunCoordinator,
   type SessionRunCoordinator,
@@ -40,18 +44,24 @@ export class RunConversationTurn {
   }
 
   /** Executes one turn and returns only the messages produced by that turn. */
-  public async execute(input: RunConversationTurnInput): Promise<RunConversationTurnResult> {
+  public async execute(
+    input: RunConversationTurnInput,
+    options?: RunConversationTurnExecutionOptions,
+  ): Promise<RunConversationTurnResult> {
     if (input.sessionId !== undefined) {
       return await this.sessionRunCoordinator.runExclusive(input.sessionId, () =>
-        this.executeTurn(input),
+        this.executeTurn(input, options),
       );
     }
 
-    return await this.executeTurn(input);
+    return await this.executeTurn(input, options);
   }
 
   /** Loads or creates the session and runs the complete AgentSession lifecycle. */
-  private async executeTurn(input: RunConversationTurnInput): Promise<RunConversationTurnResult> {
+  private async executeTurn(
+    input: RunConversationTurnInput,
+    options?: RunConversationTurnExecutionOptions,
+  ): Promise<RunConversationTurnResult> {
     const sessionManager =
       input.sessionId === undefined
         ? this.sessionStore.create()
@@ -67,7 +77,12 @@ export class RunConversationTurn {
       systemPrompt: this.systemPrompt,
     });
 
+    let unsubscribe: (() => void) | undefined;
     try {
+      if (options?.onEvent !== undefined) {
+        unsubscribe = agentSession.subscribe(options.onEvent);
+      }
+
       const messages = await agentSession.prompt(input.message);
 
       return {
@@ -76,6 +91,7 @@ export class RunConversationTurn {
         messages,
       };
     } finally {
+      unsubscribe?.();
       agentSession.dispose();
     }
   }

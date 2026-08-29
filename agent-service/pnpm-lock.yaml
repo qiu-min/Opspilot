@@ -225,6 +225,9 @@ importers:
       '@nestjs/platform-express':
         specifier: ^11.0.0
         version: 11.1.29(@nestjs/common@11.1.29(reflect-metadata@0.2.2)(rxjs@7.8.1)(supports-color@7.1.0))(@nestjs/core@11.1.29)(supports-color@7.1.0)
+      '@opspilot/application':
+        specifier: workspace:*
+        version: link:../../packages/application
       pino:
         specifier: ^9.9.4
         version: 9.9.4
