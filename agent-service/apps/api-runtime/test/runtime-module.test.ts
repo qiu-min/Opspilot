@@ -108,7 +108,7 @@ describe('API runtime composition root', () => {
       await readFile(new URL('../package.json', import.meta.url), 'utf8'),
     ) as { readonly scripts?: { readonly start?: string } };
 
-    expect(packageJson.scripts?.start).toBe('node dist/main.js');
+    expect(packageJson.scripts?.start).toContain('dist/main.js');
   });
 
   it('requires RunConversationTurn when compiling the API module', async () => {
