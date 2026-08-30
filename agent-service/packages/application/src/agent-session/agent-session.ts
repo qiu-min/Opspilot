@@ -7,11 +7,19 @@ import type {
   AgentState,
 } from '@opspilot/agent-runtime';
 
+import {
+  estimateContextTokens,
+  shouldCompact,
+  type CompactionService,
+  type CompactionSettings,
+} from '../context/index.js';
 import { SessionManager } from '../session/session-manager.js';
 
 export interface AgentSessionConfig {
   readonly agent: Agent;
   readonly sessionManager: SessionManager;
+  readonly compactionService?: CompactionService;
+  readonly compactionSettings?: CompactionSettings;
 }
 
 /** 应用层的最小 Agent 生命周期包装器，负责将完成消息写入 Session。 */
@@ -20,12 +28,16 @@ export class AgentSession {
   public readonly sessionManager: SessionManager;
 
   private readonly unsubscribeAgent: () => void;
+  private readonly compactionService?: CompactionService;
+  private readonly compactionSettings?: CompactionSettings;
   private disposed = false;
 
   /** 创建 AgentSession 并注册唯一的内部持久化监听器。 */
   public constructor(config: AgentSessionConfig) {
     this.agent = config.agent;
     this.sessionManager = config.sessionManager;
+    this.compactionService = config.compactionService;
+    this.compactionSettings = config.compactionSettings;
     this.unsubscribeAgent = this.agent.subscribe((event) => this.handleAgentEvent(event));
   }
 
@@ -34,7 +46,9 @@ export class AgentSession {
     input: AgentMessage | readonly AgentMessage[],
   ): Promise<readonly AgentMessage[]> {
     this.assertNotDisposed();
-    return await this.agent.prompt(input);
+    const messages = await this.agent.prompt(input);
+    await this.maybeCompactAfterRun();
+    return messages;
   }
 
   /** 请求停止当前 Agent Run。 */
@@ -75,6 +89,37 @@ export class AgentSession {
   private handleAgentEvent(event: AgentEvent): void {
     if (event.type !== 'message_end' || !isStandardMessage(event.message)) return;
     this.sessionManager.appendMessage(event.message);
+  }
+
+  /** Performs best-effort post-run compaction after normal message persistence completes. */
+  private async maybeCompactAfterRun(): Promise<void> {
+    const compactionService = this.compactionService;
+    const compactionSettings = this.compactionSettings;
+    const state = this.agent.state;
+    if (compactionService === undefined || compactionSettings === undefined) return;
+    if (state.model.contextWindow === undefined) return;
+    if (state.errorInfo !== undefined) return;
+
+    const estimate = estimateContextTokens(state.messages);
+    if (!shouldCompact(estimate.tokens, state.model.contextWindow, compactionSettings)) return;
+
+    try {
+      const result = await compactionService.compact({
+        entries: this.sessionManager.getBranch(),
+        model: state.model,
+        settings: compactionSettings,
+        signal: this.agent.signal,
+      });
+      if (result !== undefined) {
+        this.sessionManager.appendCompaction(
+          result.summary,
+          result.firstKeptEntryId,
+          result.tokensBefore,
+        );
+      }
+    } catch {
+      // Compaction is post-run maintenance; the completed user turn remains successful.
+    }
   }
 }
 

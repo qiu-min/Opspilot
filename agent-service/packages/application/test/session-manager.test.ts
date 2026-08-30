@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AgentMessage } from '@opspilot/agent-runtime';
-import { SessionManager } from '../src/index.js';
+import { createCompactionSummaryMessage, SessionManager } from '../src/index.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -108,6 +108,86 @@ describe('SessionManager append and tree behavior', () => {
     expect(context.model).toEqual({ provider: 'provider-branch', modelId: 'model-branch' });
     expect(context.thinkingLevel).toBe('low');
   });
+
+  it('projects the latest compaction summary and keeps the original message entries', () => {
+    const session = SessionManager.inMemory();
+    const first = session.appendMessage(userMessage('A'));
+    const second = session.appendMessage(assistantMessage('B'));
+    const third = session.appendMessage(userMessage('C'));
+    const fourth = session.appendMessage(assistantMessage('D'));
+    const fifth = session.appendMessage(userMessage('E'));
+    const sixth = session.appendMessage(assistantMessage('F'));
+    const firstCompaction = session.appendCompaction('summary one', fifth.id, 42);
+
+    expect(firstCompaction.parentId).toBe(sixth.id);
+    expect(session.buildSessionContext().messages).toEqual([
+      createCompactionSummaryMessage('summary one'),
+      fifth.message,
+      sixth.message,
+    ]);
+    expect(session.getEntries()).toEqual([
+      first,
+      second,
+      third,
+      fourth,
+      fifth,
+      sixth,
+      firstCompaction,
+    ]);
+
+    const seventh = session.appendMessage(userMessage('G'));
+    const eighth = session.appendMessage(assistantMessage('H'));
+    expect(session.buildSessionContext().messages).toEqual([
+      createCompactionSummaryMessage('summary one'),
+      fifth.message,
+      sixth.message,
+      seventh.message,
+      eighth.message,
+    ]);
+
+    const secondCompaction = session.appendCompaction('summary two', seventh.id, 84);
+    expect(session.buildSessionContext().messages).toEqual([
+      createCompactionSummaryMessage('summary two'),
+      seventh.message,
+      eighth.message,
+    ]);
+    expect(session.getEntries()).toHaveLength(10);
+    expect(session.getEntries().filter((entry) => entry.type === 'message')).toHaveLength(8);
+    expect(session.getEntries().filter((entry) => entry.type === 'compaction')).toEqual([
+      firstCompaction,
+      secondCompaction,
+    ]);
+  });
+
+  it('does not apply a compaction from a different branch', () => {
+    const session = SessionManager.inMemory();
+    const first = session.appendMessage(userMessage('A'));
+    const second = session.appendMessage(assistantMessage('B'));
+    const third = session.appendMessage(userMessage('C'));
+    const compaction = session.appendCompaction('summary', second.id, 10);
+
+    session.branch(third.id);
+
+    expect(session.buildSessionContext().messages).toEqual([first.message, second.message, third.message]);
+    expect(compaction.parentId).toBe(third.id);
+  });
+
+  it('rejects invalid compaction references and values without appending an entry', () => {
+    const session = SessionManager.inMemory();
+    const message = session.appendMessage(userMessage('A'));
+    const entryCount = session.getEntries().length;
+
+    expect(() => session.appendCompaction('', message.id, 0)).toThrow(
+      'Compaction summary must be non-empty',
+    );
+    expect(() => session.appendCompaction('summary', 'missing', 0)).toThrow(
+      'Session entry not found: missing',
+    );
+    expect(() => session.appendCompaction('summary', message.id, -1)).toThrow(
+      'tokensBefore must be a non-negative integer',
+    );
+    expect(session.getEntries()).toHaveLength(entryCount);
+  });
 });
 
 describe('SessionManager JSONL persistence', () => {
@@ -146,6 +226,28 @@ describe('SessionManager JSONL persistence', () => {
     const reloaded = SessionManager.load(filePath);
     expect(reloaded.getLeafId()).toBe(resumed.id);
     expect(reloaded.getEntry(resumed.id)?.parentId).toBe(session.getLeafId());
+  });
+
+  it('serializes and reloads CompactionEntry without removing original messages', () => {
+    const directory = temporaryDirectory();
+    const filePath = join(directory, 'session-with-compaction.jsonl');
+    const session = SessionManager.createPersisted(filePath, {
+      id: 'session-compaction',
+      timestamp: '2026-01-01T00:00:00.000Z',
+    });
+    const first = session.appendMessage(userMessage('old'));
+    const kept = session.appendMessage(assistantMessage('kept'));
+    const compaction = session.appendCompaction('summary', kept.id, 123);
+
+    const loaded = SessionManager.load(filePath);
+
+    expect(loaded.getEntries()).toEqual([first, kept, compaction]);
+    expect(loaded.getLeafId()).toBe(compaction.id);
+    expect(loaded.buildSessionContext().messages).toEqual([
+      createCompactionSummaryMessage('summary'),
+      kept.message,
+    ]);
+    expect(readFileSync(filePath, 'utf8')).toContain('"type":"compaction"');
   });
 });
 
@@ -236,6 +338,60 @@ describe('SessionManager invalid JSONL files', () => {
           .map((entry) => JSON.stringify(entry))
           .join('\n') + '\n',
         'invalid thinkingLevel',
+      ],
+      [
+        'invalid-compaction-summary.jsonl',
+        [
+          { type: 'session', version: 1, id: 's', timestamp: '2026-01-01T00:00:00.000Z' },
+          {
+            type: 'compaction',
+            id: 'compaction',
+            parentId: null,
+            timestamp: '2026-01-01T00:00:01.000Z',
+            summary: ' ',
+            firstKeptEntryId: 'message',
+            tokensBefore: 0,
+          },
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join('\n') + '\n',
+        'invalid summary',
+      ],
+      [
+        'invalid-compaction-first-kept.jsonl',
+        [
+          { type: 'session', version: 1, id: 's', timestamp: '2026-01-01T00:00:00.000Z' },
+          {
+            type: 'compaction',
+            id: 'compaction',
+            parentId: null,
+            timestamp: '2026-01-01T00:00:01.000Z',
+            summary: 'summary',
+            firstKeptEntryId: ' ',
+            tokensBefore: 0,
+          },
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join('\n') + '\n',
+        'invalid firstKeptEntryId',
+      ],
+      [
+        'invalid-compaction-tokens.jsonl',
+        [
+          { type: 'session', version: 1, id: 's', timestamp: '2026-01-01T00:00:00.000Z' },
+          {
+            type: 'compaction',
+            id: 'compaction',
+            parentId: null,
+            timestamp: '2026-01-01T00:00:01.000Z',
+            summary: 'summary',
+            firstKeptEntryId: 'message',
+            tokensBefore: -1,
+          },
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join('\n') + '\n',
+        'invalid tokensBefore',
       ],
     ];
 

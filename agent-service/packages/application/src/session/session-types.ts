@@ -30,7 +30,18 @@ export interface ThinkingLevelChangeEntry extends SessionEntryBase {
   thinkingLevel: AgentThinkingLevel;
 }
 
-export type SessionEntry = SessionMessageEntry | ModelChangeEntry | ThinkingLevelChangeEntry;
+export interface CompactionEntry extends SessionEntryBase {
+  readonly type: 'compaction';
+  readonly summary: string;
+  readonly firstKeptEntryId: string;
+  readonly tokensBefore: number;
+}
+
+export type SessionEntry =
+  | SessionMessageEntry
+  | ModelChangeEntry
+  | ThinkingLevelChangeEntry
+  | CompactionEntry;
 
 export type SessionFileEntry = SessionHeader | SessionEntry;
 

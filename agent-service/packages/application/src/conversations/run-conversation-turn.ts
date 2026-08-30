@@ -1,7 +1,11 @@
 import type { Model, ModelGateway } from '@opspilot/model-gateway';
 
 import { createAgentSession } from '../agent-session/create-agent-session.js';
-import type { ContextManager } from '../context/context-manager.js';
+import type {
+  CompactionService,
+  CompactionSettings,
+  ContextManager,
+} from '../context/index.js';
 import type { SessionStore } from '../session-store/session-store.js';
 import type { ToolDefinition } from '../tools/tool-definition.js';
 import { wrapToolDefinitions } from '../tools/wrap-tool-definition.js';
@@ -23,6 +27,8 @@ export interface RunConversationTurnOptions {
   readonly defaultModel?: Model;
   readonly systemPrompt?: string;
   readonly contextManager?: ContextManager;
+  readonly compactionService?: CompactionService;
+  readonly compactionSettings?: CompactionSettings;
   readonly sessionRunCoordinator?: SessionRunCoordinator;
 }
 
@@ -34,6 +40,8 @@ export class RunConversationTurn {
   private readonly defaultModel?: Model;
   private readonly systemPrompt?: string;
   private readonly contextManager?: ContextManager;
+  private readonly compactionService?: CompactionService;
+  private readonly compactionSettings?: CompactionSettings;
   private readonly sessionRunCoordinator: SessionRunCoordinator;
 
   public constructor(options: RunConversationTurnOptions) {
@@ -43,6 +51,8 @@ export class RunConversationTurn {
     this.defaultModel = options.defaultModel;
     this.systemPrompt = options.systemPrompt;
     this.contextManager = options.contextManager;
+    this.compactionService = options.compactionService;
+    this.compactionSettings = options.compactionSettings;
     this.sessionRunCoordinator =
       options.sessionRunCoordinator ?? new InMemorySessionRunCoordinator();
   }
@@ -80,6 +90,8 @@ export class RunConversationTurn {
       tools,
       systemPrompt: this.systemPrompt,
       contextManager: this.contextManager,
+      compactionService: this.compactionService,
+      compactionSettings: this.compactionSettings,
     });
 
     let unsubscribe: (() => void) | undefined;

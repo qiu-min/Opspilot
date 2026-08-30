@@ -6,6 +6,7 @@ export {
 } from './session-manager.js';
 export type { SessionManagerCreateOptions } from './session-manager.js';
 export type {
+  CompactionEntry,
   ModelChangeEntry,
   SessionContext,
   SessionEntry,

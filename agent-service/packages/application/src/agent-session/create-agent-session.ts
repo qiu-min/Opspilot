@@ -2,8 +2,14 @@ import { clampThinkingLevel, type Model, type ModelGateway } from '@opspilot/mod
 import { Agent, type AgentThinkingLevel, type AgentTool } from '@opspilot/agent-runtime';
 
 import { SessionManager } from '../session/session-manager.js';
-import type { ContextManager } from '../context/context-manager.js';
-import { DefaultContextManager } from '../context/default-context-manager.js';
+import {
+  DEFAULT_COMPACTION_SETTINGS,
+  DefaultCompactionService,
+  DefaultContextManager,
+  type CompactionService,
+  type CompactionSettings,
+  type ContextManager,
+} from '../context/index.js';
 import { AgentSession } from './agent-session.js';
 
 export interface CreateAgentSessionOptions {
@@ -14,6 +20,8 @@ export interface CreateAgentSessionOptions {
   readonly tools?: readonly AgentTool[];
   readonly systemPrompt?: string;
   readonly contextManager?: ContextManager;
+  readonly compactionService?: CompactionService;
+  readonly compactionSettings?: CompactionSettings;
 }
 
 /** 从 Session 上下文组装 Model、Agent Runtime 和 AgentSession。 */
@@ -28,6 +36,9 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
   );
   const contextManager = options.contextManager ?? new DefaultContextManager();
   const tools = options.tools ?? [];
+  const compactionService =
+    options.compactionService ?? new DefaultCompactionService(options.modelGateway);
+  const compactionSettings = options.compactionSettings ?? DEFAULT_COMPACTION_SETTINGS;
 
   persistInitialOrOverriddenState(
     options.sessionManager,
@@ -62,6 +73,8 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
   return new AgentSession({
     agent,
     sessionManager: options.sessionManager,
+    compactionService,
+    compactionSettings,
   });
 }
 

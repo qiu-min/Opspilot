@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentMessage } from '@opspilot/agent-runtime';
+import { createCompactionSummaryMessage } from '../context/compaction-summary-message.js';
 import {
   appendSessionEntry,
   createSessionFile,
@@ -8,6 +9,7 @@ import {
 } from './session-jsonl.js';
 import type {
   ModelChangeEntry,
+  CompactionEntry,
   SessionContext,
   SessionEntry,
   SessionHeader,
@@ -129,6 +131,44 @@ export class SessionManager {
     }));
   }
 
+  /** Appends a durable summary boundary without removing any existing entries. */
+  public appendCompaction(
+    summary: string,
+    firstKeptEntryId: string,
+    tokensBefore: number,
+  ): CompactionEntry {
+    if (!isNonEmptyString(summary)) throw new Error('Compaction summary must be non-empty.');
+    if (!isNonEmptyString(firstKeptEntryId)) {
+      throw new Error('Compaction firstKeptEntryId must be non-empty.');
+    }
+    if (!Number.isInteger(tokensBefore) || tokensBefore < 0) {
+      throw new Error('Compaction tokensBefore must be a non-negative integer.');
+    }
+
+    const firstKeptEntry = this.byId.get(firstKeptEntryId);
+    if (firstKeptEntry === undefined) {
+      throw new SessionEntryNotFoundError(firstKeptEntryId);
+    }
+    if (firstKeptEntry.type === 'compaction') {
+      throw new SessionTreeError('Compaction firstKeptEntryId cannot point to a compaction entry.');
+    }
+    if (!this.getBranch().some((entry) => entry.id === firstKeptEntryId)) {
+      throw new SessionTreeError(
+        `Compaction firstKeptEntryId must belong to the active branch: ${firstKeptEntryId}`,
+      );
+    }
+
+    return this.appendEntry((id, parentId, timestamp) => ({
+      type: 'compaction',
+      id,
+      parentId,
+      timestamp,
+      summary,
+      firstKeptEntryId,
+      tokensBefore,
+    }));
+  }
+
   public getLeafId(): string | null {
     return this.leafId;
   }
@@ -179,14 +219,31 @@ export class SessionManager {
   }
 
   public buildSessionContext(): SessionContext {
+    const branch = this.getBranch();
+    const latestCompactionIndex = findLatestCompactionIndex(branch);
+    const firstKeptIndex =
+      latestCompactionIndex === null
+        ? null
+        : findFirstKeptIndex(branch, latestCompactionIndex);
     let thinkingLevel: SessionContext['thinkingLevel'] = 'off';
     let model: SessionContext['model'] = null;
     const messages: AgentMessage[] = [];
 
-    for (const entry of this.getBranch()) {
+    if (latestCompactionIndex !== null) {
+      const compaction = branch[latestCompactionIndex];
+      if (compaction.type !== 'compaction') {
+        throw new SessionTreeError('Latest compaction entry could not be resolved.');
+      }
+      messages.push(createCompactionSummaryMessage(compaction.summary));
+    }
+
+    for (let index = 0; index < branch.length; index += 1) {
+      const entry = branch[index];
       switch (entry.type) {
         case 'message':
-          messages.push(cloneValue(entry.message));
+          if (firstKeptIndex === null || index >= firstKeptIndex) {
+            messages.push(cloneValue(entry.message));
+          }
 
           if (entry.message.role === 'assistant') {
             model = {
@@ -201,6 +258,8 @@ export class SessionManager {
           break;
         case 'model_change':
           model = { provider: entry.provider, modelId: entry.modelId };
+          break;
+        case 'compaction':
           break;
       }
     }
@@ -245,6 +304,31 @@ export class SessionManager {
 
     this.leafId = this.entries.at(-1)?.id ?? null;
   }
+}
+
+function findLatestCompactionIndex(entries: readonly SessionEntry[]): number | null {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    if (entries[index].type === 'compaction') return index;
+  }
+  return null;
+}
+
+function findFirstKeptIndex(
+  entries: readonly SessionEntry[],
+  compactionIndex: number,
+): number {
+  const compaction = entries[compactionIndex];
+  if (compaction.type !== 'compaction') {
+    throw new SessionTreeError('Compaction entry could not be resolved.');
+  }
+
+  const firstKeptIndex = entries.findIndex((entry) => entry.id === compaction.firstKeptEntryId);
+  if (firstKeptIndex < 0 || firstKeptIndex > compactionIndex) {
+    throw new SessionTreeError(
+      `Compaction firstKeptEntryId is not an ancestor of the compaction: ${compaction.firstKeptEntryId}`,
+    );
+  }
+  return firstKeptIndex;
 }
 
 function createHeader(options: SessionManagerCreateOptions): SessionHeader {

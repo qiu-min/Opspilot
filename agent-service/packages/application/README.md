@@ -21,15 +21,17 @@ OpsPilot Agent Service 的应用层。
 - 组合具体 Agent 所需的模型配置、System Prompt 与工具
 - 向上层 API 提供稳定的应用用例接口
 
-当前范围暂不包含动态切换模型或 thinking level、重试、压缩、扩展系统和 Session 切换等复杂 Coding Agent 能力。
+当前范围暂不包含动态切换模型或 thinking level、复杂重试、扩展系统和 Session 切换等 Coding Agent 能力。
 
 ## Context 边界
 
 `SessionManager` 保存完整会话事实；`ContextManager` 只决定本次模型调用使用哪些 `AgentMessage`，不依赖或修改 `SessionManager`。`createAgentSession` 将 ContextManager 接入 Agent Runtime 的 `transformContext` hook，因此经过 ContextManager 的消息只影响当前模型调用，不影响后续 Session 持久化。
 
-Phase 1 的默认 `DefaultContextManager` 不裁剪消息，只返回输入消息的副本。Token budget、Compaction、Memory、RAG 和摘要等能力不属于当前实现范围。
+Phase 1 的默认 `DefaultContextManager` 不裁剪消息，只返回输入消息的副本。Context Accounting 仅负责测量上下文用量与判断阈值。
 
-Context Accounting 是独立的纯计算边界：它优先使用最近有效 AssistantMessage 的 `Usage`，再估算其后的新增消息，并通过 `shouldCompact()` 返回是否达到预留 token 阈值。它不会执行 Compaction 或修改 Session。
+Context Accounting 是独立的纯计算边界：它优先使用最近有效 AssistantMessage 的 `Usage`，再估算其后的新增消息，并通过 `shouldCompact()` 返回是否达到预留 token 阈值。
+
+Phase 3 支持正常 Agent Run 完成后的自动 Compaction：生成摘要并追加 `CompactionEntry`，但不删除原始消息。Compaction 失败时保持本轮结果和原始 Session 可恢复。Memory、RAG、PromptBuilder、工具输出治理和 overflow recovery 不属于当前实现范围。
 
 核心关系：
 

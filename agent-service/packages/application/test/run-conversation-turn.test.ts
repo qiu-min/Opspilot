@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentEvent, AgentMessage, AgentToolResult } from '@opspilot/agent-runtime';
 import type {
+  AssistantMessage,
   Context,
   ModelToolCall,
   Options,
@@ -15,6 +16,7 @@ import { createModelEventStream } from '@opspilot/model-gateway';
 
 import {
   AgentSession,
+  createCompactionSummaryMessage,
   type ContextManager,
   FileSystemSessionStore,
   RunConversationTurn,
@@ -81,7 +83,7 @@ function assistantMessage(
   text: string,
   responseModel: Model = model,
   toolCalls?: readonly ModelToolCall[],
-): AgentMessage {
+): AssistantMessage {
   return {
     role: 'assistant',
     api: responseModel.api,
@@ -138,6 +140,7 @@ function createGateway(
   streams: readonly ModelEventStream[],
   registeredModels: readonly Model[] = [model],
   onStream?: () => void,
+  completion?: AssistantMessage,
 ): ModelGateway & {
   readonly requestedModels: Model[];
   readonly requestedContexts: Context[];
@@ -165,7 +168,8 @@ function createGateway(
       registeredModels.find((candidate) => candidate.provider === provider && candidate.id === id),
     stream,
     complete: async () => {
-      throw new Error('complete is not used by this test.');
+      if (completion === undefined) throw new Error('complete is not used by this test.');
+      return completion;
     },
     requestedModels,
     requestedContexts,
@@ -241,6 +245,98 @@ describe('RunConversationTurn', () => {
       secondResponse,
     ]);
     expect(secondGateway.requestedModels[0]).toBe(model);
+  });
+
+  it('auto-compacts after a run and uses the summary on the next turn', async () => {
+    const { store } = createStore();
+    const compactingModel = { ...model, contextWindow: 1 };
+    const firstInput = userMessage('first input');
+    const firstResponse = assistantMessage('first response', compactingModel);
+    const secondInput = userMessage('second input');
+    const secondResponse = assistantMessage('second response', compactingModel);
+    const summaryResponse = assistantMessage('history summary', compactingModel);
+    const gateway = createGateway(
+      [
+        assistantStream(firstResponse, compactingModel),
+        assistantStream(secondResponse, compactingModel),
+      ],
+      [compactingModel],
+      undefined,
+      summaryResponse,
+    );
+    const runner = new RunConversationTurn({
+      sessionStore: store,
+      modelGateway: gateway,
+      toolDefinitions: [],
+      defaultModel: compactingModel,
+      compactionSettings: {
+        enabled: true,
+        reserveTokens: 0,
+        keepRecentTokens: 1,
+      },
+    });
+
+    const firstResult = await runner.execute({ message: firstInput });
+    const afterCompaction = store.load(firstResult.sessionId);
+    const compaction = afterCompaction
+      .getEntries()
+      .find((entry) => entry.type === 'compaction');
+
+    expect(compaction).toEqual(
+      expect.objectContaining({
+        type: 'compaction',
+        summary: 'history summary',
+      }),
+    );
+
+    await runner.execute({ sessionId: firstResult.sessionId, message: secondInput });
+
+    expect(gateway.requestedContexts[1]?.messages).toEqual([
+      createCompactionSummaryMessage('history summary'),
+      firstResponse,
+      secondInput,
+    ]);
+    expect(
+      store
+        .load(firstResult.sessionId)
+        .getEntries()
+        .filter((entry) => entry.type === 'message')
+        .map((entry) => entry.message),
+    ).toEqual([firstInput, firstResponse, secondInput, secondResponse]);
+  });
+
+  it('keeps a successful turn successful when post-run compaction fails', async () => {
+    const { store } = createStore();
+    const compactingModel = { ...model, contextWindow: 1 };
+    const inputMessage = userMessage('input');
+    const response = assistantMessage('response', compactingModel);
+    const gateway = createGateway(
+      [assistantStream(response, compactingModel)],
+      [compactingModel],
+    );
+    const runner = new RunConversationTurn({
+      sessionStore: store,
+      modelGateway: gateway,
+      toolDefinitions: [],
+      defaultModel: compactingModel,
+      compactionSettings: {
+        enabled: true,
+        reserveTokens: 0,
+        keepRecentTokens: 1,
+      },
+    });
+
+    const result = await runner.execute({ message: inputMessage });
+    const loaded = store.load(result.sessionId);
+
+    expect(result.messages).toEqual([inputMessage, response]);
+    expect(loaded.getEntries().some((entry) => entry.type === 'compaction')).toBe(false);
+    expect(
+      loaded
+        .getEntries()
+        .filter((entry) => entry.type === 'message')
+        .map((entry) => entry.message),
+    ).toEqual([inputMessage, response]);
   });
 
   it('uses the prepared context without changing session history or message persistence', async () => {

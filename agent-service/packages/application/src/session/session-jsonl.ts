@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path';
 import type { AgentThinkingLevel } from '@opspilot/agent-runtime';
 import type {
+  CompactionEntry,
   ModelChangeEntry,
   SessionEntry,
   SessionFileEntry,
@@ -158,6 +159,27 @@ function parseEntry(value: unknown, lineNumber: number): SessionEntry {
         );
       }
       return value as unknown as ThinkingLevelChangeEntry;
+    case 'compaction':
+      if (!isNonEmptyString(value.summary)) {
+        throw new SessionJsonlError(
+          `Compaction entry ${value.id} has an invalid summary (line ${lineNumber}).`,
+        );
+      }
+      if (!isNonEmptyString(value.firstKeptEntryId)) {
+        throw new SessionJsonlError(
+          `Compaction entry ${value.id} has an invalid firstKeptEntryId (line ${lineNumber}).`,
+        );
+      }
+      if (
+        typeof value.tokensBefore !== 'number' ||
+        !Number.isInteger(value.tokensBefore) ||
+        value.tokensBefore < 0
+      ) {
+        throw new SessionJsonlError(
+          `Compaction entry ${value.id} has an invalid tokensBefore (line ${lineNumber}).`,
+        );
+      }
+      return value as unknown as CompactionEntry;
     default:
       throw new SessionJsonlError(`Unsupported session entry type: ${value.type}.`);
   }
@@ -165,6 +187,7 @@ function parseEntry(value: unknown, lineNumber: number): SessionEntry {
 
 function validateAppendOnlyOrder(entries: readonly SessionEntry[]): void {
   const seenIds = new Set<string>();
+  const entriesById = new Map<string, SessionEntry>();
 
   for (const entry of entries) {
     if (seenIds.has(entry.id)) {
@@ -185,8 +208,49 @@ function validateAppendOnlyOrder(entries: readonly SessionEntry[]): void {
       );
     }
 
+    if (entry.type === 'compaction') {
+      const firstKeptEntry = entriesById.get(entry.firstKeptEntryId);
+      if (firstKeptEntry === undefined) {
+        throw new SessionJsonlError(
+          `Compaction entry ${entry.id} references a firstKeptEntryId that has not appeared yet: ${entry.firstKeptEntryId}.`,
+        );
+      }
+      if (firstKeptEntry.type === 'compaction') {
+        throw new SessionJsonlError(
+          `Compaction entry ${entry.id} cannot use another compaction as firstKeptEntryId: ${entry.firstKeptEntryId}.`,
+        );
+      }
+      if (!isEntryOnBranch(entry.firstKeptEntryId, entry.parentId, entriesById)) {
+        throw new SessionJsonlError(
+          `Compaction entry ${entry.id} has a firstKeptEntryId outside its active branch: ${entry.firstKeptEntryId}.`,
+        );
+      }
+    }
+
     seenIds.add(entry.id);
+    entriesById.set(entry.id, entry);
   }
+}
+
+function isEntryOnBranch(
+  entryId: string,
+  branchHeadId: string | null,
+  entriesById: ReadonlyMap<string, SessionEntry>,
+): boolean {
+  const visited = new Set<string>();
+  let currentId = branchHeadId;
+
+  while (currentId !== null) {
+    if (currentId === entryId) return true;
+    if (visited.has(currentId)) return false;
+    visited.add(currentId);
+
+    const current = entriesById.get(currentId);
+    if (current === undefined) return false;
+    currentId = current.parentId;
+  }
+
+  return false;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
