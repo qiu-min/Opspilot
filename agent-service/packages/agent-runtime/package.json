@@ -4,15 +4,20 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@opspilot/model-gateway": "workspace:*"
+  },
   "devDependencies": {
-    "@opspilot/model-gateway": "workspace:*",
     "@types/node": "^26.2.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.10"
