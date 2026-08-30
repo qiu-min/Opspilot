@@ -16,3 +16,8 @@ export type {
   SessionMessageEntry,
   ThinkingLevelChangeEntry,
 } from './session-types.js';
+export {
+  buildSessionMessageProjection,
+  type SessionProjectedMessage,
+  type SessionProjection,
+} from './session-projection.js';

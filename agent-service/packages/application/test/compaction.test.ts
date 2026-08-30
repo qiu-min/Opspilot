@@ -9,6 +9,7 @@ import type {
 } from '@opspilot/model-gateway';
 
 import {
+  buildSessionMessageProjection,
   DefaultCompactionService,
   prepareCompaction,
   SessionManager,
@@ -75,6 +76,44 @@ function createCompletionGateway(
 }
 
 describe('Compaction preparation and service', () => {
+  it('uses one projection for plain, latest-compacted, repeated, and branched history', () => {
+    const session = SessionManager.inMemory();
+    const first = session.appendMessage(userMessage('A'));
+    const kept = session.appendMessage(assistantMessage([{ type: 'text', text: 'B' }]));
+    session.appendCompaction('summary one', kept.id, 10);
+    const recent = session.appendMessage(userMessage('C'));
+
+    const compactedProjection = buildSessionMessageProjection(session.getBranch());
+    expect(compactedProjection.messages.map((item) => item.message)).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: [expect.objectContaining({ text: expect.stringContaining('summary one') })],
+      }),
+      kept.message,
+      recent.message,
+    ]);
+
+    const secondCompaction = session.appendCompaction('summary two', recent.id, 20);
+    const repeatedProjection = buildSessionMessageProjection(session.getBranch());
+    expect(repeatedProjection.messages.map((item) => item.message)).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: [expect.objectContaining({ text: expect.stringContaining('summary two') })],
+      }),
+      recent.message,
+    ]);
+    expect(secondCompaction.firstKeptEntryId).toBe(recent.id);
+
+    session.branch(first.id);
+    const branched = session.appendMessage(userMessage('branch'));
+    const branchProjection = buildSessionMessageProjection(session.getBranch());
+    expect(branchProjection.latestCompactionIndex).toBeNull();
+    expect(branchProjection.messages.map((item) => item.message)).toEqual([
+      first.message,
+      branched.message,
+    ]);
+  });
+
   it('does not prepare compaction when the history is shorter than keepRecentTokens', () => {
     const session = SessionManager.inMemory();
     session.appendMessage(userMessage('A'));

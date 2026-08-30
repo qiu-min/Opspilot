@@ -13,7 +13,12 @@ import {
 } from '@opspilot/model-gateway';
 import type { AgentMessage, AgentTool } from '@opspilot/agent-runtime';
 
-import { createAgentSession, DefaultContextManager, SessionManager } from '../src/index.js';
+import {
+  createAgentSession,
+  DefaultContextManager,
+  SessionManager,
+  type CompactionService,
+} from '../src/index.js';
 
 const directories: string[] = [];
 
@@ -305,6 +310,99 @@ describe('AgentSession composition and persistence', () => {
       userMessage('running input'),
       assistantMessage('running'),
     ]);
+  });
+
+  it('uses an independent abort signal for post-run compaction and cancels it through abort', async () => {
+    const compactingModel = { ...model, contextWindow: 1 };
+    let resolveCompactionStarted!: () => void;
+    const compactionStarted = new Promise<void>((resolve) => {
+      resolveCompactionStarted = resolve;
+    });
+    let resolveCompactionRelease!: () => void;
+    const compactionRelease = new Promise<void>((resolve) => {
+      resolveCompactionRelease = resolve;
+    });
+    let compactionSignal: AbortSignal | undefined;
+    const sessionManager = SessionManager.inMemory();
+    const compactionService: CompactionService = {
+      compact: async ({ signal }) => {
+        compactionSignal = signal;
+        resolveCompactionStarted();
+        await compactionRelease;
+        const firstMessage = sessionManager
+          .getEntries()
+          .find((entry) => entry.type === 'message');
+        if (firstMessage === undefined) throw new Error('Expected persisted input message.');
+        return {
+          summary: 'should not be appended after abort',
+          firstKeptEntryId: firstMessage.id,
+          tokensBefore: 1,
+        };
+      },
+    };
+    const session = createAgentSession({
+      sessionManager,
+      modelGateway: createGateway([assistantStream(assistantMessage('response'))], [compactingModel]),
+      model: compactingModel,
+      compactionService,
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+
+    const run = session.prompt(userMessage('input'));
+    await compactionStarted;
+
+    expect(compactionSignal).toBeDefined();
+    expect(compactionSignal).not.toBe(session.agent.signal);
+    session.abort();
+    expect(compactionSignal?.aborted).toBe(true);
+
+    resolveCompactionRelease();
+    await run;
+
+    expect(sessionManager.getEntries().some((entry) => entry.type === 'compaction')).toBe(false);
+    expect(messageEntries(sessionManager)).toEqual([userMessage('input'), assistantMessage('response')]);
+    expect(
+      (session as unknown as { autoCompactionAbortController?: AbortController })
+        .autoCompactionAbortController,
+    ).toBeUndefined();
+    session.dispose();
+  });
+
+  it('aborts post-run compaction when disposed while it is pending', async () => {
+    const compactingModel = { ...model, contextWindow: 1 };
+    let resolveCompactionStarted!: () => void;
+    const compactionStarted = new Promise<void>((resolve) => {
+      resolveCompactionStarted = resolve;
+    });
+    let resolveCompactionRelease!: () => void;
+    const compactionRelease = new Promise<void>((resolve) => {
+      resolveCompactionRelease = resolve;
+    });
+    let compactionSignal: AbortSignal | undefined;
+    const sessionManager = SessionManager.inMemory();
+    const session = createAgentSession({
+      sessionManager,
+      modelGateway: createGateway([assistantStream(assistantMessage('response'))], [compactingModel]),
+      model: compactingModel,
+      compactionService: {
+        compact: async ({ signal }) => {
+          compactionSignal = signal;
+          resolveCompactionStarted();
+          await compactionRelease;
+          return undefined;
+        },
+      },
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+
+    const run = session.prompt(userMessage('input'));
+    await compactionStarted;
+    session.dispose();
+    expect(compactionSignal?.aborted).toBe(true);
+
+    resolveCompactionRelease();
+    await run;
+    expect(sessionManager.getEntries().some((entry) => entry.type === 'compaction')).toBe(false);
   });
 
   it('persists the effective thinking level when a model override clamps it', () => {

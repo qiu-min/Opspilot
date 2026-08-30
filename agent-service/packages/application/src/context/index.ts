@@ -18,6 +18,7 @@ export { createCompactionSummaryMessage } from './compaction-summary-message.js'
 export {
   calculateContextTokens,
   estimateContextTokens,
+  estimateSessionContextTokens,
   estimateTokens,
   shouldCompact,
 } from './context-accounting.js';

@@ -2,6 +2,8 @@ import type { AgentMessage } from '@opspilot/agent-runtime';
 import type { AssistantMessage, TextContent, Usage } from '@opspilot/model-gateway';
 
 import type { CompactionSettings } from './compaction-settings.js';
+import { buildSessionMessageProjection } from '../session/session-projection.js';
+import type { SessionEntry } from '../session/session-types.js';
 
 const TOKENS_PER_ESTIMATED_CHARACTER = 4;
 
@@ -73,6 +75,32 @@ export function estimateContextTokens(
   };
 }
 
+/** Estimates the active session context without trusting usage from before its latest compaction. */
+export function estimateSessionContextTokens(
+  entries: readonly SessionEntry[],
+): ContextUsageEstimate {
+  const projection = buildSessionMessageProjection(entries);
+  const messages = projection.messages.map((item) => item.message);
+
+  if (projection.latestCompactionIndex === null) {
+    return estimateContextTokens(messages);
+  }
+
+  const estimate = estimateContextTokens(messages);
+  if (estimate.lastUsageIndex === null) return estimate;
+
+  const usageMessage = projection.messages[estimate.lastUsageIndex];
+  if (
+    usageMessage === undefined ||
+    usageMessage.entryIndex === null ||
+    usageMessage.entryIndex <= projection.latestCompactionIndex
+  ) {
+    return estimatePureContextTokens(messages);
+  }
+
+  return estimate;
+}
+
 /** Returns whether context usage is beyond the configured compaction threshold. */
 export function shouldCompact(
   contextTokens: number,
@@ -92,6 +120,16 @@ function findLastAssistantUsage(
   }
 
   return undefined;
+}
+
+function estimatePureContextTokens(messages: readonly AgentMessage[]): ContextUsageEstimate {
+  const estimated = messages.reduce((total, message) => total + estimateTokens(message), 0);
+  return {
+    tokens: estimated,
+    usageTokens: 0,
+    trailingTokens: estimated,
+    lastUsageIndex: null,
+  };
 }
 
 function getValidAssistantUsage(message: AgentMessage): Usage | undefined {

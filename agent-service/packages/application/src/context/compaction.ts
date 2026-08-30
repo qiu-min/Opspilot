@@ -7,9 +7,12 @@ import type {
   TextContent,
 } from '@opspilot/model-gateway';
 
-import { estimateContextTokens, estimateTokens } from './context-accounting.js';
+import { estimateSessionContextTokens, estimateTokens } from './context-accounting.js';
 import type { CompactionSettings } from './compaction-settings.js';
-import { createCompactionSummaryMessage } from './compaction-summary-message.js';
+import {
+  buildSessionMessageProjection,
+  type SessionProjectedMessage,
+} from '../session/session-projection.js';
 import type { SessionEntry } from '../session/session-types.js';
 
 const COMPACTION_SYSTEM_PROMPT = `You summarize conversation history so another assistant can continue the work.
@@ -48,12 +51,10 @@ export function prepareCompaction(
   entries: readonly SessionEntry[],
   settings: CompactionSettings,
 ): CompactionPreparation | undefined {
-  const projection = buildCurrentProjection(entries);
+  const projection = buildSessionMessageProjection(entries);
   if (projection.messages.length === 0) return undefined;
 
-  const tokensBefore = estimateContextTokens(
-    projection.messages.map((item) => item.message),
-  ).tokens;
+  const tokensBefore = estimateSessionContextTokens(entries).tokens;
   const cutIndex = findSafeCutIndex(projection.messages, settings.keepRecentTokens);
   if (cutIndex === undefined) return undefined;
 
@@ -117,59 +118,8 @@ export class DefaultCompactionService implements CompactionService {
   }
 }
 
-interface ProjectedMessage {
-  readonly message: AgentMessage;
-  readonly entryIndex: number | null;
-}
-
-interface CurrentProjection {
-  readonly messages: readonly ProjectedMessage[];
-  readonly latestCompactionIndex: number | null;
-}
-
-function buildCurrentProjection(entries: readonly SessionEntry[]): CurrentProjection {
-  const latestCompactionIndex = findLatestCompactionIndex(entries);
-  if (latestCompactionIndex === null) {
-    return {
-      messages: entries.flatMap((entry, entryIndex) =>
-        entry.type === 'message' ? [{ message: entry.message, entryIndex }] : [],
-      ),
-      latestCompactionIndex: null,
-    };
-  }
-
-  const compaction = entries[latestCompactionIndex];
-  if (compaction.type !== 'compaction') {
-    throw new Error('Latest compaction entry could not be resolved.');
-  }
-
-  const firstKeptIndex = entries.findIndex((entry) => entry.id === compaction.firstKeptEntryId);
-  if (firstKeptIndex < 0 || firstKeptIndex > latestCompactionIndex) {
-    throw new Error(
-      `Compaction firstKeptEntryId is not an ancestor of the compaction: ${compaction.firstKeptEntryId}`,
-    );
-  }
-
-  const messages: ProjectedMessage[] = [
-    { message: createCompactionSummaryMessage(compaction.summary), entryIndex: null },
-  ];
-  for (let entryIndex = firstKeptIndex; entryIndex < entries.length; entryIndex += 1) {
-    const entry = entries[entryIndex];
-    if (entry.type === 'message') messages.push({ message: entry.message, entryIndex });
-  }
-
-  return { messages, latestCompactionIndex };
-}
-
-function findLatestCompactionIndex(entries: readonly SessionEntry[]): number | null {
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    if (entries[index].type === 'compaction') return index;
-  }
-  return null;
-}
-
 function findSafeCutIndex(
-  messages: readonly ProjectedMessage[],
+  messages: readonly SessionProjectedMessage[],
   keepRecentTokens: number,
 ): number | undefined {
   let accumulatedTokens = 0;
@@ -199,7 +149,7 @@ function findSafeCutIndex(
   return undefined;
 }
 
-function isSafeCutPoint(projectedMessage: ProjectedMessage): boolean {
+function isSafeCutPoint(projectedMessage: SessionProjectedMessage): boolean {
   return (
     projectedMessage.entryIndex !== null &&
     (projectedMessage.message.role === 'user' || projectedMessage.message.role === 'assistant')

@@ -3,10 +3,13 @@ import type { AgentMessage } from '@opspilot/agent-runtime';
 import type { AssistantMessage, Usage } from '@opspilot/model-gateway';
 
 import {
+  buildSessionMessageProjection,
   calculateContextTokens,
   DEFAULT_COMPACTION_SETTINGS,
   estimateContextTokens,
+  estimateSessionContextTokens,
   estimateTokens,
+  SessionManager,
   shouldCompact,
 } from '../src/index.js';
 
@@ -179,6 +182,75 @@ describe('Context Accounting', () => {
         usageTokens: 5000,
         trailingTokens: 1,
         lastUsageIndex: 1,
+      });
+    });
+  });
+
+  describe('estimateSessionContextTokens', () => {
+    it('preserves the existing accounting behavior when there is no compaction', () => {
+      const session = SessionManager.inMemory();
+      session.appendMessage(userMessage('A'));
+      const assistant = session.appendMessage(
+        assistantMessage([{ type: 'text', text: 'B' }], {
+          finishReason: 'stop',
+          usage: usage(100, 200, 5000),
+        }),
+      );
+      session.appendMessage(userMessage('C'));
+
+      expect(estimateSessionContextTokens(session.getBranch())).toEqual(
+        estimateContextTokens([userMessage('A'), assistant.message, userMessage('C')]),
+      );
+    });
+
+    it('falls back to the projected message estimate when usage predates compaction', () => {
+      const session = SessionManager.inMemory();
+      session.appendMessage(userMessage('old history'));
+      const oldAssistant = session.appendMessage(
+        assistantMessage([{ type: 'text', text: 'old answer' }], {
+          finishReason: 'stop',
+          usage: usage(1, 1, 100_000),
+        }),
+      );
+      session.appendCompaction('old summary', oldAssistant.id, 100_000);
+      session.appendMessage(userMessage('recent input'));
+      session.appendMessage(assistantMessage([{ type: 'text', text: 'recent answer' }]));
+
+      const projection = buildSessionMessageProjection(session.getBranch());
+      const projectedMessages = projection.messages.map((item) => item.message);
+      const estimatedProjectedTokens = projectedMessages.reduce(
+        (total, message) => total + estimateTokens(message),
+        0,
+      );
+
+      expect(estimateSessionContextTokens(session.getBranch())).toEqual({
+        tokens: estimatedProjectedTokens,
+        usageTokens: 0,
+        trailingTokens: estimatedProjectedTokens,
+        lastUsageIndex: null,
+      });
+    });
+
+    it('uses a new assistant usage reported after compaction', () => {
+      const session = SessionManager.inMemory();
+      const kept = session.appendMessage(userMessage('kept input'));
+      session.appendCompaction('summary', kept.id, 12);
+      const recentAssistant = session.appendMessage(
+        assistantMessage([{ type: 'text', text: 'recent answer' }], {
+          finishReason: 'stop',
+          usage: usage(10, 20, 3000),
+        }),
+      );
+      const projection = buildSessionMessageProjection(session.getBranch());
+      const recentIndex = projection.messages.findIndex(
+        (item) => item.entryIndex === session.getEntries().findIndex((entry) => entry.id === recentAssistant.id),
+      );
+
+      expect(estimateSessionContextTokens(session.getBranch())).toEqual({
+        tokens: 3000,
+        usageTokens: 3000,
+        trailingTokens: 0,
+        lastUsageIndex: recentIndex,
       });
     });
   });

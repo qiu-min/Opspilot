@@ -8,7 +8,7 @@ import type {
 } from '@opspilot/agent-runtime';
 
 import {
-  estimateContextTokens,
+  estimateSessionContextTokens,
   shouldCompact,
   type CompactionService,
   type CompactionSettings,
@@ -30,6 +30,7 @@ export class AgentSession {
   private readonly unsubscribeAgent: () => void;
   private readonly compactionService?: CompactionService;
   private readonly compactionSettings?: CompactionSettings;
+  private autoCompactionAbortController?: AbortController;
   private disposed = false;
 
   /** 创建 AgentSession 并注册唯一的内部持久化监听器。 */
@@ -54,6 +55,7 @@ export class AgentSession {
   /** 请求停止当前 Agent Run。 */
   public abort(): void {
     this.agent.abort();
+    this.autoCompactionAbortController?.abort();
   }
 
   /** 等待 Agent 进入空闲状态。 */
@@ -78,6 +80,7 @@ export class AgentSession {
     if (this.agent.state.isRunning) {
       throw new Error('Cannot dispose AgentSession while Agent is running. Wait for idle first.');
     }
+    this.autoCompactionAbortController?.abort();
     this.disposed = true;
     this.unsubscribeAgent();
   }
@@ -100,17 +103,19 @@ export class AgentSession {
     if (state.model.contextWindow === undefined) return;
     if (state.errorInfo !== undefined) return;
 
-    const estimate = estimateContextTokens(state.messages);
+    const estimate = estimateSessionContextTokens(this.sessionManager.getBranch());
     if (!shouldCompact(estimate.tokens, state.model.contextWindow, compactionSettings)) return;
 
+    const controller = new AbortController();
+    this.autoCompactionAbortController = controller;
     try {
       const result = await compactionService.compact({
         entries: this.sessionManager.getBranch(),
         model: state.model,
         settings: compactionSettings,
-        signal: this.agent.signal,
+        signal: controller.signal,
       });
-      if (result !== undefined) {
+      if (result !== undefined && !controller.signal.aborted) {
         this.sessionManager.appendCompaction(
           result.summary,
           result.firstKeptEntryId,
@@ -119,6 +124,10 @@ export class AgentSession {
       }
     } catch {
       // Compaction is post-run maintenance; the completed user turn remains successful.
+    } finally {
+      if (this.autoCompactionAbortController === controller) {
+        this.autoCompactionAbortController = undefined;
+      }
     }
   }
 }

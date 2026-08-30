@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentMessage } from '@opspilot/agent-runtime';
-import { createCompactionSummaryMessage } from '../context/compaction-summary-message.js';
 import {
   appendSessionEntry,
   createSessionFile,
   isAgentThinkingLevel,
   loadSessionFile,
 } from './session-jsonl.js';
+import { buildSessionMessageProjection } from './session-projection.js';
 import type {
   ModelChangeEntry,
   CompactionEntry,
@@ -220,31 +220,14 @@ export class SessionManager {
 
   public buildSessionContext(): SessionContext {
     const branch = this.getBranch();
-    const latestCompactionIndex = findLatestCompactionIndex(branch);
-    const firstKeptIndex =
-      latestCompactionIndex === null
-        ? null
-        : findFirstKeptIndex(branch, latestCompactionIndex);
+    const projection = buildSessionMessageProjection(branch);
     let thinkingLevel: SessionContext['thinkingLevel'] = 'off';
     let model: SessionContext['model'] = null;
-    const messages: AgentMessage[] = [];
+    const messages: AgentMessage[] = projection.messages.map((item) => cloneValue(item.message));
 
-    if (latestCompactionIndex !== null) {
-      const compaction = branch[latestCompactionIndex];
-      if (compaction.type !== 'compaction') {
-        throw new SessionTreeError('Latest compaction entry could not be resolved.');
-      }
-      messages.push(createCompactionSummaryMessage(compaction.summary));
-    }
-
-    for (let index = 0; index < branch.length; index += 1) {
-      const entry = branch[index];
+    for (const entry of branch) {
       switch (entry.type) {
         case 'message':
-          if (firstKeptIndex === null || index >= firstKeptIndex) {
-            messages.push(cloneValue(entry.message));
-          }
-
           if (entry.message.role === 'assistant') {
             model = {
               provider: entry.message.provider,
@@ -304,31 +287,6 @@ export class SessionManager {
 
     this.leafId = this.entries.at(-1)?.id ?? null;
   }
-}
-
-function findLatestCompactionIndex(entries: readonly SessionEntry[]): number | null {
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    if (entries[index].type === 'compaction') return index;
-  }
-  return null;
-}
-
-function findFirstKeptIndex(
-  entries: readonly SessionEntry[],
-  compactionIndex: number,
-): number {
-  const compaction = entries[compactionIndex];
-  if (compaction.type !== 'compaction') {
-    throw new SessionTreeError('Compaction entry could not be resolved.');
-  }
-
-  const firstKeptIndex = entries.findIndex((entry) => entry.id === compaction.firstKeptEntryId);
-  if (firstKeptIndex < 0 || firstKeptIndex > compactionIndex) {
-    throw new SessionTreeError(
-      `Compaction firstKeptEntryId is not an ancestor of the compaction: ${compaction.firstKeptEntryId}`,
-    );
-  }
-  return firstKeptIndex;
 }
 
 function createHeader(options: SessionManagerCreateOptions): SessionHeader {
