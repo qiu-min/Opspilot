@@ -13,7 +13,7 @@ import {
 } from '@opspilot/model-gateway';
 import type { AgentMessage, AgentTool } from '@opspilot/agent-runtime';
 
-import { createAgentSession, SessionManager } from '../src/index.js';
+import { createAgentSession, DefaultContextManager, SessionManager } from '../src/index.js';
 
 const directories: string[] = [];
 
@@ -112,6 +112,18 @@ function messageEntries(sessionManager: SessionManager): AgentMessage[] {
 }
 
 describe('AgentSession composition and persistence', () => {
+  it('returns a copied message list from the default context manager', async () => {
+    const messages = [userMessage('A')];
+    const result = await new DefaultContextManager().prepare({
+      messages,
+      model,
+      tools: [],
+    });
+
+    expect(result.messages).toEqual(messages);
+    expect(result.messages).not.toBe(messages);
+  });
+
   it('requires a model for a new session and fails clearly for an unknown saved model', () => {
     const newSession = SessionManager.inMemory();
     const gateway = createGateway([]);

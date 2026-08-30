@@ -2,6 +2,8 @@ import { clampThinkingLevel, type Model, type ModelGateway } from '@opspilot/mod
 import { Agent, type AgentThinkingLevel, type AgentTool } from '@opspilot/agent-runtime';
 
 import { SessionManager } from '../session/session-manager.js';
+import type { ContextManager } from '../context/context-manager.js';
+import { DefaultContextManager } from '../context/default-context-manager.js';
 import { AgentSession } from './agent-session.js';
 
 export interface CreateAgentSessionOptions {
@@ -11,6 +13,7 @@ export interface CreateAgentSessionOptions {
   readonly thinkingLevel?: AgentThinkingLevel;
   readonly tools?: readonly AgentTool[];
   readonly systemPrompt?: string;
+  readonly contextManager?: ContextManager;
 }
 
 /** 从 Session 上下文组装 Model、Agent Runtime 和 AgentSession。 */
@@ -23,6 +26,8 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
     options.thinkingLevel,
     sessionContext.thinkingLevel,
   );
+  const contextManager = options.contextManager ?? new DefaultContextManager();
+  const tools = options.tools ?? [];
 
   persistInitialOrOverriddenState(
     options.sessionManager,
@@ -37,8 +42,19 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
     model,
     thinkingLevel,
     messages: sessionContext.messages,
-    tools: options.tools,
+    tools,
     systemPrompt: options.systemPrompt,
+    transformContext: async (messages, signal) => {
+      const result = await contextManager.prepare({
+        messages,
+        model,
+        systemPrompt: options.systemPrompt,
+        tools,
+        signal,
+      });
+
+      return [...result.messages];
+    },
     streamFn: (streamModel, context, streamOptions) =>
       options.modelGateway.stream(streamModel, context, streamOptions),
   });

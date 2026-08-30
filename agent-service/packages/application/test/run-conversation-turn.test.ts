@@ -15,6 +15,7 @@ import { createModelEventStream } from '@opspilot/model-gateway';
 
 import {
   AgentSession,
+  type ContextManager,
   FileSystemSessionStore,
   RunConversationTurn,
   SessionManager,
@@ -240,6 +241,52 @@ describe('RunConversationTurn', () => {
       secondResponse,
     ]);
     expect(secondGateway.requestedModels[0]).toBe(model);
+  });
+
+  it('uses the prepared context without changing session history or message persistence', async () => {
+    const { store } = createStore();
+    const firstInput = userMessage('A');
+    const firstResponse = assistantMessage('B');
+    const firstRunner = new RunConversationTurn({
+      sessionStore: store,
+      modelGateway: createGateway([assistantStream(firstResponse, model)]),
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+    const firstResult = await firstRunner.execute({ message: firstInput });
+
+    const secondInput = userMessage('C');
+    const secondResponse = assistantMessage('D');
+    const preparedInputs: AgentMessage[][] = [];
+    const contextManager: ContextManager = {
+      prepare: async (input) => {
+        preparedInputs.push([...input.messages]);
+        return { messages: input.messages.slice(-1) };
+      },
+    };
+    const secondGateway = createGateway([assistantStream(secondResponse, model)]);
+    const secondRunner = new RunConversationTurn({
+      sessionStore: store,
+      modelGateway: secondGateway,
+      toolDefinitions: [],
+      contextManager,
+    });
+
+    const secondResult = await secondRunner.execute({
+      sessionId: firstResult.sessionId,
+      message: secondInput,
+    });
+    const loaded = store.load(firstResult.sessionId);
+
+    expect(preparedInputs).toEqual([[firstInput, firstResponse, secondInput]]);
+    expect(secondGateway.requestedContexts[0]?.messages).toEqual([secondInput]);
+    expect(secondResult.messages).toEqual([secondInput, secondResponse]);
+    expect(messageEntries(loaded)).toEqual([
+      firstInput,
+      firstResponse,
+      secondInput,
+      secondResponse,
+    ]);
   });
 
   it('wraps ToolDefinitions with the current session context for runtime execution', async () => {

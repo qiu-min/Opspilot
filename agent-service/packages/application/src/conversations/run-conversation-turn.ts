@@ -1,6 +1,7 @@
 import type { Model, ModelGateway } from '@opspilot/model-gateway';
 
 import { createAgentSession } from '../agent-session/create-agent-session.js';
+import type { ContextManager } from '../context/context-manager.js';
 import type { SessionStore } from '../session-store/session-store.js';
 import type { ToolDefinition } from '../tools/tool-definition.js';
 import { wrapToolDefinitions } from '../tools/wrap-tool-definition.js';
@@ -21,6 +22,7 @@ export interface RunConversationTurnOptions {
   readonly toolDefinitions: readonly ToolDefinition[];
   readonly defaultModel?: Model;
   readonly systemPrompt?: string;
+  readonly contextManager?: ContextManager;
   readonly sessionRunCoordinator?: SessionRunCoordinator;
 }
 
@@ -31,6 +33,7 @@ export class RunConversationTurn {
   private readonly toolDefinitions: readonly ToolDefinition[];
   private readonly defaultModel?: Model;
   private readonly systemPrompt?: string;
+  private readonly contextManager?: ContextManager;
   private readonly sessionRunCoordinator: SessionRunCoordinator;
 
   public constructor(options: RunConversationTurnOptions) {
@@ -39,6 +42,7 @@ export class RunConversationTurn {
     this.toolDefinitions = [...options.toolDefinitions];
     this.defaultModel = options.defaultModel;
     this.systemPrompt = options.systemPrompt;
+    this.contextManager = options.contextManager;
     this.sessionRunCoordinator =
       options.sessionRunCoordinator ?? new InMemorySessionRunCoordinator();
   }
@@ -75,6 +79,7 @@ export class RunConversationTurn {
       thinkingLevel: input.thinkingLevel,
       tools,
       systemPrompt: this.systemPrompt,
+      contextManager: this.contextManager,
     });
 
     let unsubscribe: (() => void) | undefined;
