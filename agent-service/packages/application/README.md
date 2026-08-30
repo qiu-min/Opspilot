@@ -14,6 +14,7 @@ OpsPilot Agent Service 的应用层。
 - 接收用户输入并驱动一次 Agent Run
 - 将 Session 上下文恢复到 Agent Runtime
 - 通过 `ContextManager` 决定单次模型调用看到的消息
+- 通过 Context Accounting 估算上下文用量并判断是否接近模型窗口
 - 监听 Agent Runtime 产生的消息与执行事件
 - 将完成的消息、工具结果等写入 Session
 - 组织 Session 的创建、继续、切换与后续扩展能力
@@ -27,6 +28,8 @@ OpsPilot Agent Service 的应用层。
 `SessionManager` 保存完整会话事实；`ContextManager` 只决定本次模型调用使用哪些 `AgentMessage`，不依赖或修改 `SessionManager`。`createAgentSession` 将 ContextManager 接入 Agent Runtime 的 `transformContext` hook，因此经过 ContextManager 的消息只影响当前模型调用，不影响后续 Session 持久化。
 
 Phase 1 的默认 `DefaultContextManager` 不裁剪消息，只返回输入消息的副本。Token budget、Compaction、Memory、RAG 和摘要等能力不属于当前实现范围。
+
+Context Accounting 是独立的纯计算边界：它优先使用最近有效 AssistantMessage 的 `Usage`，再估算其后的新增消息，并通过 `shouldCompact()` 返回是否达到预留 token 阈值。它不会执行 Compaction 或修改 Session。
 
 核心关系：
 

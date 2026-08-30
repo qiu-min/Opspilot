@@ -1,4 +1,8 @@
-import type { ContextManager, ContextPrepareInput, ContextPrepareResult } from './context-manager.js';
+import type {
+  ContextManager,
+  ContextPrepareInput,
+  ContextPrepareResult,
+} from './context-manager.js';
 
 /** Keeps the complete input message list for Phase 1 context preparation. */
 export class DefaultContextManager implements ContextManager {
