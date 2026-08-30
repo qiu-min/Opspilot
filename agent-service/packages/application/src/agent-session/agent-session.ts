@@ -47,6 +47,7 @@ export class AgentSession {
     input: AgentMessage | readonly AgentMessage[],
   ): Promise<readonly AgentMessage[]> {
     this.assertNotDisposed();
+    await this.maybeCompactBeforePrompt();
     const messages = await this.agent.prompt(input);
     await this.maybeCompactAfterRun();
     return messages;
@@ -94,17 +95,32 @@ export class AgentSession {
     this.sessionManager.appendMessage(event.message);
   }
 
+  /** Performs best-effort compaction before the next prompt and refreshes Runtime history. */
+  private async maybeCompactBeforePrompt(): Promise<void> {
+    const compacted = await this.runAutoCompactionIfNeeded();
+    if (!compacted) return;
+
+    const sessionContext = this.sessionManager.buildSessionContext();
+    this.agent.replaceMessages(sessionContext.messages);
+  }
+
   /** Performs best-effort post-run compaction after normal message persistence completes. */
   private async maybeCompactAfterRun(): Promise<void> {
+    if (this.agent.state.errorInfo !== undefined) return;
+    await this.runAutoCompactionIfNeeded();
+  }
+
+  /** Runs threshold compaction once and reports whether a CompactionEntry was appended. */
+  private async runAutoCompactionIfNeeded(): Promise<boolean> {
     const compactionService = this.compactionService;
     const compactionSettings = this.compactionSettings;
     const state = this.agent.state;
-    if (compactionService === undefined || compactionSettings === undefined) return;
-    if (state.model.contextWindow === undefined) return;
-    if (state.errorInfo !== undefined) return;
+    if (compactionService === undefined || compactionSettings === undefined) return false;
+    if (state.model.contextWindow === undefined) return false;
 
     const estimate = estimateSessionContextTokens(this.sessionManager.getBranch());
-    if (!shouldCompact(estimate.tokens, state.model.contextWindow, compactionSettings)) return;
+    if (!shouldCompact(estimate.tokens, state.model.contextWindow, compactionSettings))
+      return false;
 
     const controller = new AbortController();
     this.autoCompactionAbortController = controller;
@@ -115,15 +131,17 @@ export class AgentSession {
         settings: compactionSettings,
         signal: controller.signal,
       });
-      if (result !== undefined && !controller.signal.aborted) {
-        this.sessionManager.appendCompaction(
-          result.summary,
-          result.firstKeptEntryId,
-          result.tokensBefore,
-        );
-      }
+      if (result === undefined || controller.signal.aborted) return false;
+
+      this.sessionManager.appendCompaction(
+        result.summary,
+        result.firstKeptEntryId,
+        result.tokensBefore,
+      );
+      return true;
     } catch {
       // Compaction is post-run maintenance; the completed user turn remains successful.
+      return false;
     } finally {
       if (this.autoCompactionAbortController === controller) {
         this.autoCompactionAbortController = undefined;

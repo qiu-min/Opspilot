@@ -201,6 +201,18 @@ export class Agent {
     this.clearAllQueues();
   }
 
+  /** 用新的完整历史替换 Agent 状态；这是历史替换，不是一次 Agent Run。
+   * @param messages 要设置为当前历史的消息列表。
+   */
+  replaceMessages(messages: readonly AgentMessage[]): void {
+    if (this.activeRun) throw new Error('Cannot replace messages while Agent is running.');
+    this._state.messages = [...messages];
+    this._state.streamingMessage = undefined;
+    this._state.errorMessage = undefined;
+    this._state.errorInfo = undefined;
+    this._state.pendingToolCalls.length = 0;
+  }
+
   /** 取出并清空当前 steering 队列，返回独立数组避免暴露内部存储。
    * @returns 当前队列中的全部消息，保持入队顺序。
    */

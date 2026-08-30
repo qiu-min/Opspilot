@@ -459,7 +459,7 @@ Context Accounting
       ↓
 达到安全阈值
       ↓
-自动触发 Compaction
+Post-run 或下一次 Prompt 前自动触发 Compaction
 ```
 
 自动 Compaction 最终同样：
@@ -512,7 +512,7 @@ shouldCompact()
       结束
 ```
 
-也可以在下一次 Prompt 提交前再次检查，避免上一次 aborted/error 等场景遗漏压缩。
+下一次 Prompt 提交前会再次检查，避免上一次 aborted/error 等场景遗漏压缩；如果发生压缩，Application 会用新的 `buildSessionContext()` 结果刷新当前 Runtime history。
 
 ---
 
@@ -901,7 +901,7 @@ identity transform
 
 ---
 
-## Phase 2：Context Accounting ← 当前阶段
+## Phase 2：Context Accounting ✅
 
 目标：
 
@@ -935,20 +935,9 @@ contextTokens
 contextWindow - reserveTokens
 ```
 
-本阶段：
-
-```text
-不裁剪 messages
-不生成 summary
-不新增 CompactionEntry
-不修改 Session
-不实现 RAG
-不实现 Memory
-```
-
 ---
 
-## Phase 3：Auto Compaction
+## Phase 3：Auto Compaction ✅
 
 目标：
 
@@ -987,6 +976,26 @@ SessionManager
       ↓
 Summary + Recent Messages
 ```
+
+---
+
+## Phase 3.5：Pre-prompt Compaction + Runtime Message Replacement ✅
+
+在下一次 `AgentSession.prompt()` 调用模型之前，Application 会复用同一套 threshold compaction 判断。发生压缩后：
+
+```text
+SessionManager.appendCompaction()
+        ↓
+SessionManager.buildSessionContext()
+        ↓
+Agent.replaceMessages()
+        ↓
+Agent.prompt(newUserMessage)
+```
+
+`agent-runtime` 只提供通用的空闲态 `replaceMessages()`，不知道 Session 或 Compaction。它不会发送 AgentEvent、调用模型或清空 steering/follow-up 队列。
+
+Pre-prompt compaction 用于兜住上一轮 aborted/error 或 post-run maintenance 未完成的情况。Overflow recovery、`agent.continue()` 和 retry 仍未实现。
 
 ---
 
@@ -1071,13 +1080,22 @@ ContextManager 在这个阶段才开始承担更丰富的上下文组合策略�
 ```text
 Phase 1 ✅
 ContextManager Boundary
+
+Phase 2 ✅
+Context Accounting
+
+Phase 3 ✅
+Post-run Auto Compaction
+
+Phase 3.5 ✅
+Pre-prompt Compaction + Runtime Message Replacement
 ```
 
-当前最应该实现：
+当前仍未实现：
 
 ```text
-Phase 2
-Context Accounting
+Phase 4
+Overflow Recovery
 ```
 
 即：
@@ -1108,7 +1126,7 @@ messages.slice(-N)
 不要把 Compaction 放进 agent-runtime
 ```
 
-Phase 2 完成后，再进入 Phase 3 Auto Compaction。
+Phase 3.5 完成后，再进入 Phase 4 Overflow Recovery。
 
 ---
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createModelEventStream,
   type AssistantMessage,
+  type Context,
   type FinishReason,
   type JsonObject,
   type Model,
@@ -10,7 +11,7 @@ import {
 } from '@opspilot/model-gateway';
 
 import { Agent } from '../src/index.js';
-import type { AgentMessage, AgentTool, StreamFn } from '../src/index.js';
+import type { AgentEvent, AgentMessage, AgentTool, StreamFn } from '../src/index.js';
 
 const model: Model = {
   provider: 'test-provider',
@@ -406,6 +407,88 @@ describe('Agent real-time state', () => {
     expect(agent.state.errorInfo).toBeUndefined();
     expect(agent.state.pendingToolCalls).toEqual([]);
     expect(agent.state.isRunning).toBe(false);
+  });
+
+  it('replaces history defensively, clears transient state, and preserves queues', async () => {
+    const failure: AssistantMessage = {
+      ...assistantMessage('error'),
+      errorMessage: 'model failed',
+    };
+    const agent = new Agent({
+      model,
+      streamFn: () =>
+        createModelEventStream(async (controller) => {
+          controller.error(failure);
+        }),
+    });
+    const events: AgentEvent[] = [];
+    agent.subscribe((event) => {
+      events.push(event);
+    });
+
+    await agent.prompt(userMessage('failed prompt'));
+    agent.steer(userMessage('queued steering'));
+    agent.followUp(userMessage('queued follow-up'));
+    const eventCountBeforeReplacement = events.length;
+    const replacement = [userMessage('replacement')];
+
+    agent.replaceMessages(replacement);
+    replacement.push(userMessage('mutated input'));
+    const snapshotMessages = agent.state.messages as AgentMessage[];
+    snapshotMessages.push(userMessage('mutated snapshot'));
+
+    expect(agent.state.messages).toEqual([userMessage('replacement')]);
+    expect(agent.state.streamingMessage).toBeUndefined();
+    expect(agent.state.errorMessage).toBeUndefined();
+    expect(agent.state.errorInfo).toBeUndefined();
+    expect(agent.state.pendingToolCalls).toEqual([]);
+    expect(agent.hasQueuedMessages()).toBe(true);
+    expect(events).toHaveLength(eventCountBeforeReplacement);
+  });
+
+  it('rejects replacement while running and uses the replacement history on the next prompt', async () => {
+    const started = createDeferred();
+    const release = createDeferred();
+    const contexts: Context[] = [];
+    let streamIndex = 0;
+    const agent = new Agent({
+      model,
+      messages: [userMessage('old history')],
+      streamFn: (_model, context) => {
+        contexts.push(context);
+        streamIndex += 1;
+        if (streamIndex === 1) {
+          return createModelEventStream(async (controller) => {
+            controller.emit({
+              type: 'start',
+              model,
+              partial: assistantMessage('pending'),
+            });
+            started.resolve();
+            await release.promise;
+            controller.complete(assistantMessage());
+          });
+        }
+
+        return assistantStream(assistantMessage());
+      },
+    });
+
+    const firstRun = agent.prompt(userMessage('first prompt'));
+    await started.promise;
+    expect(() => agent.replaceMessages([userMessage('replacement while running')])).toThrow(
+      'Cannot replace messages while Agent is running.',
+    );
+
+    release.resolve();
+    await firstRun;
+
+    const replacement = userMessage('replacement history');
+    agent.replaceMessages([replacement]);
+    const nextPrompt = userMessage('next prompt');
+    await agent.prompt(nextPrompt);
+
+    expect(contexts[1]?.messages).toEqual([replacement, nextPrompt]);
   });
 
   it('returns snapshots that cannot mutate internal arrays', async () => {

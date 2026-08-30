@@ -277,21 +277,24 @@ describe('AgentSession composition and persistence', () => {
     const release = new Promise<void>((resolve) => {
       resolveRelease = resolve;
     });
-    const runningStream = createModelEventStream(async (controller) => {
-      const message = assistantMessage('running');
-      controller.emit({
-        type: 'start',
-        model,
-        partial: { ...message, content: [], finishReason: 'pending' },
-      });
-      resolveStarted();
-      await release;
-      controller.complete(message);
-    });
     const sessionManager = SessionManager.inMemory();
+    const gateway = createGateway([]);
+    gateway.stream.mockImplementation(() =>
+      createModelEventStream(async (controller) => {
+        const message = assistantMessage('running');
+        controller.emit({
+          type: 'start',
+          model,
+          partial: { ...message, content: [], finishReason: 'pending' },
+        });
+        resolveStarted();
+        await release;
+        controller.complete(message);
+      }),
+    );
     const session = createAgentSession({
       sessionManager,
-      modelGateway: createGateway([runningStream]),
+      modelGateway: gateway,
       model,
     });
 

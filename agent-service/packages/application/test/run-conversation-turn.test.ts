@@ -108,6 +108,17 @@ function assistantStream(message: AgentMessage, streamModel: Model): ModelEventS
   });
 }
 
+function failedAssistantStream(message: AssistantMessage, streamModel: Model): ModelEventStream {
+  return createModelEventStream(async (controller) => {
+    controller.emit({
+      type: 'start',
+      model: streamModel,
+      partial: { ...message, content: [], finishReason: 'pending' },
+    });
+    controller.error(message);
+  });
+}
+
 function createDeferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((resolvePromise) => {
@@ -146,6 +157,7 @@ function createGateway(
   readonly requestedContexts: Context[];
   readonly requestedOptions: (Options | undefined)[];
   readonly stream: ReturnType<typeof vi.fn>;
+  readonly complete: ReturnType<typeof vi.fn>;
 } {
   let streamIndex = 0;
   const requestedModels: Model[] = [];
@@ -160,6 +172,10 @@ function createGateway(
     if (next === undefined) throw new Error('Unexpected extra model call.');
     return next;
   });
+  const complete = vi.fn(async (_model: Model, _context: Context, _options?: Options) => {
+    if (completion === undefined) throw new Error('complete is not used by this test.');
+    return completion;
+  });
 
   return {
     getProviders: () => [],
@@ -167,10 +183,7 @@ function createGateway(
     getModel: (provider, id) =>
       registeredModels.find((candidate) => candidate.provider === provider && candidate.id === id),
     stream,
-    complete: async () => {
-      if (completion === undefined) throw new Error('complete is not used by this test.');
-      return completion;
-    },
+    complete,
     requestedModels,
     requestedContexts,
     requestedOptions,
@@ -249,9 +262,12 @@ describe('RunConversationTurn', () => {
 
   it('auto-compacts after a run and uses the summary on the next turn', async () => {
     const { store } = createStore();
-    const compactingModel = { ...model, contextWindow: 1 };
+    const compactingModel = { ...model, contextWindow: 80 };
     const firstInput = userMessage('first input');
-    const firstResponse = assistantMessage('first response', compactingModel);
+    const firstResponse = {
+      ...assistantMessage('first response', compactingModel),
+      usage: { inputTokens: 90, outputTokens: 10, totalTokens: 100 },
+    };
     const secondInput = userMessage('second input');
     const secondResponse = assistantMessage('second response', compactingModel);
     const summaryResponse = assistantMessage('history summary', compactingModel);
@@ -296,6 +312,7 @@ describe('RunConversationTurn', () => {
       firstResponse,
       secondInput,
     ]);
+    expect(gateway.complete).toHaveBeenCalledOnce();
     expect(
       store
         .load(firstResult.sessionId)
@@ -303,6 +320,128 @@ describe('RunConversationTurn', () => {
         .filter((entry) => entry.type === 'message')
         .map((entry) => entry.message),
     ).toEqual([firstInput, firstResponse, secondInput, secondResponse]);
+  });
+
+  it('compacts before a prompt, refreshes runtime history, and keeps the summary out of Session messages', async () => {
+    const { store } = createStore();
+    const compactingModel = { ...model, contextWindow: 40 };
+    const existing = store.create();
+    const oldInput = userMessage('O');
+    const oldResponse = {
+      ...assistantMessage('R', compactingModel),
+      usage: { inputTokens: 90, outputTokens: 10, totalTokens: 100 },
+    };
+    existing.appendModelChange(compactingModel.provider, compactingModel.id);
+    existing.appendMessage(oldInput);
+    existing.appendMessage(oldResponse);
+
+    const newInput = userMessage('N');
+    const response = assistantMessage('D', compactingModel);
+    const summaryResponse = assistantMessage('S', compactingModel);
+    const gateway = createGateway(
+      [assistantStream(response, compactingModel)],
+      [compactingModel],
+      undefined,
+      summaryResponse,
+    );
+    const runner = new RunConversationTurn({
+      sessionStore: store,
+      modelGateway: gateway,
+      toolDefinitions: [],
+      compactionSettings: {
+        enabled: true,
+        reserveTokens: 0,
+        keepRecentTokens: 1,
+      },
+    });
+
+    await runner.execute({ sessionId: existing.getHeader().id, message: newInput });
+
+    expect(gateway.complete).toHaveBeenCalledOnce();
+    expect(gateway.requestedContexts[0]?.messages).toEqual([
+      createCompactionSummaryMessage('S'),
+      oldResponse,
+      newInput,
+    ]);
+
+    const loaded = store.load(existing.getHeader().id);
+    expect(loaded.getEntries().filter((entry) => entry.type === 'compaction')).toHaveLength(1);
+    expect(messageEntries(loaded)).toEqual([oldInput, oldResponse, newInput, response]);
+    expect(loaded.buildSessionContext().messages).toEqual([
+      createCompactionSummaryMessage('S'),
+      oldResponse,
+      newInput,
+      response,
+    ]);
+  });
+
+  it('pre-prompt compacts history left oversized by an aborted previous run', async () => {
+    const { store } = createStore();
+    const compactingModel = { ...model, contextWindow: 120 };
+    const existing = store.create();
+    const oldInput = userMessage('old input');
+    const oldResponse = {
+      ...assistantMessage('R', compactingModel),
+      usage: { inputTokens: 90, outputTokens: 10, totalTokens: 100 },
+    };
+    existing.appendModelChange(compactingModel.provider, compactingModel.id);
+    existing.appendMessage(oldInput);
+    existing.appendMessage(oldResponse);
+
+    const oversizedInput = userMessage('x'.repeat(200));
+    const abortedResponse: AssistantMessage = {
+      ...assistantMessage('', compactingModel),
+      finishReason: 'aborted',
+      errorMessage: 'Request aborted.',
+    };
+    const firstRunner = new RunConversationTurn({
+      sessionStore: store,
+      modelGateway: createGateway(
+        [failedAssistantStream(abortedResponse, compactingModel)],
+        [compactingModel],
+      ),
+      toolDefinitions: [],
+      compactionSettings: {
+        enabled: true,
+        reserveTokens: 0,
+        keepRecentTokens: 1,
+      },
+    });
+
+    await firstRunner.execute({
+      sessionId: existing.getHeader().id,
+      message: oversizedInput,
+    });
+
+    const nextInput = userMessage('next input');
+    const nextResponse = assistantMessage('next response', compactingModel);
+    const summaryResponse = assistantMessage('recovered summary', compactingModel);
+    const secondGateway = createGateway(
+      [assistantStream(nextResponse, compactingModel)],
+      [compactingModel],
+      undefined,
+      summaryResponse,
+    );
+    const secondRunner = new RunConversationTurn({
+      sessionStore: store,
+      modelGateway: secondGateway,
+      toolDefinitions: [],
+      compactionSettings: {
+        enabled: true,
+        reserveTokens: 0,
+        keepRecentTokens: 1,
+      },
+    });
+
+    await secondRunner.execute({ sessionId: existing.getHeader().id, message: nextInput });
+
+    expect(secondGateway.complete).toHaveBeenCalledOnce();
+    expect(secondGateway.requestedContexts[0]?.messages).toEqual([
+      createCompactionSummaryMessage('recovered summary'),
+      oversizedInput,
+      abortedResponse,
+      nextInput,
+    ]);
   });
 
   it('keeps a successful turn successful when post-run compaction fails', async () => {
