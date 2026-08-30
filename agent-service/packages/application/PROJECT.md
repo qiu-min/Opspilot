@@ -1,14 +1,15 @@
-# OpsPilot Context Engineering 设计计划
+# OpsPilot Application Context Engineering 设计计划
 
 ## 1. 目标
 
-为 OpsPilot 建立独立的上下文工程能力，使：
+为 OpsPilot Application 层建立可持续演进的上下文工程能力，使：
 
 * Session 保存完整、可恢复的会话事实
-* Context 只表示“本次模型调用实际看到的内容”
-* 长对话可以通过 Compaction 持续运行
-* Memory、RAG、Prompt、工具输出限制等能力以后可以逐步接入
-* `agent-runtime` 保持通用，不感知具体业务上下文策略
+* LLM Context 与 Session History 解耦
+* 长对话可以通过自动 Compaction 持续运行
+* ContextManager 保持为单次模型调用的上下文变换入口
+* Memory、RAG、Prompt、工具输出治理等能力以后可以独立接入
+* `agent-runtime` 保持通用，不感知 Session、Compaction、Memory、RAG 等业务能力
 
 核心原则：
 
@@ -16,145 +17,68 @@
 Session History ≠ LLM Context
 ```
 
-Session 负责保存历史。
+Session 负责保存事实。
 
-Context Engineering 负责决定如何使用历史。
+Context Engineering 负责决定这些事实如何被模型使用。
 
 ---
 
-## 2. 总体架构
+# 2. 总体架构
 
-上下文工程不设计成一个“大而全”的 ContextManager，而拆成多个独立职责：
+上下文工程不实现为一个“大而全”的 ContextManager，而拆分为不同职责：
 
 ```text
 SessionManager
 ContextManager
+Context Accounting
 CompactionService
-PromptBuilder
+PromptBuilder / ResourceLoader
 MemoryRetriever        // 后续
 RagRetriever           // 后续
-Tool Output Policy     // tool 层负责
+Tool Output Policy     // Tool 层负责
 ```
-
-各模块职责如下。
-
-### SessionManager
-
-负责回答：
-
-> 发生过什么？
-
-职责：
-
-* SessionEntry 持久化
-* message 保存
-* model change
-* thinking level change
-* branch
-* session tree
-* session reload
-* 后续支持 compaction entry
-* 后续支持 branch summary
-
-SessionManager 保存的是完整会话事实，不负责临时裁剪上下文。
 
 ---
 
-### ContextManager
+# 3. SessionManager
 
-负责回答：
+SessionManager 回答：
 
-> 这一次 LLM 应该看到什么？
+> 这次会话实际发生过什么？
 
 职责：
 
-* 接收完整的 AgentMessage 历史
-* 根据当前模型和 Context Budget 做过滤
-* 临时裁剪低价值内容
-* 后续注入 Memory
-* 后续注入 RAG
-* 后续处理业务级上下文策略
-* 返回本次模型调用所使用的 AgentMessage[]
+* SessionHeader
+* SessionEntry 持久化
+* MessageEntry
+* ModelChangeEntry
+* ThinkingLevelChangeEntry
+* Session Tree
+* Branch
+* Session reload
+* 后续支持 CompactionEntry
+* 后续支持 BranchSummaryEntry
+* 根据当前分支构建 Session Context
 
 原则：
 
 ```text
-ContextManager 默认不修改 Session。
+SessionManager 保存完整会话事实。
 ```
 
-ContextManager 是 Application 层对 `agent-runtime.transformContext` 的具体实现。
+Compaction 不能删除旧 Entry。
+
+即使旧消息以后不再直接进入模型上下文，它们仍应保存在 Session JSONL 中。
 
 ---
 
-### CompactionService
+# 4. ContextManager
 
-负责回答：
+ContextManager 回答：
 
-> 历史已经太长，以后应该怎样重新表达过去？
+> 这一次模型调用之前，AgentMessage[] 需要做什么临时变换？
 
-职责：
-
-* 估算当前上下文 token
-* 判断是否需要压缩
-* 找合法 cut point
-* 保留最近高价值消息
-* 对旧历史生成结构化摘要
-* 生成 CompactionResult
-* 由 Application 调用 SessionManager 保存 CompactionEntry
-
-Compaction 是 Session 级长期状态变化，不是一次性的 Context 裁剪。
-
----
-
-## 3. Runtime 边界
-
-`agent-runtime` 不依赖 ContextManager。
-
-Runtime 只保留通用 hook：
-
-```ts
-transformContext?: (
-  messages: AgentMessage[],
-  signal?: AbortSignal,
-) => Promise<AgentMessage[]>;
-```
-
-Agent Loop 调用链：
-
-```text
-AgentMessage[]
-      ↓
-transformContext
-      ↓
-AgentMessage[]
-      ↓
-convertToLlm
-      ↓
-Message[]
-      ↓
-ModelGateway
-      ↓
-LLM
-```
-
-Runtime 只知道：
-
-> 调模型之前允许上层转换一次 AgentMessage[]。
-
-它不应该知道：
-
-* Session
-* RAG
-* Memory
-* Compaction
-* Token Budget
-* Application 业务规则
-
----
-
-## 4. ContextManager 契约
-
-Application 层定义：
+当前契约：
 
 ```ts
 export interface ContextManager {
@@ -176,72 +100,123 @@ export interface ContextPrepareResult {
 }
 ```
 
-第一版实现：
+ContextManager 通过 Application 接入：
 
-```ts
-export class DefaultContextManager implements ContextManager {
-  async prepare(
-    input: ContextPrepareInput,
-  ): Promise<ContextPrepareResult> {
-    return {
-      messages: [...input.messages],
-    };
-  }
-}
+```text
+Agent Runtime.transformContext
 ```
 
-第一版不实现真正裁剪，只先建立架构边界。
+调用顺序：
+
+```text
+AgentMessage[]
+      ↓
+ContextManager.prepare()
+      ↓
+AgentMessage[]
+      ↓
+convertToLlm()
+      ↓
+ModelGateway Context
+      ↓
+LLM
+```
+
+ContextManager：
+
+* 不依赖 SessionManager
+* 不写 Session
+* 不追加 CompactionEntry
+* 不负责 Session Tree
+* 不负责自动压缩流程
+
+当前 `DefaultContextManager` 保持 identity 行为：
+
+```ts
+return {
+  messages: [...input.messages],
+};
+```
+
+未来 ContextManager 可以逐步承担：
+
+* Memory 注入
+* RAG 注入
+* 临时业务 Context
+* Context 排序
+* 特定消息过滤
+* 外部上下文组合
+
+但：
+
+```text
+ContextManager ≠ CompactionManager
+```
 
 ---
 
-## 5. ContextManager 接入流程
+# 5. Runtime 边界
 
-`createAgentSession()` 接收：
+`agent-runtime` 不依赖 Application 的上下文工程实现。
 
-```ts
-contextManager
-```
-
-创建 Agent 时：
+Runtime 只提供通用 hook：
 
 ```ts
-new Agent({
-  ...
-
-  transformContext: async (messages, signal) => {
-    const result = await contextManager.prepare({
-      messages,
-      model,
-      systemPrompt,
-      tools,
-      signal,
-    });
-
-    return [...result.messages];
-  },
-});
+transformContext?: (
+  messages: readonly AgentMessage[],
+  signal?: AbortSignal,
+) =>
+  readonly AgentMessage[]
+  | Promise<readonly AgentMessage[]>;
 ```
 
-因此完整调用链为：
+Agent Loop：
+
+```text
+完整 Agent State
+      ↓
+transformContext
+      ↓
+convertToLlm
+      ↓
+ModelGateway
+```
+
+Runtime 不应该知道：
+
+* SessionManager
+* Session JSONL
+* CompactionEntry
+* CompactionService
+* Memory
+* RAG
+* PromptBuilder
+* Application 业务规则
+
+---
+
+# 6. 当前调用链
+
+当前 Application 调用链：
 
 ```text
 RunConversationTurn
+        ↓
+SessionStore
         ↓
 SessionManager
         ↓
 buildSessionContext()
         ↓
-完整 Session History
-        ↓
 createAgentSession()
         ↓
-Agent
+AgentSession
         ↓
-Agent Loop
+Agent Runtime
+        ↓
+transformContext
         ↓
 ContextManager.prepare()
-        ↓
-本次 LLM Context
         ↓
 convertToLlm()
         ↓
@@ -250,292 +225,533 @@ ModelGateway
 LLM
 ```
 
----
-
-## 6. Session 与 Context 的关系
-
-SessionManager 保存完整历史：
+模型产生的新消息：
 
 ```text
-A
-B
-C
-D
-E
-F
+LLM
+ ↓
+Agent Runtime
+ ↓
+message_end
+ ↓
+AgentSession
+ ↓
+SessionManager.appendMessage()
+ ↓
+Session JSONL
 ```
 
-ContextManager 可以临时决定模型只看到：
+因此：
 
 ```text
-C
-D
-E
-F
+Session History
+和
+本次 LLM Context
+已经解耦。
 ```
-
-但 Session 中依旧保持：
-
-```text
-A
-B
-C
-D
-E
-F
-```
-
-因此 ContextManager 的处理不能反向删除 Session 内容。
 
 ---
 
-## 7. Compaction 设计
+# 7. Context Accounting
 
-当会话长期增长时，仅依靠临时裁剪不够，需要 Compaction。
+Context Accounting 回答：
 
-新增：
+> 当前上下文是否已经接近模型窗口，需要触发 Compaction？
 
-```ts
-interface CompactionEntry {
-  type: 'compaction';
+它负责“测量”和“判断”，不负责真正执行压缩。
 
-  summary: string;
-
-  firstKeptEntryId: string;
-
-  tokensBefore: number;
-}
-```
-
-例如原 Session：
+核心能力：
 
 ```text
-A
-↓
-B
-↓
-C
-↓
-D
-↓
-E
-↓
-F
-```
-
-压缩后 Session 仍保留这些原始 Entry，同时追加：
-
-```text
-CompactionEntry
-summary = A~D 的摘要
-firstKeptEntryId = E
-```
-
-以后 `buildSessionContext()` 不再直接返回：
-
-```text
-A B C D E F
-```
-
-而返回：
-
-```text
-CompactionSummary
-E
-F
-```
-
-原始历史没有丢失，只改变了未来 Context 的投影方式。
-
----
-
-## 8. CompactionService 契约方向
-
-后续可以定义：
-
-```ts
-export interface CompactionService {
-  shouldCompact(
-    input: CompactionCheckInput,
-  ): boolean;
-
-  compact(
-    input: CompactionInput,
-  ): Promise<CompactionResult>;
-}
+estimateTokens()
+calculateContextTokens()
+shouldCompact()
+CompactionSettings
 ```
 
 配置：
 
 ```ts
 export interface CompactionSettings {
-  enabled: boolean;
-  reserveTokens: number;
-  keepRecentTokens: number;
+  readonly enabled: boolean;
+  readonly reserveTokens: number;
+  readonly keepRecentTokens: number;
 }
 ```
 
 基本判断：
 
 ```text
-currentContextTokens
+contextTokens
 >
 contextWindow - reserveTokens
 ```
 
-达到阈值才触发压缩。
+例如：
+
+```text
+contextWindow = 128000
+reserveTokens = 16000
+
+threshold = 112000
+```
+
+当：
+
+```text
+contextTokens > 112000
+```
+
+应提前触发 Compaction，而不是等真正产生 context overflow 后再处理。
 
 ---
 
-## 9. Cut Point 规则
+# 8. Token Accounting 策略
 
-Compaction 不能随便从某条消息切断。
+优先使用最近有效 AssistantMessage 中模型返回的 usage。
+
+如果没有可靠 usage：
+
+```text
+使用消息内容进行估算
+```
+
+第一版允许使用近似算法，例如：
+
+```text
+characters / 4
+```
+
+Context Accounting 的目标不是做到 tokenizer 级完全精确，而是提供稳定的安全阈值判断。
+
+以后可以替换为更准确的 provider/model tokenizer。
+
+---
+
+# 9. Compaction
+
+Compaction 回答：
+
+> 历史已经太长，以后应该怎样重新表达过去？
+
+Compaction 与 ContextManager 不同。
+
+ContextManager 是：
+
+```text
+单次调用的临时变换
+```
+
+Compaction 是：
+
+```text
+Session 级持久历史重表达
+```
+
+例如原始 Session：
+
+```text
+A
+↓
+B
+↓
+C
+↓
+D
+↓
+E
+↓
+F
+```
+
+当历史达到安全阈值：
+
+```text
+A B C D
+   ↓
+生成 Summary
+```
+
+随后 Session 追加：
+
+```text
+CompactionEntry
+```
+
+原始 Entry 不删除。
+
+---
+
+# 10. CompactionEntry
+
+计划新增：
+
+```ts
+export interface CompactionEntry extends SessionEntryBase {
+  readonly type: 'compaction';
+
+  readonly summary: string;
+
+  readonly firstKeptEntryId: string;
+
+  readonly tokensBefore: number;
+}
+```
+
+例如：
+
+```text
+summary = A-D 的摘要
+firstKeptEntryId = E
+```
+
+Session JSONL 中仍然存在：
+
+```text
+A
+B
+C
+D
+E
+F
+CompactionEntry
+```
+
+但以后：
+
+```text
+SessionManager.buildSessionContext()
+```
+
+生成：
+
+```text
+CompactionSummary(A-D)
+E
+F
+```
+
+因此：
+
+```text
+历史事实没有删除，
+只是当前 Session Context 的投影方式改变。
+```
+
+---
+
+# 11. 自动 Compaction
+
+自动 Compaction 与手动 Compaction 使用相同的 Session 持久化模型。
+
+区别只是触发方式。
+
+手动：
+
+```text
+用户主动 compact
+```
+
+自动：
+
+```text
+Context Accounting
+      ↓
+达到安全阈值
+      ↓
+自动触发 Compaction
+```
+
+自动 Compaction 最终同样：
+
+```text
+SessionManager.appendCompaction()
+```
+
+而不是只在内存中临时裁剪消息。
+
+---
+
+# 12. Auto Compaction 完整流程
+
+```text
+Agent Run 完成
+        ↓
+读取最新 context usage
+        ↓
+Context Accounting
+        ↓
+shouldCompact()
+       / \
+     false true
+       │    │
+       │    ▼
+       │ CompactionService
+       │    │
+       │    ├─ prepareCompaction()
+       │    ├─ 找 safe cut point
+       │    ├─ 选择旧历史
+       │    └─ 保留 recent messages
+       │
+       │    ▼
+       │ 调用模型生成 Summary
+       │
+       │    ▼
+       │ CompactionResult
+       │
+       │    ▼
+       │ SessionManager.appendCompaction()
+       │
+       │    ▼
+       │ buildSessionContext()
+       │
+       │    ▼
+       │ Summary + Recent Messages
+       │
+       ▼
+      结束
+```
+
+也可以在下一次 Prompt 提交前再次检查，避免上一次 aborted/error 等场景遗漏压缩。
+
+---
+
+# 13. Safe Cut Point
+
+Compaction 不能直接：
+
+```ts
+messages.slice(...)
+```
+
+因为消息之间存在结构关系。
 
 例如：
 
 ```text
 assistant
-  toolCall
-↓
+  toolCall(id=123)
+      ↓
+toolResult(toolCallId=123)
+```
+
+不能从：
+
+```text
 toolResult
 ```
 
-不能从 `toolResult` 开始保留，否则模型将看到一个没有对应 ToolCall 的孤立结果。
+开始保留，否则会形成孤立工具结果。
 
-因此合法 cut point 应优先是：
+Cut Point 应优先选择可以独立形成上下文边界的位置，例如：
 
-* user
-* assistant
-* 其他可以独立形成上下文语义边界的消息
+* user message
+* assistant message
+* 其他明确安全的消息边界
 
-不能直接从 toolResult 中间切。
-
-Cut Point 算法方向：
+第一版策略：
 
 ```text
-从最新消息向前遍历
+从最新历史向前遍历
         ↓
-累计 token
+累计消息 token
         ↓
 达到 keepRecentTokens
         ↓
-寻找最近合法 cut point
+继续寻找安全 cut point
         ↓
-旧历史进入 summary
+旧历史进入 Summary
         ↓
-新历史保持原始消息
+最近历史保持原样
 ```
 
 ---
 
-## 10. Compaction 完整流程
+# 14. CompactionService
+
+建议定义：
+
+```ts
+export interface CompactionService {
+  compact(
+    input: CompactionInput,
+  ): Promise<CompactionResult>;
+}
+```
+
+CompactionService 负责：
+
+* prepareCompaction
+* cut point
+* summary input
+* 调模型生成 summary
+* CompactionResult
+
+但：
 
 ```text
-Agent Run 完成
-      ↓
-Context Usage Check
-      ↓
-shouldCompact()
-      ↓
-否 → 结束
-      ↓
-是
-      ↓
+CompactionService 不直接负责 Session persistence
+```
+
+Application / AgentSession 负责协调：
+
+```text
 CompactionService
-      ↓
-找到 cut point
-      ↓
-提取旧历史
-      ↓
-调用模型生成 summary
       ↓
 CompactionResult
       ↓
 SessionManager.appendCompaction()
-      ↓
-Session JSONL
 ```
 
-下一轮：
-
-```text
-SessionManager
-      ↓
-buildSessionContext()
-      ↓
-读取最新 CompactionEntry
-      ↓
-CompactionSummary
-+
-最近未压缩消息
-      ↓
-Agent
-```
+保持计算逻辑和持久化边界分离。
 
 ---
 
-## 11. 工具输出截断边界
+# 15. buildSessionContext 的未来职责
 
-工具输出限制属于广义 Context Engineering，但不由 ContextManager 负责。
+当前：
+
+```text
+buildSessionContext()
+```
+
+主要沿 Session 当前 branch 构造所有有效 message。
+
+支持 Compaction 后，应变成：
+
+```text
+读取当前 Branch
+      ↓
+寻找最新 CompactionEntry
+       │
+       ├─ 没有
+       │    ↓
+       │ 返回正常 branch messages
+       │
+       └─ 有
+            ↓
+      构造 CompactionSummary
+            +
+      firstKeptEntryId 之后的消息
+```
+
+因此 `buildSessionContext()` 是：
+
+```text
+Session Tree
+      ↓
+当前可运行 Session Projection
+```
+
+它不是简单读取所有历史。
+
+---
+
+# 16. Overflow Recovery
+
+Threshold Compaction 是主路径。
+
+另外仍需要处理真正发生的：
+
+```text
+context overflow
+```
+
+未来可以实现：
+
+```text
+Model 返回 context overflow
+        ↓
+识别 overflow
+        ↓
+移除本次失败的临时 AssistantMessage
+        ↓
+自动 Compaction
+        ↓
+重新构建 Session Context
+        ↓
+retry once
+```
+
+第一版只允许一次恢复重试，防止：
+
+```text
+overflow
+→ compact
+→ retry
+→ overflow
+→ compact
+→ retry
+→ ...
+```
+
+形成无限循环。
+
+Overflow Recovery 属于后续阶段，不与第一版 Auto Compaction 一起实现。
+
+---
+
+# 17. 工具输出治理
+
+工具输出属于广义 Context Engineering，但不由 ContextManager 或 Compaction 负责。
 
 正确流程：
 
 ```text
 Tool
  ↓
-execute
- ↓
 Raw Result
+ ↓
+Tool Output Policy
  ↓
 truncate / paging / summarize
  ↓
 AgentToolResult
  ↓
-Session + Context
+Session
 ```
 
-例如：
+例如 Excel：
 
 ```text
-Excel Tool
-读取 10000 行数据
+读取 10000 行
       ↓
-Tool Adapter
+Tool Gateway
       ↓
-限制结果大小
+限制输出大小
       ↓
-返回摘要 / 分页结果
+返回局部数据 / 摘要 / 引用
 ```
-
-不要先把巨大结果写进 Session，再等待 ContextManager 清理。
 
 原则：
 
 ```text
-能在信息源头限制，就不要等到 Context 层补救。
+能在信息源头限制，
+就不要等待 Context 层补救。
 ```
 
 ---
 
-## 12. System Prompt 边界
+# 18. Prompt / Resource Engineering
 
-System Prompt 同样属于广义上下文工程，但建议独立为：
+System Prompt 相关能力独立为：
 
 ```text
 PromptBuilder
 ResourceLoader
 ```
 
-未来负责：
+负责：
 
-* Agent 系统指令
-* 项目级说明
+* Agent System Prompt
+* 项目级上下文
 * AGENTS.md
+* Skills
+* 工具说明
+* 工作区资源
 * 用户配置
-* Skills 描述
-* 工具相关 Guidelines
 
-最终：
+流程：
 
 ```text
 ResourceLoader
@@ -543,33 +759,47 @@ ResourceLoader
 PromptBuilder
       ↓
 systemPrompt
+      ↓
+Agent
 ```
 
-再由 Agent 使用。
+不要让 ContextManager 同时负责：
 
-不要让 ContextManager 同时负责加载文件、拼 Prompt、维护 Session。
+```text
+文件加载
+Prompt 拼接
+Session
+Compaction
+```
 
 ---
 
-## 13. Memory / RAG 后续接入方式
+# 19. Memory / RAG
 
-未来：
+未来 Memory 和 RAG 作为独立 Retriever：
 
 ```text
-ContextManager.prepare()
-        ↓
-基础 Session Context
-        ↓
 MemoryRetriever
-        ↓
 RagRetriever
-        ↓
-Context Budget 分配
-        ↓
-最终 AgentMessage[]
 ```
 
-可以逐渐形成：
+ContextManager 负责将结果注入当前 LLM Context：
+
+```text
+Session Context
+      +
+Memory
+      +
+RAG
+      +
+Temporary Context
+      ↓
+ContextManager
+      ↓
+本次模型输入
+```
+
+最终模型可能看到：
 
 ```text
 System Prompt
@@ -585,137 +815,223 @@ RAG Results
 Current User Input
 ```
 
-ContextManager 负责最后的组合和预算，而 Memory/RAG 各自负责检索。
+Memory / RAG 负责：
+
+```text
+找什么
+```
+
+ContextManager 负责：
+
+```text
+如何放进当前模型上下文
+```
 
 ---
 
-## 14. 最终模块职责总结
+# 20. 模块职责总结
 
 ```text
 SessionManager
 = 保存“发生过什么”
 
 ContextManager
-= 决定“这次模型看什么”
+= 决定“单次模型调用前如何临时变换上下文”
+
+Context Accounting
+= 判断“上下文是否接近模型窗口”
 
 CompactionService
-= 决定“历史太长以后怎么重新表达过去”
+= 决定“历史太长以后怎样重新表达”
+
+AgentSession / Application
+= 协调自动 Compaction 生命周期
 
 PromptBuilder
 = 决定“系统应该告诉模型什么”
 
 MemoryRetriever
-= 找过去值得重新想起的信息
+= 找值得重新想起的历史信息
 
 RagRetriever
 = 找外部知识
 
 convertToLlm
-= 把 AgentMessage 翻译成模型协议
+= 将 AgentMessage 翻译为模型协议
 
 Tool Output Policy
-= 控制工具一开始吐多少内容
+= 控制工具从源头产生多少上下文
 ```
 
 ---
 
-# 15. 分阶段实施计划
+# 21. 分阶段实施计划
 
-## Phase 1：建立 Context 边界
+## Phase 1：ContextManager Boundary ✅
 
 目标：
 
 ```text
-Session History 与 LLM Context 解耦
+Session History
+与
+LLM Context
+解耦
+```
+
+已完成：
+
+* 新增 `context/`
+* ContextManager 契约
+* DefaultContextManager
+* `createAgentSession()` 接入
+* `RunConversationTurn` 注入
+* 连接 Runtime `transformContext`
+* 测试 ContextManager 变换不会修改 Session History
+* 测试新的消息仍正常持久化
+
+当前：
+
+```text
+DefaultContextManager
+=
+identity transform
+```
+
+这是预期行为。
+
+---
+
+## Phase 2：Context Accounting ← 当前阶段
+
+目标：
+
+```text
+准确回答：
+当前 Session Context 是否需要进行 Compaction？
 ```
 
 实现：
 
-* 新增 `context/`
-* 定义 ContextManager
-* 实现 DefaultContextManager
-* `createAgentSession()` 接入
-* 连接 `Agent.transformContext`
+* `CompactionSettings`
+* `estimateTokens()`
+* `calculateContextTokens()`
+* `estimateContextTokens()`
+* `shouldCompact()`
 
-测试：
-
-* ContextManager 确实被调用
-* 修改后的消息进入 ModelGateway
-* Session 历史不被修改
-
-完成标准：
+使用：
 
 ```text
-SessionManager → AgentSession → ContextManager → Runtime
+Model.contextWindow
+reserveTokens
+Assistant usage
+message token estimate
 ```
 
-链路跑通。
+基本判断：
+
+```text
+contextTokens
+>
+contextWindow - reserveTokens
+```
+
+本阶段：
+
+```text
+不裁剪 messages
+不生成 summary
+不新增 CompactionEntry
+不修改 Session
+不实现 RAG
+不实现 Memory
+```
 
 ---
 
-## Phase 2：Context Budget
+## Phase 3：Auto Compaction
 
-新增：
-
-* contextWindow
-* reserveTokens
-* token estimation
-* context usage
-
-ContextManager 能判断：
+目标：
 
 ```text
-当前 Context 是否接近模型窗口
+达到安全阈值后自动压缩旧历史，
+并持久化为 Session CompactionEntry。
 ```
 
-暂时仍可以只做简单最近消息裁剪。
-
----
-
-## Phase 3：Compaction
-
-新增：
+实现：
 
 * CompactionEntry
-* CompactionSettings
+* CompactionResult
 * CompactionService
-* shouldCompact()
-* findCutPoint()
+* prepareCompaction()
+* safe cut point
+* keepRecentTokens
 * summary generation
-* appendCompaction()
+* SessionManager.appendCompaction()
+* compaction-aware `buildSessionContext()`
+* Application 自动触发流程
 
-升级：
+完成后的核心链路：
 
 ```text
-SessionManager.buildSessionContext()
+Context Usage
+      ↓
+shouldCompact
+      ↓
+CompactionService
+      ↓
+Summary
+      ↓
+CompactionEntry
+      ↓
+SessionManager
+      ↓
+Summary + Recent Messages
 ```
-
-支持 compaction-aware context projection。
 
 ---
 
-## Phase 4：工具输出治理
+## Phase 4：Overflow Recovery
+
+实现：
+
+* context overflow detection
+* recoverable length detection
+* compact after overflow
+* rebuild context
+* retry once
+* 防止无限重试
+
+Threshold Auto Compaction 仍是主路径。
+
+Overflow Recovery 是异常兜底。
+
+---
+
+## Phase 5：Tool Output Governance
 
 在 Tool Gateway / AgentTool Adapter 层实现：
 
+* 最大字符数
 * 最大行数
-* 最大字符或字节
-* 分页
-* 结果摘要
-* Full Result Reference
+* 最大结果大小
+* head / tail 截取策略
+* paging
+* summary
+* full-result reference
 
 重点覆盖：
 
 * Excel 大范围读取
-* 搜索结果
-* 文件读取
-* 日志类输出
+* 搜索
+* 文件
+* 日志
+* 大型结构化结果
 
 ---
 
-## Phase 5：Prompt / Resource Engineering
+## Phase 6：Prompt / Resource Engineering
 
-新增：
+实现：
 
 ```text
 PromptBuilder
@@ -724,98 +1040,139 @@ ResourceLoader
 
 逐步支持：
 
-* 全局 Agent Prompt
-* 项目 Prompt
+* Agent System Prompt
+* 项目说明
 * AGENTS.md
 * Skills
 * 工具说明
-* 当前工作区信息
+* 工作区上下文
 
 ---
 
-## Phase 6：Memory / RAG
+## Phase 7：Memory / RAG
 
-新增：
+实现：
 
 ```text
 MemoryRetriever
 RagRetriever
 ```
 
-由 ContextManager 统一负责将检索结果放进 Context Budget。
+通过 ContextManager 注入本次模型调用。
+
+ContextManager 在这个阶段才开始承担更丰富的上下文组合策略。
 
 ---
 
-# 16. 当前最应该实现的范围
+# 22. 当前实现范围
 
-目前只实现 Phase 1。
+当前已经完成：
+
+```text
+Phase 1 ✅
+ContextManager Boundary
+```
+
+当前最应该实现：
+
+```text
+Phase 2
+Context Accounting
+```
 
 即：
 
 ```text
-ContextManager 契约
-        ↓
-DefaultContextManager
-        ↓
-createAgentSession 接入
-        ↓
-Agent.transformContext
-        ↓
-ModelGateway
+CompactionSettings
+      ↓
+Token Accounting
+      ↓
+Context Usage
+      ↓
+shouldCompact()
 ```
 
-暂时不要实现：
+当前不要：
 
 ```text
-Compaction
-Memory
-RAG
-复杂 Token Budget
-PromptBuilder
-工具结果摘要
+messages.slice(-N)
+
+不要把超预算处理实现成简单 sliding window
+
+不要让 ContextManager 写 Session
+
+不要让 ContextManager 实现 Compaction
+
+不要提前实现 RAG / Memory
+
+不要把 Compaction 放进 agent-runtime
 ```
 
-先建立正确边界，再逐层增加能力。
+Phase 2 完成后，再进入 Phase 3 Auto Compaction。
 
 ---
 
-# 17. 最终目标架构
+# 23. 最终目标架构
 
 ```text
-                     Application
-                         │
-       ┌─────────────────┼─────────────────┐
-       │                 │                 │
-       ▼                 ▼                 ▼
-SessionManager      ContextManager   CompactionService
-       │                 │                 │
-       │                 ├── Memory        │
-       │                 ├── RAG           │
-       │                 └── ContextBudget │
-       │                                   │
-       └──────────────┬────────────────────┘
-                      ▼
-                 AgentSession
-                      │
-                      ▼
-                 Agent Runtime
-                      │
-              transformContext
-                      │
-                 convertToLlm
-                      │
-                      ▼
-                 ModelGateway
-                      │
-                      ▼
-                     LLM
+                         Application
+                             │
+          ┌──────────────────┼───────────────────┐
+          │                  │                   │
+          ▼                  ▼                   ▼
+   SessionManager      ContextManager      Context Accounting
+          │                  │                   │
+          │                  │                   ▼
+          │                  │             shouldCompact()
+          │                  │                   │
+          │                  │                   ▼
+          │                  │           CompactionService
+          │                  │                   │
+          │                  │                   ▼
+          │                  │           CompactionResult
+          │                  │                   │
+          │                  │                   ▼
+          └──────────────────┼────────── SessionManager
+                             │
+                             ▼
+                        AgentSession
+                             │
+                             ▼
+                        Agent Runtime
+                             │
+                      transformContext
+                             │
+                             ▼
+                       ContextManager
+                             │
+                             ▼
+                        convertToLlm
+                             │
+                             ▼
+                        ModelGateway
+                             │
+                             ▼
+                            LLM
 ```
 
-设计目标不是“把 ContextManager 做强大”，而是让不同上下文问题拥有正确的责任边界。
-
-最终形成：
+最终目标：
 
 ```text
-完整历史可以无限增长，
-模型每次只看到当前最有价值的一小部分。
+Session 可以持续保存完整历史，
+
+Compaction 负责把旧历史重新编码为更高密度的信息，
+
+ContextManager 负责单次模型调用的临时上下文组合，
+
+Agent Runtime 始终保持通用和业务无关。
+```
+
+核心原则保持：
+
+```text
+Session History ≠ LLM Context
+
+ContextManager ≠ Compaction
+
+Auto Compaction = 自动生成并持久化 CompactionEntry
 ```
