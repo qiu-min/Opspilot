@@ -2,7 +2,6 @@ import { messageSchema, type Message } from '@opspilot/model-gateway';
 import type {
   Agent,
   AgentEvent,
-  AgentEventListener,
   AgentMessage,
   AgentState,
 } from '@opspilot/agent-runtime';
@@ -10,6 +9,7 @@ import type {
 import {
   estimateSessionContextTokens,
   shouldCompact,
+  type CompactionResult,
   type CompactionService,
   type CompactionSettings,
 } from '../context/index.js';
@@ -24,12 +24,29 @@ export interface AgentSessionConfig {
 
 type AutoCompactionResult = 'skipped' | 'compacted' | 'aborted';
 
+export type AgentSessionEvent =
+  | AgentEvent
+  | {
+      readonly type: 'compaction_start';
+      readonly reason: 'threshold';
+    }
+  | {
+      readonly type: 'compaction_end';
+      readonly reason: 'threshold';
+      readonly result: CompactionResult | undefined;
+      readonly aborted: boolean;
+      readonly errorMessage?: string;
+    };
+
+export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
+
 /** 应用层的最小 Agent 生命周期包装器，负责将完成消息写入 Session。 */
 export class AgentSession {
   public readonly agent: Agent;
   public readonly sessionManager: SessionManager;
 
   private readonly unsubscribeAgent: () => void;
+  private readonly eventListeners = new Set<AgentSessionEventListener>();
   private readonly compactionService?: CompactionService;
   private readonly compactionSettings?: CompactionSettings;
   private autoCompactionAbortController?: AbortController;
@@ -49,12 +66,8 @@ export class AgentSession {
     input: AgentMessage | readonly AgentMessage[],
   ): Promise<readonly AgentMessage[]> {
     this.assertNotDisposed();
-    const prePromptResult = await this.maybeCompactBeforePrompt();
+    await this.maybeCompactBeforePrompt();
     this.assertNotDisposed();
-    if (prePromptResult === 'aborted') {
-      throw new Error('AgentSession prompt was aborted.');
-    }
-
     const messages = await this.agent.prompt(input);
     await this.maybeCompactAfterRun();
     return messages;
@@ -63,6 +76,10 @@ export class AgentSession {
   /** 请求停止当前 Agent Run。 */
   public abort(): void {
     this.agent.abort();
+  }
+
+  /** 请求停止当前 Application-level Compaction。 */
+  public abortCompaction(): void {
     this.autoCompactionAbortController?.abort();
   }
 
@@ -72,9 +89,12 @@ export class AgentSession {
   }
 
   /** 代理 Agent Runtime 的事件订阅。 */
-  public subscribe(listener: AgentEventListener): () => void {
+  public subscribe(listener: AgentSessionEventListener): () => void {
     this.assertNotDisposed();
-    return this.agent.subscribe(listener);
+    this.eventListeners.add(listener);
+    return () => {
+      this.eventListeners.delete(listener);
+    };
   }
 
   /** 返回 Agent 当前状态快照。 */
@@ -88,9 +108,10 @@ export class AgentSession {
     if (this.agent.state.isRunning) {
       throw new Error('Cannot dispose AgentSession while Agent is running. Wait for idle first.');
     }
-    this.autoCompactionAbortController?.abort();
+    this.abortCompaction();
     this.disposed = true;
     this.unsubscribeAgent();
+    this.eventListeners.clear();
   }
 
   private assertNotDisposed(): void {
@@ -98,8 +119,17 @@ export class AgentSession {
   }
 
   private handleAgentEvent(event: AgentEvent): void {
-    if (event.type !== 'message_end' || !isStandardMessage(event.message)) return;
-    this.sessionManager.appendMessage(event.message);
+    if (event.type === 'message_end' && isStandardMessage(event.message)) {
+      this.sessionManager.appendMessage(event.message);
+    }
+
+    this.emit(event);
+  }
+
+  private emit(event: AgentSessionEvent): void {
+    for (const listener of this.eventListeners) {
+      listener(event);
+    }
   }
 
   /** Performs best-effort compaction before the next prompt and refreshes Runtime history. */
@@ -127,15 +157,31 @@ export class AgentSession {
 
     const controller = new AbortController();
     this.autoCompactionAbortController = controller;
+    let compactionStarted = false;
     try {
+      compactionStarted = true;
+      this.emit({ type: 'compaction_start', reason: 'threshold' });
+
       const result = await compactionService.compact({
         entries: this.sessionManager.getBranch(),
         model: state.model,
         settings: compactionSettings,
         signal: controller.signal,
       });
-      if (controller.signal.aborted) return 'aborted';
-      if (result === undefined) return 'skipped';
+      if (controller.signal.aborted) {
+        this.emitCompactionEnd(compactionStarted, {
+          result: undefined,
+          aborted: true,
+        });
+        return 'aborted';
+      }
+      if (result === undefined) {
+        this.emitCompactionEnd(compactionStarted, {
+          result: undefined,
+          aborted: false,
+        });
+        return 'skipped';
+      }
 
       this.sessionManager.appendCompaction(
         result.summary,
@@ -144,15 +190,37 @@ export class AgentSession {
       );
       const sessionContext = this.sessionManager.buildSessionContext();
       this.agent.replaceMessages(sessionContext.messages);
+      this.emitCompactionEnd(compactionStarted, { result, aborted: false });
       return 'compacted';
-    } catch {
+    } catch (error: unknown) {
       // Auto compaction is best-effort maintenance. Non-abort failures do not mutate Session or Runtime history.
-      return controller.signal.aborted ? 'aborted' : 'skipped';
+      if (controller.signal.aborted) {
+        this.emitCompactionEnd(compactionStarted, {
+          result: undefined,
+          aborted: true,
+        });
+        return 'aborted';
+      }
+
+      this.emitCompactionEnd(compactionStarted, {
+        result: undefined,
+        aborted: false,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      return 'skipped';
     } finally {
       if (this.autoCompactionAbortController === controller) {
         this.autoCompactionAbortController = undefined;
       }
     }
+  }
+
+  private emitCompactionEnd(
+    started: boolean,
+    event: Omit<Extract<AgentSessionEvent, { type: 'compaction_end' }>, 'type' | 'reason'>,
+  ): void {
+    if (!started) return;
+    this.emit({ type: 'compaction_end', reason: 'threshold', ...event });
   }
 }
 

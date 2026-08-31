@@ -18,6 +18,7 @@ import {
   createCompactionSummaryMessage,
   DefaultContextManager,
   SessionManager,
+  type AgentSessionEvent,
   type CompactionService,
 } from '../src/index.js';
 
@@ -350,6 +351,10 @@ describe('AgentSession composition and persistence', () => {
       compactionService,
       compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
     });
+    const events: AgentSessionEvent[] = [];
+    session.subscribe((event) => {
+      events.push(event);
+    });
 
     await session.prompt(userMessage('A'));
 
@@ -357,6 +362,19 @@ describe('AgentSession composition and persistence', () => {
     expect(session.agent.state.messages).toEqual([
       createCompactionSummaryMessage('Summary'),
       firstResponse,
+    ]);
+    expect(events.filter((event) => event.type.startsWith('compaction_'))).toEqual([
+      { type: 'compaction_start', reason: 'threshold' },
+      expect.objectContaining({
+        type: 'compaction_end',
+        reason: 'threshold',
+        result: {
+          summary: 'Summary',
+          firstKeptEntryId: expect.any(String),
+          tokensBefore: 1001,
+        },
+        aborted: false,
+      }),
     ]);
 
     await session.prompt(secondInput);
@@ -367,6 +385,45 @@ describe('AgentSession composition and persistence', () => {
       createCompactionSummaryMessage('Summary'),
       firstResponse,
       secondInput,
+    ]);
+    session.dispose();
+  });
+
+  it('emits a fail-soft compaction end event when summary generation fails', async () => {
+    const compactingModel = { ...model, contextWindow: 1 };
+    const sessionManager = SessionManager.inMemory();
+    const response = assistantMessage('response');
+    const gateway = createGateway([assistantStream(response)], [compactingModel]);
+    const session = createAgentSession({
+      sessionManager,
+      modelGateway: gateway,
+      model: compactingModel,
+      compactionService: {
+        compact: async () => {
+          throw new Error('summary generation failed');
+        },
+      },
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+    const events: AgentSessionEvent[] = [];
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    await expect(session.prompt(userMessage('input'))).resolves.toEqual([
+      userMessage('input'),
+      response,
+    ]);
+
+    expect(events.filter((event) => event.type.startsWith('compaction_'))).toEqual([
+      { type: 'compaction_start', reason: 'threshold' },
+      {
+        type: 'compaction_end',
+        reason: 'threshold',
+        result: undefined,
+        aborted: false,
+        errorMessage: 'summary generation failed',
+      },
     ]);
     session.dispose();
   });
@@ -417,11 +474,11 @@ describe('AgentSession composition and persistence', () => {
     expect(sessionManager.getEntries().some((entry) => entry.type === 'compaction')).toBe(false);
   });
 
-  it('does not start Runtime when aborted during pre-prompt compaction', async () => {
-    const compactingModel = { ...model, contextWindow: 1 };
+  it('continues the prompt when pre-prompt compaction is aborted explicitly', async () => {
+    const compactingModel = { ...model, contextWindow: 100 };
     const sessionManager = SessionManager.inMemory();
     sessionManager.appendModelChange(compactingModel.provider, compactingModel.id);
-    const oldInput = userMessage('old input');
+    const oldInput = userMessage('x'.repeat(500));
     const oldResponse = assistantMessage('old response');
     sessionManager.appendMessage(oldInput);
     sessionManager.appendMessage(oldResponse);
@@ -435,7 +492,69 @@ describe('AgentSession composition and persistence', () => {
       resolveCompactionRelease = resolve;
     });
     let compactionSignal: AbortSignal | undefined;
-    const gateway = createGateway([], [compactingModel]);
+    const newInput = userMessage('new input');
+    const response = {
+      ...assistantMessage('response'),
+      usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+    };
+    const gateway = createGateway([assistantStream(response)], [compactingModel]);
+    const session = createAgentSession({
+      sessionManager,
+      modelGateway: gateway,
+      model: compactingModel,
+      compactionService: {
+        compact: async ({ signal }) => {
+          compactionSignal = signal;
+          resolveCompactionStarted();
+          await compactionRelease;
+          return undefined;
+        },
+      },
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+    const events: AgentSessionEvent[] = [];
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    const run = session.prompt(newInput);
+    await compactionStarted;
+    session.abortCompaction();
+    expect(compactionSignal?.aborted).toBe(true);
+
+    resolveCompactionRelease();
+    await expect(run).resolves.toEqual([newInput, response]);
+    expect(gateway.stream).toHaveBeenCalledOnce();
+    expect(messageEntries(sessionManager)).toEqual([oldInput, oldResponse, newInput, response]);
+    expect(sessionManager.getEntries().some((entry) => entry.type === 'compaction')).toBe(false);
+    expect(events.filter((event) => event.type.startsWith('compaction_'))).toEqual([
+      { type: 'compaction_start', reason: 'threshold' },
+      { type: 'compaction_end', reason: 'threshold', result: undefined, aborted: true },
+    ]);
+    session.dispose();
+  });
+
+  it('does not cancel pre-prompt compaction when the Runtime is aborted', async () => {
+    const compactingModel = { ...model, contextWindow: 100 };
+    const sessionManager = SessionManager.inMemory();
+    sessionManager.appendModelChange(compactingModel.provider, compactingModel.id);
+    sessionManager.appendMessage(userMessage('x'.repeat(500)));
+    sessionManager.appendMessage(assistantMessage('old response'));
+
+    let resolveCompactionStarted!: () => void;
+    const compactionStarted = new Promise<void>((resolve) => {
+      resolveCompactionStarted = resolve;
+    });
+    let resolveCompactionRelease!: () => void;
+    const compactionRelease = new Promise<void>((resolve) => {
+      resolveCompactionRelease = resolve;
+    });
+    let compactionSignal: AbortSignal | undefined;
+    const response = {
+      ...assistantMessage('response'),
+      usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+    };
+    const gateway = createGateway([assistantStream(response)], [compactingModel]);
     const session = createAgentSession({
       sessionManager,
       modelGateway: gateway,
@@ -454,17 +573,15 @@ describe('AgentSession composition and persistence', () => {
     const run = session.prompt(userMessage('new input'));
     await compactionStarted;
     session.abort();
-    expect(compactionSignal?.aborted).toBe(true);
-
+    expect(compactionSignal?.aborted).toBe(false);
     resolveCompactionRelease();
-    await expect(run).rejects.toThrow('AgentSession prompt was aborted.');
-    expect(gateway.stream).not.toHaveBeenCalled();
-    expect(messageEntries(sessionManager)).toEqual([oldInput, oldResponse]);
-    expect(sessionManager.getEntries().some((entry) => entry.type === 'compaction')).toBe(false);
+
+    await expect(run).resolves.toEqual([userMessage('new input'), response]);
+    expect(gateway.stream).toHaveBeenCalledOnce();
     session.dispose();
   });
 
-  it('uses an independent abort signal for post-run compaction and cancels it through abort', async () => {
+  it('uses an independent abort signal for post-run compaction and cancels it through abortCompaction', async () => {
     const compactingModel = { ...model, contextWindow: 1 };
     let resolveCompactionStarted!: () => void;
     const compactionStarted = new Promise<void>((resolve) => {
@@ -505,7 +622,7 @@ describe('AgentSession composition and persistence', () => {
 
     expect(compactionSignal).toBeDefined();
     expect(compactionSignal).not.toBe(session.agent.signal);
-    session.abort();
+    session.abortCompaction();
     expect(compactionSignal?.aborted).toBe(true);
 
     resolveCompactionRelease();

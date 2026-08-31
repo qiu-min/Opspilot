@@ -1,5 +1,7 @@
-import type { AgentEventListener, AgentMessage, AgentThinkingLevel } from '@opspilot/agent-runtime';
+import type { AgentMessage, AgentThinkingLevel } from '@opspilot/agent-runtime';
 import type { Model } from '@opspilot/model-gateway';
+
+import type { AgentSessionEventListener } from '../agent-session/agent-session.js';
 
 /** Input for one application-level conversation turn. */
 export interface RunConversationTurnInput {
@@ -11,7 +13,7 @@ export interface RunConversationTurnInput {
 
 /** Optional event listener for one RunConversationTurn execution. */
 export interface RunConversationTurnExecutionOptions {
-  readonly onEvent?: AgentEventListener;
+  readonly onEvent?: AgentSessionEventListener;
 }
 
 /** Messages and session identifiers produced by one conversation turn. */

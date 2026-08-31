@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AgentEvent, AgentMessage, AgentToolResult } from '@opspilot/agent-runtime';
+import type { AgentMessage, AgentToolResult } from '@opspilot/agent-runtime';
 import type {
   AssistantMessage,
   Context,
@@ -16,6 +16,7 @@ import { createModelEventStream } from '@opspilot/model-gateway';
 
 import {
   AgentSession,
+  type AgentSessionEvent,
   createCompactionSummaryMessage,
   type ContextManager,
   FileSystemSessionStore,
@@ -563,7 +564,7 @@ describe('RunConversationTurn', () => {
       toolDefinitions: [definition],
       defaultModel: model,
     });
-    const events: AgentEvent[] = [];
+    const events: AgentSessionEvent[] = [];
 
     const result = await runner.execute(
       { message: userMessage('use lookup') },
@@ -587,7 +588,7 @@ describe('RunConversationTurn', () => {
     expect(
       events
         .filter(
-          (event): event is Extract<AgentEvent, { type: 'tool_execution_start' }> =>
+          (event): event is Extract<AgentSessionEvent, { type: 'tool_execution_start' }> =>
             event.type === 'tool_execution_start',
         )
         .map((event) => event.toolCall.callId),
@@ -595,7 +596,7 @@ describe('RunConversationTurn', () => {
     expect(
       events
         .filter(
-          (event): event is Extract<AgentEvent, { type: 'tool_execution_end' }> =>
+          (event): event is Extract<AgentSessionEvent, { type: 'tool_execution_end' }> =>
             event.type === 'tool_execution_end',
         )
         .map((event) => event.toolCall.callId),
@@ -611,7 +612,7 @@ describe('RunConversationTurn', () => {
       toolDefinitions: [],
       defaultModel: model,
     });
-    const events: AgentEvent[] = [];
+    const events: AgentSessionEvent[] = [];
 
     await runner.execute(
       { message: userMessage('hello') },
