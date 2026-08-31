@@ -200,7 +200,6 @@ export class AgentSession {
     this.overflowRecoveryAttempted = true;
 
     const willRetry = target.finishReason !== 'stop';
-    if (willRetry) this.removeRecoverableAssistantFromRuntime(target);
 
     const compactionService = this.compactionService;
     const compactionSettings = this.compactionSettings;

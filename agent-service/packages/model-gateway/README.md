@@ -551,9 +551,9 @@ tool_execution_end
 
 ## Context Overflow 兼容判断
 
-`isContextOverflow(assistantMessage, contextWindow?)` 集中识别常见 Provider context-limit 错误文案，并在可用时以
-`usage.inputTokens > contextWindow` 作为无显式错误文案的 fallback。该 helper 只负责模型消息归一化层的判断，
-Compaction 和 retry 由 Application 层协调。
+`isContextOverflow(assistantMessage, contextWindow?)` 集中识别常见 Provider context-limit 错误文案，优先排除
+rate-limit / throttling 文案，并仅在 `finishReason: 'stop'` 时以 `usage.inputTokens > contextWindow` 作为无显式错误文案的
+fallback。该 helper 只负责模型消息归一化层的判断，Compaction 和 retry 由 Application 层协调。
 
 ---
 

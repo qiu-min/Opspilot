@@ -10,13 +10,23 @@ const CONTEXT_OVERFLOW_PATTERNS: readonly RegExp[] = [
   /prompt is too long/i,
   /prompt too long/i,
   /input token count[^\n]*exceeds/i,
+  /exceed(?:s|ed) model token limit/i,
   /exceeds the model's maximum context/i,
   /exceeds model's maximum context/i,
   /exceeds (?:the )?maximum allowed input length/i,
+  /context window exceeds limit/i,
+  /maximum prompt length/i,
   /request_too_large/i,
   /model_context_window_exceeded/i,
   /reduce the length of the messages/i,
   /exceeds the available context size/i,
+];
+
+/** Error text patterns that identify throttling or rate limiting, not overflow. */
+const NON_OVERFLOW_PATTERNS: readonly RegExp[] = [
+  /rate limit/i,
+  /too many requests/i,
+  /throttl/i,
 ];
 
 /**
@@ -31,13 +41,23 @@ export function isContextOverflow(
 ): boolean {
   if (message.finishReason === 'aborted') return false;
 
+  const errorMessage = message.errorMessage;
+  if (
+    errorMessage !== undefined &&
+    NON_OVERFLOW_PATTERNS.some((pattern) => pattern.test(errorMessage))
+  ) {
+    return false;
+  }
+
   if (
     message.finishReason === 'error' &&
-    message.errorMessage !== undefined &&
-    CONTEXT_OVERFLOW_PATTERNS.some((pattern) => pattern.test(message.errorMessage!))
+    errorMessage !== undefined &&
+    CONTEXT_OVERFLOW_PATTERNS.some((pattern) => pattern.test(errorMessage))
   ) {
     return true;
   }
+
+  if (message.finishReason !== 'stop') return false;
 
   const inputTokens = message.usage?.inputTokens;
   if (

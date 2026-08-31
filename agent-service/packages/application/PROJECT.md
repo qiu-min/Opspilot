@@ -679,16 +679,17 @@ Provider/model failure
         ↓
 isContextOverflow()
         ↓
-AgentSession 移除 Runtime working state 中的失败 Assistant
-        ↓
 overflow Compaction
         ↓
-重建 Session Context，并再次移除被 projection 带回的失败 Assistant
+Compaction 成功后重建 Session Context，并移除被 projection 带回的失败 Assistant
         ↓
 Agent.continue()
         ↓
 最多 retry 一次
 ```
+
+在 `prepareCompaction()` 或 `CompactionService` 成功前不修改 Runtime working history，
+因此 overflow recovery 无法开始时仍保留 Runtime 的 `errorInfo` 和失败 Assistant。
 
 第一版只允许一次恢复重试，防止：
 

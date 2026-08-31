@@ -670,8 +670,14 @@ describe('AgentSession composition and persistence', () => {
       compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
     });
     const events: AgentSessionEvent[] = [];
+    let errorInfoAtCompactionEnd: typeof session.state.errorInfo;
+    let messagesAtCompactionEnd: readonly AgentMessage[] | undefined;
     session.subscribe((event) => {
       events.push(event);
+      if (event.type === 'compaction_end' && event.reason === 'overflow' && event.willRetry) {
+        errorInfoAtCompactionEnd = session.state.errorInfo;
+        messagesAtCompactionEnd = session.state.messages;
+      }
     });
 
     await expect(session.prompt(input)).resolves.toEqual([input, overflow, recovered]);
@@ -692,6 +698,8 @@ describe('AgentSession composition and persistence', () => {
     expect(messageEntries(sessionManager)).toContainEqual(overflow);
     expect(messageEntries(sessionManager)).toContainEqual(recovered);
     expect(events.filter((event) => event.type === 'agent_start')).toHaveLength(2);
+    expect(errorInfoAtCompactionEnd).toBeUndefined();
+    expect(messagesAtCompactionEnd).not.toContainEqual(overflow);
     expect(
       events.filter(
         (event) => event.type === 'message_end' && event.message.role === 'user',
@@ -759,7 +767,7 @@ describe('AgentSession composition and persistence', () => {
     session.dispose();
   });
 
-  it('keeps an overflow failure when overflow compaction fails', async () => {
+  it('keeps runtime overflow error state when overflow compaction fails', async () => {
     const compactingModel = { ...model, contextWindow: 1_000 };
     const sessionManager = SessionManager.inMemory();
     sessionManager.appendMessage(userMessage('history input'));
@@ -796,6 +804,12 @@ describe('AgentSession composition and persistence', () => {
     expect(compactionCalls).toBe(1);
     expect(sessionManager.getEntries().some((entry) => entry.type === 'compaction')).toBe(false);
     expect(messageEntries(sessionManager)).toContainEqual(overflow);
+    expect(session.state.errorInfo).toEqual({
+      source: 'model',
+      reason: 'error',
+      message: overflow.errorMessage,
+    });
+    expect(session.state.messages.at(-1)).toEqual(overflow);
     expect(events.filter((event) => event.type.startsWith('compaction_'))).toEqual([
       { type: 'compaction_start', reason: 'overflow' },
       {
@@ -810,7 +824,7 @@ describe('AgentSession composition and persistence', () => {
     session.dispose();
   });
 
-  it('does not retry after overflow compaction is aborted', async () => {
+  it('keeps runtime overflow error state when overflow compaction is aborted', async () => {
     const compactingModel = { ...model, contextWindow: 1_000 };
     const sessionManager = SessionManager.inMemory();
     sessionManager.appendMessage(userMessage('history input'));
@@ -860,6 +874,12 @@ describe('AgentSession composition and persistence', () => {
     await expect(run).resolves.toEqual([input, overflow]);
     expect(gateway.stream).toHaveBeenCalledOnce();
     expect(sessionManager.getEntries().some((entry) => entry.type === 'compaction')).toBe(false);
+    expect(session.state.errorInfo).toEqual({
+      source: 'model',
+      reason: 'error',
+      message: overflow.errorMessage,
+    });
+    expect(session.state.messages.at(-1)).toEqual(overflow);
     expect(events.filter((event) => event.type.startsWith('compaction_'))).toEqual([
       { type: 'compaction_start', reason: 'overflow' },
       {
@@ -961,7 +981,7 @@ describe('AgentSession composition and persistence', () => {
     session.dispose();
   });
 
-  it('does not start overflow compaction when no safe preparation exists', async () => {
+  it('keeps runtime overflow error state when no compaction preparation exists', async () => {
     const compactingModel = { ...model, contextWindow: 1_000 };
     const input = userMessage('current input');
     const overflow = {
@@ -996,6 +1016,12 @@ describe('AgentSession composition and persistence', () => {
     expect(gateway.stream).toHaveBeenCalledOnce();
     expect(events.filter((event) => event.type.startsWith('compaction_'))).toEqual([]);
     expect(messageEntries(sessionManager)).toContainEqual(overflow);
+    expect(session.state.errorInfo).toEqual({
+      source: 'model',
+      reason: 'error',
+      message: overflow.errorMessage,
+    });
+    expect(session.state.messages.at(-1)).toEqual(overflow);
     session.dispose();
   });
 
