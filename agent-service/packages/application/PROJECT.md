@@ -517,6 +517,8 @@ shouldCompact()
 
 下一次 Prompt 提交前会再次检查，避免上一次 aborted/error 等场景遗漏压缩；如果发生压缩，Application 会用新的 `buildSessionContext()` 结果刷新当前 Runtime history。
 
+同一 `AgentSession` 会串行化自身完整的 prompt lifecycle；不同 Session 的并发仍由上层协调器负责。
+
 ---
 
 # 13. Safe Cut Point

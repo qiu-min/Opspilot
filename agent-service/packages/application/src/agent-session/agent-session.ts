@@ -45,6 +45,7 @@ export class AgentSession {
   private readonly compactionSettings?: CompactionSettings;
   private autoCompactionAbortController?: AbortController;
   private disposed = false;
+  private promptActive = false;
 
   /** 创建 AgentSession 并注册唯一的内部持久化监听器。 */
   public constructor(config: AgentSessionConfig) {
@@ -57,16 +58,25 @@ export class AgentSession {
     );
   }
 
-  /** 将一条或多条用户消息交给 Agent Runtime 执行。 */
+  /** 将一条或多条用户消息交给 Agent Runtime 执行；同一 Session 不允许重叠 prompt operation。 */
   public async prompt(
     input: AgentMessage | readonly AgentMessage[],
   ): Promise<readonly AgentMessage[]> {
     this.assertNotDisposed();
-    await this.maybeCompactBeforePrompt();
-    this.assertNotDisposed();
-    const messages = await this.agent.prompt(input);
-    await this.maybeCompactAfterRun();
-    return messages;
+    if (this.promptActive) {
+      throw new Error('AgentSession is already processing a prompt.');
+    }
+
+    this.promptActive = true;
+    try {
+      await this.maybeCompactBeforePrompt();
+      this.assertNotDisposed();
+      const messages = await this.agent.prompt(input);
+      await this.maybeCompactAfterRun();
+      return messages;
+    } finally {
+      this.promptActive = false;
+    }
   }
 
   /** 请求停止当前 Agent Run。 */
@@ -79,7 +89,7 @@ export class AgentSession {
     this.autoCompactionAbortController?.abort();
   }
 
-  /** 等待 Agent 进入空闲状态。 */
+  /** 等待 Agent Runtime 进入空闲状态；这不代表整个 Session prompt operation 已 settled。 */
   public waitForIdle(): Promise<void> {
     return this.agent.waitForIdle();
   }

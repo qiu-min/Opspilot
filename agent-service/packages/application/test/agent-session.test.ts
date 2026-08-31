@@ -328,6 +328,174 @@ describe('AgentSession composition and persistence', () => {
     session.dispose();
   });
 
+  it('rejects a second prompt during pre-prompt compaction', async () => {
+    const compactingModel = { ...model, contextWindow: 100 };
+    const sessionManager = SessionManager.inMemory();
+    sessionManager.appendModelChange(compactingModel.provider, compactingModel.id);
+    sessionManager.appendMessage(userMessage('x'.repeat(500)));
+    sessionManager.appendMessage(assistantMessage('old response'));
+    const compactionStarted = createDeferred<void>();
+    const releaseCompaction = createDeferred<void>();
+    let compactionCalls = 0;
+    const response = assistantMessage('response');
+    const gateway = createGateway([assistantStream(response)], [compactingModel]);
+    const session = createAgentSession({
+      sessionManager,
+      modelGateway: gateway,
+      model: compactingModel,
+      compactionService: {
+        compact: async () => {
+          compactionCalls += 1;
+          compactionStarted.resolve(undefined);
+          await releaseCompaction.promise;
+          return { summary: 'Summary' };
+        },
+      },
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+
+    const firstPrompt = session.prompt(userMessage('A'));
+    await compactionStarted.promise;
+
+    await expect(session.prompt(userMessage('B'))).rejects.toThrow(
+      'AgentSession is already processing a prompt.',
+    );
+    expect(compactionCalls).toBe(1);
+    expect(gateway.stream).not.toHaveBeenCalled();
+
+    releaseCompaction.resolve(undefined);
+    await firstPrompt;
+    expect(gateway.stream).toHaveBeenCalledOnce();
+    session.dispose();
+  });
+
+  it('rejects a second prompt while the Runtime is running', async () => {
+    const runtimeStarted = createDeferred<void>();
+    const releaseRuntime = createDeferred<void>();
+    const response = assistantMessage('response');
+    const gateway = createGateway([]);
+    gateway.stream.mockImplementation(() =>
+      createModelEventStream(async (controller) => {
+        controller.emit({
+          type: 'start',
+          model,
+          partial: { ...response, content: [], finishReason: 'pending' },
+        });
+        runtimeStarted.resolve(undefined);
+        await releaseRuntime.promise;
+        controller.complete(response);
+      }),
+    );
+    const session = createAgentSession({
+      sessionManager: SessionManager.inMemory(),
+      modelGateway: gateway,
+      model,
+    });
+
+    const firstPrompt = session.prompt(userMessage('A'));
+    await runtimeStarted.promise;
+
+    await expect(session.prompt(userMessage('B'))).rejects.toThrow(
+      'AgentSession is already processing a prompt.',
+    );
+    expect(gateway.stream).toHaveBeenCalledOnce();
+
+    releaseRuntime.resolve(undefined);
+    await firstPrompt;
+    session.dispose();
+  });
+
+  it('rejects a second prompt during post-run compaction while the Runtime is idle', async () => {
+    const compactingModel = { ...model, contextWindow: 1 };
+    const compactionStarted = createDeferred<void>();
+    const releaseCompaction = createDeferred<void>();
+    let compactionCalls = 0;
+    const gateway = createGateway(
+      [assistantStream(assistantMessage('response'))],
+      [compactingModel],
+    );
+    const session = createAgentSession({
+      sessionManager: SessionManager.inMemory(),
+      modelGateway: gateway,
+      model: compactingModel,
+      compactionService: {
+        compact: async () => {
+          compactionCalls += 1;
+          compactionStarted.resolve(undefined);
+          await releaseCompaction.promise;
+          return { summary: 'Summary' };
+        },
+      },
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+
+    const firstPrompt = session.prompt(userMessage('A'));
+    await compactionStarted.promise;
+    expect(session.state.isRunning).toBe(false);
+
+    await expect(session.prompt(userMessage('B'))).rejects.toThrow(
+      'AgentSession is already processing a prompt.',
+    );
+    expect(compactionCalls).toBe(1);
+    expect(gateway.stream).toHaveBeenCalledOnce();
+
+    releaseCompaction.resolve(undefined);
+    await firstPrompt;
+    session.dispose();
+  });
+
+  it('allows the next prompt after the previous prompt fully settles', async () => {
+    const gateway = createGateway([
+      assistantStream(assistantMessage('first')),
+      assistantStream(assistantMessage('second')),
+    ]);
+    const session = createAgentSession({
+      sessionManager: SessionManager.inMemory(),
+      modelGateway: gateway,
+      model,
+    });
+
+    await expect(session.prompt(userMessage('A'))).resolves.toEqual([
+      userMessage('A'),
+      assistantMessage('first'),
+    ]);
+    await expect(session.prompt(userMessage('B'))).resolves.toEqual([
+      userMessage('B'),
+      assistantMessage('second'),
+    ]);
+    expect(gateway.stream).toHaveBeenCalledTimes(2);
+    session.dispose();
+  });
+
+  it('releases the prompt guard when prompt rejects', async () => {
+    const compactingModel = { ...model, contextWindow: 100 };
+    const sessionManager = SessionManager.inMemory();
+    sessionManager.appendModelChange(compactingModel.provider, compactingModel.id);
+    sessionManager.appendMessage(userMessage('x'.repeat(500)));
+    sessionManager.appendMessage(assistantMessage('old response'));
+    const response = assistantMessage('response');
+    const gateway = createGateway([assistantStream(response)], [compactingModel]);
+    const session = createAgentSession({
+      sessionManager,
+      modelGateway: gateway,
+      model: compactingModel,
+      compactionService: {
+        compact: async () => ({ summary: 'Summary' }),
+      },
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+    const unsubscribe = session.subscribe((event) => {
+      if (event.type === 'compaction_start') throw new Error('prompt listener failed');
+    });
+
+    await expect(session.prompt(userMessage('A'))).rejects.toThrow('prompt listener failed');
+    unsubscribe();
+
+    await expect(session.prompt(userMessage('B'))).resolves.toEqual([userMessage('B'), response]);
+    expect(gateway.stream).toHaveBeenCalledOnce();
+    session.dispose();
+  });
+
   it('rejects dispose while running and keeps persistence until the run is idle', async () => {
     let resolveStarted!: () => void;
     const started = new Promise<void>((resolve) => {
