@@ -12,3 +12,4 @@ export * from './adapters/model-adapter.js';
 export * from './adapters/openai-completions-model-adapter.js';
 export * from './adapters/openai-completions-tools.js';
 export * from './tool-validation.js';
+export * from './compat/overflow.js';

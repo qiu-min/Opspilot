@@ -130,6 +130,11 @@ export class Agent {
     return await this.runPromptMessages(prompts);
   }
 
+  /** Starts a new Agent Run from the current history without appending a prompt message. */
+  public async continue(): Promise<readonly AgentMessage[]> {
+    return await this.runPromptMessages([]);
+  }
+
   /** 请求当前模型或工具调用通过已有 AbortSignal 结束。
    */
   abort(): void {

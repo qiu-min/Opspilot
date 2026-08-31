@@ -109,6 +109,15 @@ function textTool(name: string, text: string): AgentTool {
   };
 }
 
+/** Creates a manually controlled notification for lifecycle concurrency tests. */
+function createDeferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
+  let resolvePromise!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: resolvePromise };
+}
+
 describe('Agent', () => {
   it('runs one prompt and commits the returned messages', async () => {
     const prompt = userMessage('check the database');
@@ -749,5 +758,86 @@ describe('Agent', () => {
     expect(converted).toEqual([transformed]);
     expect(contexts[0]?.messages).toEqual([prompt]);
     expect(shouldStopAfterTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it('continues from the current history without emitting a new prompt message', async () => {
+    const history = userMessage('already in history');
+    const response = assistantMessage();
+    const contexts: Context[] = [];
+    const events: AgentEvent[] = [];
+    const agent = new Agent({
+      model,
+      messages: [history],
+      streamFn: sequentialStreamFn([assistantStream(response)], contexts),
+    });
+    agent.subscribe((event) => {
+      events.push(event);
+    });
+
+    await expect(agent.continue()).resolves.toEqual([response]);
+
+    expect(contexts[0]?.messages).toEqual([history]);
+    expect(events.map((event) => event.type)).toEqual([
+      'agent_start',
+      'turn_start',
+      'message_start',
+      'message_end',
+      'turn_end',
+      'agent_end',
+    ]);
+    expect(events.filter((event) => event.type === 'message_start')).toHaveLength(1);
+    expect(agent.state.messages).toEqual([history, response]);
+  });
+
+  it('rejects continue while another run is active', async () => {
+    const started = createDeferred();
+    const release = createDeferred();
+    const agent = new Agent({
+      model,
+      streamFn: () =>
+        createModelEventStream(async (controller) => {
+          controller.emit({
+            type: 'start',
+            model,
+            partial: assistantMessage('pending'),
+          });
+          started.resolve();
+          await release.promise;
+          controller.complete(assistantMessage());
+        }),
+    });
+
+    const run = agent.prompt(userMessage('run'));
+    await started.promise;
+    await expect(agent.continue()).rejects.toThrow('Agent is already running.');
+    release.resolve();
+    await run;
+  });
+
+  it('continues with replacement history and completes a tool-call loop', async () => {
+    const call: ModelToolCall = { callId: 'call_continue', name: 'query_logs', arguments: {} };
+    const toolResponse = assistantMessage('tool_calls', [call]);
+    const finalResponse = assistantMessage();
+    const replacement = userMessage('replacement history');
+    const contexts: Context[] = [];
+    const agent = new Agent({
+      model,
+      messages: [userMessage('old history')],
+      tools: [textTool('query_logs', 'logs found')],
+      streamFn: sequentialStreamFn(
+        [assistantStream(toolResponse), assistantStream(finalResponse)],
+        contexts,
+      ),
+    });
+
+    agent.replaceMessages([replacement]);
+
+    await expect(agent.continue()).resolves.toEqual([
+      toolResponse,
+      expect.objectContaining({ role: 'tool', callId: call.callId }),
+      finalResponse,
+    ]);
+    expect(contexts[0]?.messages).toEqual([replacement]);
+    expect(contexts[1]?.messages).toEqual([replacement, toolResponse, expect.any(Object)]);
   });
 });

@@ -92,6 +92,20 @@ function assistantStream(message: AssistantMessage, streamModel: Model = model):
   });
 }
 
+function failedAssistantStream(
+  message: AssistantMessage,
+  streamModel: Model = model,
+): ModelEventStream {
+  return createModelEventStream(async (controller) => {
+    controller.emit({
+      type: 'start',
+      model: streamModel,
+      partial: { ...message, content: [], finishReason: 'pending' },
+    });
+    controller.error(message);
+  });
+}
+
 function createGateway(
   streams: readonly ModelEventStream[],
   registeredModels: readonly Model[] = [model],
@@ -617,6 +631,374 @@ describe('AgentSession composition and persistence', () => {
     session.dispose();
   });
 
+  it('recovers an overflow by compacting, rebuilding, and continuing once', async () => {
+    const compactingModel = { ...model, contextWindow: 1_000 };
+    const sessionManager = SessionManager.inMemory();
+    const historyInput = userMessage('history input');
+    const historyResponse = assistantMessage('history response');
+    sessionManager.appendMessage(historyInput);
+    sessionManager.appendMessage(historyResponse);
+
+    const input = userMessage('current input');
+    const overflow = {
+      ...assistantMessage(''),
+      content: [],
+      finishReason: 'error' as const,
+      errorMessage: 'context_length_exceeded',
+    };
+    const recovered = assistantMessage('recovered response');
+    const gateway = createGateway(
+      [
+        failedAssistantStream(overflow, compactingModel),
+        assistantStream(recovered, compactingModel),
+      ],
+      [compactingModel],
+    );
+    let compactionCalls = 0;
+    const compactionService: CompactionService = {
+      compact: async ({ messages }) => {
+        compactionCalls += 1;
+        expect(messages).toEqual([historyInput, historyResponse]);
+        return { summary: 'Summary' };
+      },
+    };
+    const session = createAgentSession({
+      sessionManager,
+      modelGateway: gateway,
+      model: compactingModel,
+      compactionService,
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+    const events: AgentSessionEvent[] = [];
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    await expect(session.prompt(input)).resolves.toEqual([input, overflow, recovered]);
+
+    expect(gateway.stream).toHaveBeenCalledTimes(2);
+    expect(compactionCalls).toBe(1);
+    const retryContext = gateway.stream.mock.calls[1]?.[1] as {
+      readonly messages: readonly AgentMessage[];
+    };
+    expect(retryContext.messages).toEqual([createCompactionSummaryMessage('Summary'), input]);
+    expect(retryContext.messages).not.toContainEqual(overflow);
+    expect(
+      messageEntries(sessionManager).filter(
+        (message) =>
+          message.role === 'user' && message.content[0]?.text === 'current input',
+      ),
+    ).toHaveLength(1);
+    expect(messageEntries(sessionManager)).toContainEqual(overflow);
+    expect(messageEntries(sessionManager)).toContainEqual(recovered);
+    expect(events.filter((event) => event.type === 'agent_start')).toHaveLength(2);
+    expect(
+      events.filter(
+        (event) => event.type === 'message_end' && event.message.role === 'user',
+      ),
+    ).toEqual([expect.objectContaining({ message: input })]);
+    expect(events.filter((event) => event.type.startsWith('compaction_'))).toEqual([
+      { type: 'compaction_start', reason: 'overflow' },
+      expect.objectContaining({
+        type: 'compaction_end',
+        reason: 'overflow',
+        result: expect.objectContaining({ summary: 'Summary' }),
+        aborted: false,
+        willRetry: true,
+      }),
+    ]);
+    expect(sessionManager.getEntries().filter((entry) => entry.type === 'compaction')).toHaveLength(
+      1,
+    );
+    session.dispose();
+  });
+
+  it('does not compact or retry a second overflow in the same prompt operation', async () => {
+    const compactingModel = { ...model, contextWindow: 1_000 };
+    const sessionManager = SessionManager.inMemory();
+    sessionManager.appendMessage(userMessage('history input'));
+    sessionManager.appendMessage(assistantMessage('history response'));
+    const input = userMessage('current input');
+    const overflow = {
+      ...assistantMessage(''),
+      content: [],
+      finishReason: 'error' as const,
+      errorMessage: 'maximum context length exceeded',
+    };
+    const gateway = createGateway(
+      [
+        failedAssistantStream(overflow, compactingModel),
+        failedAssistantStream(overflow, compactingModel),
+      ],
+      [compactingModel],
+    );
+    let compactionCalls = 0;
+    const session = createAgentSession({
+      sessionManager,
+      modelGateway: gateway,
+      model: compactingModel,
+      compactionService: {
+        compact: async () => {
+          compactionCalls += 1;
+          return { summary: 'Summary' };
+        },
+      },
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+
+    await expect(session.prompt(input)).resolves.toEqual([input, overflow, overflow]);
+
+    expect(gateway.stream).toHaveBeenCalledTimes(2);
+    expect(compactionCalls).toBe(1);
+    expect(messageEntries(sessionManager).filter((message) => message.role === 'user')).toHaveLength(
+      2,
+    );
+    expect(messageEntries(sessionManager).filter((message) => message.role === 'assistant')).toHaveLength(
+      3,
+    );
+    session.dispose();
+  });
+
+  it('keeps an overflow failure when overflow compaction fails', async () => {
+    const compactingModel = { ...model, contextWindow: 1_000 };
+    const sessionManager = SessionManager.inMemory();
+    sessionManager.appendMessage(userMessage('history input'));
+    sessionManager.appendMessage(assistantMessage('history response'));
+    const input = userMessage('current input');
+    const overflow = {
+      ...assistantMessage(''),
+      content: [],
+      finishReason: 'error' as const,
+      errorMessage: 'prompt is too long',
+    };
+    const gateway = createGateway([failedAssistantStream(overflow, compactingModel)], [compactingModel]);
+    let compactionCalls = 0;
+    const session = createAgentSession({
+      sessionManager,
+      modelGateway: gateway,
+      model: compactingModel,
+      compactionService: {
+        compact: async () => {
+          compactionCalls += 1;
+          throw new Error('overflow summary failed');
+        },
+      },
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+    const events: AgentSessionEvent[] = [];
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    await expect(session.prompt(input)).resolves.toEqual([input, overflow]);
+
+    expect(gateway.stream).toHaveBeenCalledOnce();
+    expect(compactionCalls).toBe(1);
+    expect(sessionManager.getEntries().some((entry) => entry.type === 'compaction')).toBe(false);
+    expect(messageEntries(sessionManager)).toContainEqual(overflow);
+    expect(events.filter((event) => event.type.startsWith('compaction_'))).toEqual([
+      { type: 'compaction_start', reason: 'overflow' },
+      {
+        type: 'compaction_end',
+        reason: 'overflow',
+        result: undefined,
+        aborted: false,
+        willRetry: false,
+        errorMessage: 'overflow summary failed',
+      },
+    ]);
+    session.dispose();
+  });
+
+  it('does not retry after overflow compaction is aborted', async () => {
+    const compactingModel = { ...model, contextWindow: 1_000 };
+    const sessionManager = SessionManager.inMemory();
+    sessionManager.appendMessage(userMessage('history input'));
+    sessionManager.appendMessage(assistantMessage('history response'));
+    const input = userMessage('current input');
+    const overflow = {
+      ...assistantMessage(''),
+      content: [],
+      finishReason: 'error' as const,
+      errorMessage: 'context_length_exceeded',
+    };
+    const started = createDeferred<void>();
+    const release = createDeferred<void>();
+    let signal: AbortSignal | undefined;
+    const gateway = createGateway(
+      [
+        failedAssistantStream(overflow, compactingModel),
+        assistantStream(assistantMessage('unexpected')),
+      ],
+      [compactingModel],
+    );
+    const session = createAgentSession({
+      sessionManager,
+      modelGateway: gateway,
+      model: compactingModel,
+      compactionService: {
+        compact: async (request) => {
+          signal = request.signal;
+          started.resolve(undefined);
+          await release.promise;
+          return { summary: 'aborted summary' };
+        },
+      },
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+    const events: AgentSessionEvent[] = [];
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    const run = session.prompt(input);
+    await started.promise;
+    session.abortCompaction();
+    expect(signal?.aborted).toBe(true);
+    release.resolve(undefined);
+
+    await expect(run).resolves.toEqual([input, overflow]);
+    expect(gateway.stream).toHaveBeenCalledOnce();
+    expect(sessionManager.getEntries().some((entry) => entry.type === 'compaction')).toBe(false);
+    expect(events.filter((event) => event.type.startsWith('compaction_'))).toEqual([
+      { type: 'compaction_start', reason: 'overflow' },
+      {
+        type: 'compaction_end',
+        reason: 'overflow',
+        result: undefined,
+        aborted: true,
+        willRetry: false,
+      },
+    ]);
+    session.dispose();
+  });
+
+  it('does not continue when disposed during overflow compaction', async () => {
+    const compactingModel = { ...model, contextWindow: 1_000 };
+    const sessionManager = SessionManager.inMemory();
+    sessionManager.appendMessage(userMessage('history input'));
+    sessionManager.appendMessage(assistantMessage('history response'));
+    const input = userMessage('current input');
+    const overflow = {
+      ...assistantMessage(''),
+      content: [],
+      finishReason: 'error' as const,
+      errorMessage: 'context_length_exceeded',
+    };
+    const started = createDeferred<void>();
+    const release = createDeferred<void>();
+    const gateway = createGateway(
+      [
+        failedAssistantStream(overflow, compactingModel),
+        assistantStream(assistantMessage('must not run'), compactingModel),
+      ],
+      [compactingModel],
+    );
+    const session = createAgentSession({
+      sessionManager,
+      modelGateway: gateway,
+      model: compactingModel,
+      compactionService: {
+        compact: async () => {
+          started.resolve(undefined);
+          await release.promise;
+          return { summary: 'aborted by dispose' };
+        },
+      },
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+
+    const run = session.prompt(input);
+    await started.promise;
+    session.dispose();
+    release.resolve(undefined);
+
+    await expect(run).resolves.toEqual([input, overflow]);
+    expect(gateway.stream).toHaveBeenCalledOnce();
+    expect(sessionManager.getEntries().some((entry) => entry.type === 'compaction')).toBe(false);
+  });
+
+  it('does not emit a second failure when an overflow end listener fails', async () => {
+    const compactingModel = { ...model, contextWindow: 1_000 };
+    const sessionManager = SessionManager.inMemory();
+    sessionManager.appendMessage(userMessage('history input'));
+    sessionManager.appendMessage(assistantMessage('history response'));
+    const input = userMessage('current input');
+    const overflow = {
+      ...assistantMessage(''),
+      content: [],
+      finishReason: 'error' as const,
+      errorMessage: 'context_length_exceeded',
+    };
+    const recovered = assistantMessage('recovered response');
+    const gateway = createGateway(
+      [
+        failedAssistantStream(overflow, compactingModel),
+        assistantStream(recovered, compactingModel),
+      ],
+      [compactingModel],
+    );
+    const session = createAgentSession({
+      sessionManager,
+      modelGateway: gateway,
+      model: compactingModel,
+      compactionService: {
+        compact: async () => ({ summary: 'Summary' }),
+      },
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+    const events: AgentSessionEvent[] = [];
+    session.subscribe((event) => {
+      events.push(event);
+      if (event.type === 'compaction_end') throw new Error('overflow end listener failed');
+    });
+
+    await expect(session.prompt(input)).rejects.toThrow('overflow end listener failed');
+
+    expect(gateway.stream).toHaveBeenCalledOnce();
+    expect(sessionManager.getEntries().some((entry) => entry.type === 'compaction')).toBe(true);
+    expect(events.filter((event) => event.type === 'compaction_end')).toHaveLength(1);
+    session.dispose();
+  });
+
+  it('does not start overflow compaction when no safe preparation exists', async () => {
+    const compactingModel = { ...model, contextWindow: 1_000 };
+    const input = userMessage('current input');
+    const overflow = {
+      ...assistantMessage(''),
+      content: [],
+      finishReason: 'error' as const,
+      errorMessage: 'input exceeds the context window',
+    };
+    const gateway = createGateway([failedAssistantStream(overflow, compactingModel)], [compactingModel]);
+    let compactionCalls = 0;
+    const sessionManager = SessionManager.inMemory();
+    const session = createAgentSession({
+      sessionManager,
+      modelGateway: gateway,
+      model: compactingModel,
+      compactionService: {
+        compact: async () => {
+          compactionCalls += 1;
+          return { summary: 'must not run' };
+        },
+      },
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+    const events: AgentSessionEvent[] = [];
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    await expect(session.prompt(input)).resolves.toEqual([input, overflow]);
+
+    expect(compactionCalls).toBe(0);
+    expect(gateway.stream).toHaveBeenCalledOnce();
+    expect(events.filter((event) => event.type.startsWith('compaction_'))).toEqual([]);
+    expect(messageEntries(sessionManager)).toContainEqual(overflow);
+    session.dispose();
+  });
+
   it('emits a fail-soft compaction end event when summary generation fails', async () => {
     const compactingModel = { ...model, contextWindow: 1 };
     const sessionManager = SessionManager.inMemory();
@@ -650,6 +1032,7 @@ describe('AgentSession composition and persistence', () => {
         reason: 'threshold',
         result: undefined,
         aborted: false,
+        willRetry: false,
         errorMessage: 'summary generation failed',
       },
     ]);
@@ -869,7 +1252,13 @@ describe('AgentSession composition and persistence', () => {
     expect(sessionManager.getEntries().some((entry) => entry.type === 'compaction')).toBe(false);
     expect(events.filter((event) => event.type.startsWith('compaction_'))).toEqual([
       { type: 'compaction_start', reason: 'threshold' },
-      { type: 'compaction_end', reason: 'threshold', result: undefined, aborted: true },
+      {
+        type: 'compaction_end',
+        reason: 'threshold',
+        result: undefined,
+        aborted: true,
+        willRetry: false,
+      },
     ]);
     session.dispose();
   });

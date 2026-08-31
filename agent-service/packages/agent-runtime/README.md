@@ -145,6 +145,14 @@ Runtime 默认不设置 `maxTurns`、`maxSteps` 等隐式循环上限。
 
 ---
 
+## Continue
+
+`Agent.continue()` 从当前 Runtime history 启动一次新的完整 Agent Run，不追加新的 prompt message。
+它与 `prompt(message)` 共用相同的 lifecycle、Agent Loop、Tool 执行和并发保护；由于没有新增 prompt，
+不会产生新的 user message lifecycle 事件。返回值只包含这次 continue 新增的 Assistant / Tool messages。
+
+---
+
 ## Agent Context
 
 Runtime 使用：

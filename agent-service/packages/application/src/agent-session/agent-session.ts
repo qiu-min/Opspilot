@@ -1,10 +1,16 @@
-import { messageSchema, type Message } from '@opspilot/model-gateway';
+import {
+  isContextOverflow,
+  messageSchema,
+  type AssistantMessage,
+  type Message,
+} from '@opspilot/model-gateway';
 import type { Agent, AgentEvent, AgentMessage, AgentState } from '@opspilot/agent-runtime';
 
 import {
   estimateSessionContextTokens,
   prepareCompaction,
   shouldCompact,
+  type CompactionPreparation,
   type CompactionResult,
   type CompactionService,
   type CompactionSettings,
@@ -22,15 +28,18 @@ export type AgentSessionEvent =
   | AgentEvent
   | {
       readonly type: 'compaction_start';
-      readonly reason: 'threshold';
+      readonly reason: CompactionReason;
     }
   | {
       readonly type: 'compaction_end';
-      readonly reason: 'threshold';
+      readonly reason: CompactionReason;
       readonly result: CompactionResult | undefined;
       readonly aborted: boolean;
+      readonly willRetry: boolean;
       readonly errorMessage?: string;
     };
+
+export type CompactionReason = 'threshold' | 'overflow';
 
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void | Promise<void>;
 
@@ -46,6 +55,7 @@ export class AgentSession {
   private autoCompactionAbortController?: AbortController;
   private disposed = false;
   private promptActive = false;
+  private overflowRecoveryAttempted = false;
 
   /** 创建 AgentSession 并注册唯一的内部持久化监听器。 */
   public constructor(config: AgentSessionConfig) {
@@ -68,13 +78,17 @@ export class AgentSession {
     }
 
     this.promptActive = true;
+    this.overflowRecoveryAttempted = false;
     try {
       await this.maybeCompactBeforePrompt();
       this.assertNotDisposed();
-      const messages = await this.agent.prompt(input);
-      await this.maybeCompactAfterRun();
+      const messages = [...(await this.agent.prompt(input))];
+      while (await this.handlePostAgentRun()) {
+        messages.push(...(await this.agent.continue()));
+      }
       return messages;
     } finally {
+      this.overflowRecoveryAttempted = false;
       this.promptActive = false;
     }
   }
@@ -149,7 +163,77 @@ export class AgentSession {
     await this.runAutoCompactionIfNeeded();
   }
 
-  /** Runs threshold compaction once and refreshes Runtime history after success. */
+  /** Handles the post-run recovery decision before considering threshold maintenance. */
+  private async handlePostAgentRun(): Promise<boolean> {
+    const lastAssistant = this.findLastAssistantMessage();
+    if (lastAssistant !== undefined && this.isCurrentModelAssistant(lastAssistant)) {
+      if (isContextOverflow(lastAssistant, this.agent.state.model.contextWindow)) {
+        return await this.maybeRecoverContextOverflow(lastAssistant);
+      }
+    }
+
+    await this.maybeCompactAfterRun();
+    return false;
+  }
+
+  /** Finds the most recent standard assistant message in the Runtime working history. */
+  private findLastAssistantMessage(): AssistantMessage | undefined {
+    const messages = this.agent.state.messages;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message !== undefined && isStandardMessage(message) && message.role === 'assistant') {
+        return message;
+      }
+    }
+    return undefined;
+  }
+
+  /** Avoids recovering an error produced by a model that is no longer active. */
+  private isCurrentModelAssistant(message: AssistantMessage): boolean {
+    const model = this.agent.state.model;
+    return message.provider === model.provider && message.model === model.id;
+  }
+
+  /** Performs one bounded overflow recovery attempt and returns whether Runtime should continue. */
+  private async maybeRecoverContextOverflow(target: AssistantMessage): Promise<boolean> {
+    if (this.overflowRecoveryAttempted) return false;
+    this.overflowRecoveryAttempted = true;
+
+    const willRetry = target.finishReason !== 'stop';
+    if (willRetry) this.removeRecoverableAssistantFromRuntime(target);
+
+    const compactionService = this.compactionService;
+    const compactionSettings = this.compactionSettings;
+    if (compactionService === undefined || compactionSettings === undefined) return false;
+
+    const preparation = prepareCompaction(this.sessionManager.getBranch(), compactionSettings);
+    if (preparation === undefined) return false;
+
+    return await this.runCompaction(
+      'overflow',
+      preparation,
+      willRetry,
+      willRetry ? target : undefined,
+    );
+  }
+
+  /** Removes only the exact recoverable assistant at the Runtime history tail. */
+  private removeRecoverableAssistantFromRuntime(target: AssistantMessage): void {
+    const messages = this.agent.state.messages;
+    const lastMessage = messages.at(-1);
+    if (
+      lastMessage === undefined ||
+      !isStandardMessage(lastMessage) ||
+      lastMessage.role !== 'assistant' ||
+      !sameAssistantMessage(lastMessage, target)
+    ) {
+      return;
+    }
+
+    this.agent.replaceMessages(messages.slice(0, -1));
+  }
+
+  /** Runs threshold or overflow compaction and refreshes Runtime history after success. */
   private async runAutoCompactionIfNeeded(): Promise<void> {
     const compactionService = this.compactionService;
     const compactionSettings = this.compactionSettings;
@@ -164,12 +248,26 @@ export class AgentSession {
     const preparation = prepareCompaction(entries, compactionSettings);
     if (preparation === undefined) return;
 
+    await this.runCompaction('threshold', preparation, false);
+  }
+
+  /** Executes the shared summary, persistence, projection rebuild, and event lifecycle. */
+  private async runCompaction(
+    reason: CompactionReason,
+    preparation: CompactionPreparation,
+    willRetry: boolean,
+    retryTarget?: AssistantMessage,
+  ): Promise<boolean> {
+    const compactionService = this.compactionService;
+    const state = this.agent.state;
+    if (compactionService === undefined) return false;
+
     const controller = new AbortController();
     this.autoCompactionAbortController = controller;
     try {
       // Event dispatch is deliberately outside the operation catch below. A listener
       // failure is an observer failure, not a compaction failure.
-      await this.emit({ type: 'compaction_start', reason: 'threshold' });
+      await this.emit({ type: 'compaction_start', reason });
 
       let operationOutcome:
         | { readonly kind: 'success'; readonly result: CompactionResult }
@@ -193,6 +291,9 @@ export class AgentSession {
           );
           const sessionContext = this.sessionManager.buildSessionContext();
           this.agent.replaceMessages(sessionContext.messages);
+          if (willRetry && retryTarget !== undefined) {
+            this.removeRecoverableAssistantFromRuntime(retryTarget);
+          }
         }
         operationOutcome = { kind: 'success', result };
       } catch (error: unknown) {
@@ -200,26 +301,33 @@ export class AgentSession {
       }
 
       if (controller.signal.aborted) {
-        await this.emitCompactionEnd({
+        await this.emitCompactionEnd(reason, {
           result: undefined,
           aborted: true,
+          willRetry: false,
         });
-        return;
+        return false;
       }
 
       if (operationOutcome.kind === 'failure') {
-        await this.emitCompactionEnd({
+        await this.emitCompactionEnd(reason, {
           result: undefined,
           aborted: false,
+          willRetry: false,
           errorMessage:
             operationOutcome.error instanceof Error
               ? operationOutcome.error.message
               : String(operationOutcome.error),
         });
-        return;
+        return false;
       }
 
-      await this.emitCompactionEnd({ result: operationOutcome.result, aborted: false });
+      await this.emitCompactionEnd(reason, {
+        result: operationOutcome.result,
+        aborted: false,
+        willRetry,
+      });
+      return willRetry && !this.disposed && !controller.signal.aborted;
     } finally {
       if (this.autoCompactionAbortController === controller) {
         this.autoCompactionAbortController = undefined;
@@ -228,12 +336,25 @@ export class AgentSession {
   }
 
   private emitCompactionEnd(
+    reason: CompactionReason,
     event: Omit<Extract<AgentSessionEvent, { type: 'compaction_end' }>, 'type' | 'reason'>,
   ): Promise<void> {
-    return this.emit({ type: 'compaction_end', reason: 'threshold', ...event });
+    return this.emit({ type: 'compaction_end', reason, ...event });
   }
 }
 
 function isStandardMessage(message: AgentMessage): message is Message {
   return messageSchema.safeParse(message).success;
+}
+
+/** Compares the stable identity fields used to remove a rebuilt overflow response. */
+function sameAssistantMessage(left: AssistantMessage, right: AssistantMessage): boolean {
+  return (
+    left === right ||
+    (left.api === right.api &&
+      left.provider === right.provider &&
+      left.model === right.model &&
+      left.finishReason === right.finishReason &&
+      left.errorMessage === right.errorMessage)
+  );
 }

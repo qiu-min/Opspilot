@@ -662,7 +662,7 @@ Session Tree
 
 ---
 
-# 16. Overflow Recovery
+# 16. Overflow Recovery ✅
 
 Threshold Compaction 是主路径。
 
@@ -672,20 +672,22 @@ Threshold Compaction 是主路径。
 context overflow
 ```
 
-未来可以实现：
+当前实现：
 
 ```text
-Model 返回 context overflow
+Provider/model failure
         ↓
-识别 overflow
+isContextOverflow()
         ↓
-移除本次失败的临时 AssistantMessage
+AgentSession 移除 Runtime working state 中的失败 Assistant
         ↓
-自动 Compaction
+overflow Compaction
         ↓
-重新构建 Session Context
+重建 Session Context，并再次移除被 projection 带回的失败 Assistant
         ↓
-retry once
+Agent.continue()
+        ↓
+最多 retry 一次
 ```
 
 第一版只允许一次恢复重试，防止：
@@ -702,7 +704,7 @@ overflow
 
 形成无限循环。
 
-Overflow Recovery 属于后续阶段，不与第一版 Auto Compaction 一起实现。
+Session 保存失败 Assistant；Runtime retry context 不包含该失败 Assistant。
 
 ---
 
@@ -1010,20 +1012,22 @@ Agent.prompt(newUserMessage)
 
 `agent-runtime` 只提供通用的空闲态 `replaceMessages()`，不知道 Session 或 Compaction。它不会发送 AgentEvent、调用模型或清空 steering/follow-up 队列。
 
-Pre-prompt compaction 用于兜住上一轮 aborted/error 或 post-run maintenance 未完成的情况。Overflow recovery、`agent.continue()` 和 retry 仍未实现。
+Pre-prompt compaction 用于兜住上一轮 aborted/error 或 post-run maintenance 未完成的情况。Overflow recovery 通过 `isContextOverflow()`、overflow compaction 和 `agent.continue()` 完成一次有界 retry。
 
 ---
 
 ## Phase 4：Overflow Recovery
 
-实现：
+已实现：
 
 * context overflow detection
-* recoverable length detection
 * compact after overflow
 * rebuild context
 * retry once
 * 防止无限重试
+
+Provider/model failure → `isContextOverflow()` → AgentSession recovery → overflow Compaction → `Agent.continue()` → retry once。
+Session 保留 failed Assistant，Runtime retry context 移除 failed Assistant。
 
 Threshold Auto Compaction 仍是主路径。
 
@@ -1104,13 +1108,9 @@ Post-run Auto Compaction
 
 Phase 3.5 ✅
 Pre-prompt Compaction + Runtime Message Replacement
-```
 
-当前仍未实现：
-
-```text
-Phase 4
-Overflow Recovery
+Phase 4 ✅
+Context Overflow Recovery
 ```
 
 即：
@@ -1141,7 +1141,7 @@ messages.slice(-N)
 不要把 Compaction 放进 agent-runtime
 ```
 
-Phase 3.5 完成后，再进入 Phase 4 Overflow Recovery。
+Phase 4 只实现 context overflow → compact → continue → retry once；未实现 recoverable-length、通用 retry、provider fallback、Memory 或 RAG。
 
 ---
 
