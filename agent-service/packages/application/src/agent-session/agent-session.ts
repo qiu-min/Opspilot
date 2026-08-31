@@ -22,6 +22,8 @@ export interface AgentSessionConfig {
   readonly compactionSettings?: CompactionSettings;
 }
 
+type AutoCompactionResult = 'skipped' | 'compacted' | 'aborted';
+
 /** 应用层的最小 Agent 生命周期包装器，负责将完成消息写入 Session。 */
 export class AgentSession {
   public readonly agent: Agent;
@@ -47,7 +49,12 @@ export class AgentSession {
     input: AgentMessage | readonly AgentMessage[],
   ): Promise<readonly AgentMessage[]> {
     this.assertNotDisposed();
-    await this.maybeCompactBeforePrompt();
+    const prePromptResult = await this.maybeCompactBeforePrompt();
+    this.assertNotDisposed();
+    if (prePromptResult === 'aborted') {
+      throw new Error('AgentSession prompt was aborted.');
+    }
+
     const messages = await this.agent.prompt(input);
     await this.maybeCompactAfterRun();
     return messages;
@@ -96,12 +103,8 @@ export class AgentSession {
   }
 
   /** Performs best-effort compaction before the next prompt and refreshes Runtime history. */
-  private async maybeCompactBeforePrompt(): Promise<void> {
-    const compacted = await this.runAutoCompactionIfNeeded();
-    if (!compacted) return;
-
-    const sessionContext = this.sessionManager.buildSessionContext();
-    this.agent.replaceMessages(sessionContext.messages);
+  private async maybeCompactBeforePrompt(): Promise<AutoCompactionResult> {
+    return await this.runAutoCompactionIfNeeded();
   }
 
   /** Performs best-effort post-run compaction after normal message persistence completes. */
@@ -110,17 +113,17 @@ export class AgentSession {
     await this.runAutoCompactionIfNeeded();
   }
 
-  /** Runs threshold compaction once and reports whether a CompactionEntry was appended. */
-  private async runAutoCompactionIfNeeded(): Promise<boolean> {
+  /** Runs threshold compaction once and refreshes Runtime history after success. */
+  private async runAutoCompactionIfNeeded(): Promise<AutoCompactionResult> {
     const compactionService = this.compactionService;
     const compactionSettings = this.compactionSettings;
     const state = this.agent.state;
-    if (compactionService === undefined || compactionSettings === undefined) return false;
-    if (state.model.contextWindow === undefined) return false;
+    if (compactionService === undefined || compactionSettings === undefined) return 'skipped';
+    if (state.model.contextWindow === undefined) return 'skipped';
 
     const estimate = estimateSessionContextTokens(this.sessionManager.getBranch());
     if (!shouldCompact(estimate.tokens, state.model.contextWindow, compactionSettings))
-      return false;
+      return 'skipped';
 
     const controller = new AbortController();
     this.autoCompactionAbortController = controller;
@@ -131,17 +134,20 @@ export class AgentSession {
         settings: compactionSettings,
         signal: controller.signal,
       });
-      if (result === undefined || controller.signal.aborted) return false;
+      if (controller.signal.aborted) return 'aborted';
+      if (result === undefined) return 'skipped';
 
       this.sessionManager.appendCompaction(
         result.summary,
         result.firstKeptEntryId,
         result.tokensBefore,
       );
-      return true;
+      const sessionContext = this.sessionManager.buildSessionContext();
+      this.agent.replaceMessages(sessionContext.messages);
+      return 'compacted';
     } catch {
-      // Compaction is post-run maintenance; the completed user turn remains successful.
-      return false;
+      // Auto compaction is best-effort maintenance. Non-abort failures do not mutate Session or Runtime history.
+      return controller.signal.aborted ? 'aborted' : 'skipped';
     } finally {
       if (this.autoCompactionAbortController === controller) {
         this.autoCompactionAbortController = undefined;

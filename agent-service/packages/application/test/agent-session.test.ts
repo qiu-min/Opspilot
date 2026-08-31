@@ -15,6 +15,7 @@ import type { AgentMessage, AgentTool } from '@opspilot/agent-runtime';
 
 import {
   createAgentSession,
+  createCompactionSummaryMessage,
   DefaultContextManager,
   SessionManager,
   type CompactionService,
@@ -313,6 +314,154 @@ describe('AgentSession composition and persistence', () => {
       userMessage('running input'),
       assistantMessage('running'),
     ]);
+  });
+
+  it('refreshes the same AgentSession runtime after post-run compaction', async () => {
+    const compactingModel = { ...model, contextWindow: 1000 };
+    const sessionManager = SessionManager.inMemory();
+    const firstResponse = {
+      ...assistantMessage('B'),
+      usage: { inputTokens: 900, outputTokens: 101, totalTokens: 1001 },
+    };
+    const secondInput = userMessage('C');
+    const gateway = createGateway(
+      [assistantStream(firstResponse), assistantStream(assistantMessage('D'))],
+      [compactingModel],
+    );
+    const compactionService: CompactionService = {
+      compact: async ({ entries }) => {
+        const responseEntry = entries.find(
+          (entry) => entry.type === 'message' && entry.message.role === 'assistant',
+        );
+        if (responseEntry === undefined || responseEntry.type !== 'message') {
+          throw new Error('Expected an assistant message to keep.');
+        }
+        return {
+          summary: 'Summary',
+          firstKeptEntryId: responseEntry.id,
+          tokensBefore: 1001,
+        };
+      },
+    };
+    const session = createAgentSession({
+      sessionManager,
+      modelGateway: gateway,
+      model: compactingModel,
+      compactionService,
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+
+    await session.prompt(userMessage('A'));
+
+    expect(sessionManager.buildSessionContext().messages).toEqual(session.agent.state.messages);
+    expect(session.agent.state.messages).toEqual([
+      createCompactionSummaryMessage('Summary'),
+      firstResponse,
+    ]);
+
+    await session.prompt(secondInput);
+
+    const secondContext = gateway.stream.mock.calls[1]?.[1] as
+      { readonly messages: readonly AgentMessage[] } | undefined;
+    expect(secondContext?.messages).toEqual([
+      createCompactionSummaryMessage('Summary'),
+      firstResponse,
+      secondInput,
+    ]);
+    session.dispose();
+  });
+
+  it('does not start Runtime when disposed during pre-prompt compaction', async () => {
+    const compactingModel = { ...model, contextWindow: 1 };
+    const sessionManager = SessionManager.inMemory();
+    sessionManager.appendModelChange(compactingModel.provider, compactingModel.id);
+    const oldInput = userMessage('old input');
+    const oldResponse = assistantMessage('old response');
+    sessionManager.appendMessage(oldInput);
+    sessionManager.appendMessage(oldResponse);
+
+    let resolveCompactionStarted!: () => void;
+    const compactionStarted = new Promise<void>((resolve) => {
+      resolveCompactionStarted = resolve;
+    });
+    let resolveCompactionRelease!: () => void;
+    const compactionRelease = new Promise<void>((resolve) => {
+      resolveCompactionRelease = resolve;
+    });
+    let compactionSignal: AbortSignal | undefined;
+    const gateway = createGateway([], [compactingModel]);
+    const session = createAgentSession({
+      sessionManager,
+      modelGateway: gateway,
+      model: compactingModel,
+      compactionService: {
+        compact: async ({ signal }) => {
+          compactionSignal = signal;
+          resolveCompactionStarted();
+          await compactionRelease;
+          return undefined;
+        },
+      },
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+
+    const run = session.prompt(userMessage('new input'));
+    await compactionStarted;
+    session.dispose();
+    expect(compactionSignal?.aborted).toBe(true);
+
+    resolveCompactionRelease();
+    await expect(run).rejects.toThrow('AgentSession is disposed.');
+    expect(gateway.stream).not.toHaveBeenCalled();
+    expect(messageEntries(sessionManager)).toEqual([oldInput, oldResponse]);
+    expect(sessionManager.getEntries().some((entry) => entry.type === 'compaction')).toBe(false);
+  });
+
+  it('does not start Runtime when aborted during pre-prompt compaction', async () => {
+    const compactingModel = { ...model, contextWindow: 1 };
+    const sessionManager = SessionManager.inMemory();
+    sessionManager.appendModelChange(compactingModel.provider, compactingModel.id);
+    const oldInput = userMessage('old input');
+    const oldResponse = assistantMessage('old response');
+    sessionManager.appendMessage(oldInput);
+    sessionManager.appendMessage(oldResponse);
+
+    let resolveCompactionStarted!: () => void;
+    const compactionStarted = new Promise<void>((resolve) => {
+      resolveCompactionStarted = resolve;
+    });
+    let resolveCompactionRelease!: () => void;
+    const compactionRelease = new Promise<void>((resolve) => {
+      resolveCompactionRelease = resolve;
+    });
+    let compactionSignal: AbortSignal | undefined;
+    const gateway = createGateway([], [compactingModel]);
+    const session = createAgentSession({
+      sessionManager,
+      modelGateway: gateway,
+      model: compactingModel,
+      compactionService: {
+        compact: async ({ signal }) => {
+          compactionSignal = signal;
+          resolveCompactionStarted();
+          await compactionRelease;
+          return undefined;
+        },
+      },
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+
+    const run = session.prompt(userMessage('new input'));
+    await compactionStarted;
+    session.abort();
+    expect(compactionSignal?.aborted).toBe(true);
+
+    resolveCompactionRelease();
+    await expect(run).rejects.toThrow('AgentSession prompt was aborted.');
+    expect(gateway.stream).not.toHaveBeenCalled();
+    expect(messageEntries(sessionManager)).toEqual([oldInput, oldResponse]);
+    expect(sessionManager.getEntries().some((entry) => entry.type === 'compaction')).toBe(false);
+    session.dispose();
   });
 
   it('uses an independent abort signal for post-run compaction and cancels it through abort', async () => {
