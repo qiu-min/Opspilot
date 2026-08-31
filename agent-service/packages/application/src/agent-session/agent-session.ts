@@ -161,18 +161,21 @@ export class AgentSession {
       // failure is an observer failure, not a compaction failure.
       await this.emit({ type: 'compaction_start', reason: 'threshold' });
 
-      let result: CompactionResult | undefined;
-      let operationError: unknown;
+      let operationOutcome:
+        | { readonly kind: 'success'; readonly result: CompactionResult }
+        | { readonly kind: 'failure'; readonly error: unknown };
       try {
-        result = await compactionService.compact({
-          entries,
+        const summaryResult = await compactionService.compact({
+          messages: preparation.messagesToSummarize,
           model: state.model,
-          settings: compactionSettings,
           signal: controller.signal,
         });
-        if (result === undefined) {
-          operationError = new Error('Compaction service returned no result.');
-        } else if (!controller.signal.aborted) {
+        const result: CompactionResult = {
+          summary: summaryResult.summary,
+          firstKeptEntryId: preparation.firstKeptEntryId,
+          tokensBefore: preparation.tokensBefore,
+        };
+        if (!controller.signal.aborted) {
           this.sessionManager.appendCompaction(
             result.summary,
             result.firstKeptEntryId,
@@ -181,8 +184,9 @@ export class AgentSession {
           const sessionContext = this.sessionManager.buildSessionContext();
           this.agent.replaceMessages(sessionContext.messages);
         }
+        operationOutcome = { kind: 'success', result };
       } catch (error: unknown) {
-        operationError = error;
+        operationOutcome = { kind: 'failure', error };
       }
 
       if (controller.signal.aborted) {
@@ -193,22 +197,19 @@ export class AgentSession {
         return;
       }
 
-      if (operationError !== undefined) {
+      if (operationOutcome.kind === 'failure') {
         await this.emitCompactionEnd({
           result: undefined,
           aborted: false,
           errorMessage:
-            operationError instanceof Error ? operationError.message : String(operationError),
+            operationOutcome.error instanceof Error
+              ? operationOutcome.error.message
+              : String(operationOutcome.error),
         });
         return;
       }
 
-      // The undefined-result case is converted to an explicit failure above, so a
-      // successful lifecycle end always carries a concrete result.
-      if (result === undefined) {
-        throw new Error('Compaction completed without a result.');
-      }
-      await this.emitCompactionEnd({ result, aborted: false });
+      await this.emitCompactionEnd({ result: operationOutcome.result, aborted: false });
     } finally {
       if (this.autoCompactionAbortController === controller) {
         this.autoCompactionAbortController = undefined;

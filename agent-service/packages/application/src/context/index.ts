@@ -9,9 +9,10 @@ export { DEFAULT_COMPACTION_SETTINGS } from './compaction-settings.js';
 export {
   DefaultCompactionService,
   prepareCompaction,
-  type CompactionInput,
   type CompactionPreparation,
   type CompactionResult,
+  type CompactionSummaryInput,
+  type CompactionSummaryResult,
   type CompactionService,
 } from './compaction.js';
 export { createCompactionSummaryMessage } from './compaction-summary-message.js';

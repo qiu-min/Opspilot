@@ -486,18 +486,21 @@ shouldCompact()
      false true
        │    │
        │    ▼
-       │ CompactionService
+       │ AgentSession
        │    │
        │    ├─ prepareCompaction()
        │    ├─ 找 safe cut point
        │    ├─ 选择旧历史
-       │    └─ 保留 recent messages
+       │    └─ 将 prepared messages 交给 CompactionService
        │
        │    ▼
        │ 调用模型生成 Summary
        │
        │    ▼
-       │ CompactionResult
+       │ CompactionSummaryResult
+       │
+       │    ▼
+       │ AgentSession 构造 CompactionResult
        │
        │    ▼
        │ SessionManager.appendCompaction()
@@ -569,23 +572,31 @@ Cut Point 应优先选择可以独立形成上下文边界的位置，例如：
 
 # 14. CompactionService
 
-建议定义：
+定义：
 
 ```ts
+export interface CompactionSummaryInput {
+  readonly messages: readonly AgentMessage[];
+  readonly model: Model;
+  readonly signal?: AbortSignal;
+}
+
+export interface CompactionSummaryResult {
+  readonly summary: string;
+}
+
 export interface CompactionService {
   compact(
-    input: CompactionInput,
-  ): Promise<CompactionResult>;
+    input: CompactionSummaryInput,
+  ): Promise<CompactionSummaryResult>;
 }
 ```
 
 CompactionService 负责：
 
-* prepareCompaction
-* cut point
-* summary input
+* 接收 `prepareCompaction` 选出的 messages
 * 调模型生成 summary
-* CompactionResult
+* 返回 `CompactionSummaryResult`
 
 但：
 
@@ -598,7 +609,9 @@ Application / AgentSession 负责协调：
 ```text
 CompactionService
       ↓
-CompactionResult
+CompactionSummaryResult
+      ↓
+AgentSession 构造 CompactionResult
       ↓
 SessionManager.appendCompaction()
 ```
@@ -842,7 +855,7 @@ Context Accounting
 = 判断“上下文是否接近模型窗口”
 
 CompactionService
-= 决定“历史太长以后怎样重新表达”
+= 为已选历史生成 Summary
 
 AgentSession / Application
 = 协调自动 Compaction 生命周期
@@ -1147,6 +1160,10 @@ Phase 3.5 完成后，再进入 Phase 4 Overflow Recovery。
           │                  │           CompactionService
           │                  │                   │
           │                  │                   ▼
+          │                  │       CompactionSummaryResult
+          │                  │                   │
+          │                  │                   ▼
+          │                  │           AgentSession 构造
           │                  │           CompactionResult
           │                  │                   │
           │                  │                   ▼

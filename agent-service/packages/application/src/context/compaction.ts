@@ -26,24 +26,28 @@ export interface CompactionPreparation {
   readonly tokensBefore: number;
 }
 
-/** Result produced by a successful compaction summary generation. */
+/** Complete application-level result for a committed compaction operation. */
 export interface CompactionResult {
   readonly summary: string;
   readonly firstKeptEntryId: string;
   readonly tokensBefore: number;
 }
 
-/** Inputs required by a compaction service; entries must be the active branch. */
-export interface CompactionInput {
-  readonly entries: readonly SessionEntry[];
+/** Inputs required to summarize messages already selected by the Application. */
+export interface CompactionSummaryInput {
+  readonly messages: readonly AgentMessage[];
   readonly model: Model;
-  readonly settings: CompactionSettings;
   readonly signal?: AbortSignal;
 }
 
-/** Generates a compaction result without persisting it. */
+/** Generates a summary for prepared messages without choosing or persisting a boundary. */
 export interface CompactionService {
-  compact(input: CompactionInput): Promise<CompactionResult | undefined>;
+  compact(input: CompactionSummaryInput): Promise<CompactionSummaryResult>;
+}
+
+/** Result produced by a successful compaction summary generation. */
+export interface CompactionSummaryResult {
+  readonly summary: string;
 }
 
 /** Prepares a safe summary boundary from the current active branch. */
@@ -61,9 +65,7 @@ export function prepareCompaction(
   const cutPoint = projection.messages[cutIndex];
   if (cutPoint.entryIndex === null) return undefined;
 
-  const messagesToSummarize = projection.messages
-    .slice(0, cutIndex)
-    .map((item) => item.message);
+  const messagesToSummarize = projection.messages.slice(0, cutIndex).map((item) => item.message);
   const hasNewHistoryToSummarize =
     projection.latestCompactionIndex === null
       ? messagesToSummarize.length > 0
@@ -83,7 +85,7 @@ export function prepareCompaction(
   };
 }
 
-/** Compaction service that summarizes prepared history through ModelGateway.complete(). */
+/** Compaction service that summarizes prepared messages through ModelGateway.complete(). */
 export class DefaultCompactionService implements CompactionService {
   private readonly modelGateway: ModelGateway;
 
@@ -92,14 +94,11 @@ export class DefaultCompactionService implements CompactionService {
     this.modelGateway = modelGateway;
   }
 
-  /** Generates a plain-text summary or returns undefined when there is nothing to compact. */
-  public async compact(input: CompactionInput): Promise<CompactionResult | undefined> {
-    const preparation = prepareCompaction(input.entries, input.settings);
-    if (preparation === undefined) return undefined;
-
+  /** Generates a plain-text summary for the messages supplied by the Application. */
+  public async compact(input: CompactionSummaryInput): Promise<CompactionSummaryResult> {
     const response = await this.modelGateway.complete(
       input.model,
-      createSummaryContext(preparation.messagesToSummarize),
+      createSummaryContext(input.messages),
       input.signal === undefined ? undefined : { signal: input.signal },
     );
 
@@ -110,11 +109,7 @@ export class DefaultCompactionService implements CompactionService {
     const summary = extractText(response).trim();
     if (summary.length === 0) throw new Error('Compaction summary must contain non-empty text.');
 
-    return {
-      summary,
-      firstKeptEntryId: preparation.firstKeptEntryId,
-      tokensBefore: preparation.tokensBefore,
-    };
+    return { summary };
   }
 }
 

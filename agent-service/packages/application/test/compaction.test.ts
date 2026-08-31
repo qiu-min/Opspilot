@@ -147,8 +147,9 @@ describe('Compaction preparation and service', () => {
       messagesToSummarize: [userMessage('A')],
     });
     expect(preparation?.firstKeptEntryId).not.toBe(
-      session.getEntries().find((entry) => entry.type === 'message' && entry.message.role === 'tool')
-        ?.id,
+      session
+        .getEntries()
+        .find((entry) => entry.type === 'message' && entry.message.role === 'tool')?.id,
     );
   });
 
@@ -175,7 +176,7 @@ describe('Compaction preparation and service', () => {
     });
   });
 
-  it('calls ModelGateway.complete with a transcript and returns the prepared result', async () => {
+  it('calls ModelGateway.complete with supplied messages and returns only the summary', async () => {
     const session = SessionManager.inMemory();
     session.appendMessage(userMessage('user goal'));
     session.appendMessage({
@@ -192,23 +193,22 @@ describe('Compaction preparation and service', () => {
     });
     session.appendMessage(toolResult('tool answer'));
     const kept = session.appendMessage(userMessage('recent input'));
+    const preparation = prepareCompaction(session.getBranch(), settings);
+    expect(preparation).toBeDefined();
     const gateway = createCompletionGateway(assistantMessage([{ type: 'text', text: 'summary' }]));
     const service = new DefaultCompactionService(gateway);
 
     const result = await service.compact({
-      entries: session.getBranch(),
+      messages: preparation!.messagesToSummarize,
       model,
-      settings,
     });
 
-    expect(result).toEqual({
-      summary: 'summary',
-      firstKeptEntryId: kept.id,
-      tokensBefore: expect.any(Number),
-    });
+    expect(result).toEqual({ summary: 'summary' });
+    expect(preparation?.firstKeptEntryId).toBe(kept.id);
     expect(gateway.complete).toHaveBeenCalledOnce();
     const context = gateway.complete.mock.calls[0]?.[1] as Context;
-    const transcript = context.messages[0]?.role === 'user' ? context.messages[0].content[0].text : '';
+    const transcript =
+      context.messages[0]?.role === 'user' ? context.messages[0].content[0].text : '';
     expect(transcript).toContain('user goal');
     expect(transcript).toContain('assistant answer');
     expect(transcript).toContain('assistant reasoning');
@@ -226,14 +226,14 @@ describe('Compaction preparation and service', () => {
     const session = SessionManager.inMemory();
     session.appendMessage(userMessage('old'));
     session.appendMessage(assistantMessage([{ type: 'text', text: 'recent' }]));
-    const gateway = createCompletionGateway(
-      assistantMessage(content, { finishReason }),
-    );
+    const gateway = createCompletionGateway(assistantMessage(content, { finishReason }));
     const service = new DefaultCompactionService(gateway);
+    const preparation = prepareCompaction(session.getBranch(), settings);
+    expect(preparation).toBeDefined();
 
-    await expect(service.compact({ entries: session.getBranch(), model, settings })).rejects.toThrow(
-      'Compaction',
-    );
+    await expect(
+      service.compact({ messages: preparation!.messagesToSummarize, model }),
+    ).rejects.toThrow('Compaction');
   });
 
   it('does not mutate the SessionManager while generating a summary', async () => {
@@ -244,8 +244,10 @@ describe('Compaction preparation and service', () => {
     const service = new DefaultCompactionService(
       createCompletionGateway(assistantMessage([{ type: 'text', text: 'summary' }])),
     );
+    const preparation = prepareCompaction(session.getBranch(), settings);
+    expect(preparation).toBeDefined();
 
-    await service.compact({ entries: session.getBranch(), model, settings });
+    await service.compact({ messages: preparation!.messagesToSummarize, model });
 
     expect(session.getEntries()).toEqual(before);
   });

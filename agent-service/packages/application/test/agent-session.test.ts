@@ -17,6 +17,7 @@ import {
   createAgentSession,
   createCompactionSummaryMessage,
   DefaultContextManager,
+  prepareCompaction,
   SessionManager,
   type AgentSessionEvent,
   type CompactionService,
@@ -386,27 +387,16 @@ describe('AgentSession composition and persistence', () => {
       [assistantStream(firstResponse), assistantStream(assistantMessage('D'))],
       [compactingModel],
     );
+    const compactionSettings = { enabled: true, reserveTokens: 0, keepRecentTokens: 1 };
     const compactionService: CompactionService = {
-      compact: async ({ entries }) => {
-        const responseEntry = entries.find(
-          (entry) => entry.type === 'message' && entry.message.role === 'assistant',
-        );
-        if (responseEntry === undefined || responseEntry.type !== 'message') {
-          throw new Error('Expected an assistant message to keep.');
-        }
-        return {
-          summary: 'Summary',
-          firstKeptEntryId: responseEntry.id,
-          tokensBefore: 1001,
-        };
-      },
+      compact: async () => ({ summary: 'Summary' }),
     };
     const session = createAgentSession({
       sessionManager,
       modelGateway: gateway,
       model: compactingModel,
       compactionService,
-      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+      compactionSettings,
     });
     const events: AgentSessionEvent[] = [];
     session.subscribe((event) => {
@@ -414,6 +404,19 @@ describe('AgentSession composition and persistence', () => {
     });
 
     await session.prompt(userMessage('A'));
+
+    const entriesBeforeCompaction = sessionManager
+      .getEntries()
+      .filter((entry) => entry.type !== 'compaction');
+    const preparation = prepareCompaction(entriesBeforeCompaction, compactionSettings);
+    const compaction = sessionManager.getEntries().find((entry) => entry.type === 'compaction');
+    expect(preparation).toBeDefined();
+    expect(compaction).toEqual(
+      expect.objectContaining({
+        firstKeptEntryId: preparation!.firstKeptEntryId,
+        tokensBefore: preparation!.tokensBefore,
+      }),
+    );
 
     expect(sessionManager.buildSessionContext().messages).toEqual(session.agent.state.messages);
     expect(session.agent.state.messages).toEqual([
@@ -528,19 +531,9 @@ describe('AgentSession composition and persistence', () => {
       modelGateway: createGateway([assistantStream(response)], [compactingModel]),
       model: compactingModel,
       compactionService: {
-        compact: async ({ entries }) => {
+        compact: async () => {
           compactionCalls += 1;
-          const responseEntry = entries.find(
-            (entry) => entry.type === 'message' && entry.message.role === 'assistant',
-          );
-          if (responseEntry === undefined || responseEntry.type !== 'message') {
-            throw new Error('Expected an assistant message to keep.');
-          }
-          return {
-            summary: 'Summary',
-            firstKeptEntryId: responseEntry.id,
-            tokensBefore: 2,
-          };
+          return { summary: 'Summary' };
         },
       },
       compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
@@ -560,7 +553,7 @@ describe('AgentSession composition and persistence', () => {
         result: {
           summary: 'Summary',
           firstKeptEntryId: expect.any(String),
-          tokensBefore: 2,
+          tokensBefore: expect.any(Number),
         },
         aborted: false,
       }),
@@ -635,7 +628,7 @@ describe('AgentSession composition and persistence', () => {
           compactionSignal = signal;
           resolveCompactionStarted();
           await compactionRelease;
-          return undefined;
+          return { summary: 'aborted' };
         },
       },
       compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
@@ -686,7 +679,7 @@ describe('AgentSession composition and persistence', () => {
           compactionSignal = signal;
           resolveCompactionStarted();
           await compactionRelease;
-          return undefined;
+          return { summary: 'aborted' };
         },
       },
       compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
@@ -743,7 +736,7 @@ describe('AgentSession composition and persistence', () => {
           compactionSignal = signal;
           resolveCompactionStarted();
           await compactionRelease;
-          return undefined;
+          return { summary: 'aborted' };
         },
       },
       compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
@@ -777,13 +770,7 @@ describe('AgentSession composition and persistence', () => {
         compactionSignal = signal;
         resolveCompactionStarted();
         await compactionRelease;
-        const firstMessage = sessionManager.getEntries().find((entry) => entry.type === 'message');
-        if (firstMessage === undefined) throw new Error('Expected persisted input message.');
-        return {
-          summary: 'should not be appended after abort',
-          firstKeptEntryId: firstMessage.id,
-          tokensBefore: 1,
-        };
+        return { summary: 'should not be appended after abort' };
       },
     };
     const session = createAgentSession({
@@ -844,7 +831,7 @@ describe('AgentSession composition and persistence', () => {
           compactionSignal = signal;
           resolveCompactionStarted();
           await compactionRelease;
-          return undefined;
+          return { summary: 'aborted' };
         },
       },
       compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
