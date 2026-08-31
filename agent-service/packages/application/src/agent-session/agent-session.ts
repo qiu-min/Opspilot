@@ -1,13 +1,9 @@
 import { messageSchema, type Message } from '@opspilot/model-gateway';
-import type {
-  Agent,
-  AgentEvent,
-  AgentMessage,
-  AgentState,
-} from '@opspilot/agent-runtime';
+import type { Agent, AgentEvent, AgentMessage, AgentState } from '@opspilot/agent-runtime';
 
 import {
   estimateSessionContextTokens,
+  prepareCompaction,
   shouldCompact,
   type CompactionResult,
   type CompactionService,
@@ -21,8 +17,6 @@ export interface AgentSessionConfig {
   readonly compactionService?: CompactionService;
   readonly compactionSettings?: CompactionSettings;
 }
-
-type AutoCompactionResult = 'skipped' | 'compacted' | 'aborted';
 
 export type AgentSessionEvent =
   | AgentEvent
@@ -38,7 +32,7 @@ export type AgentSessionEvent =
       readonly errorMessage?: string;
     };
 
-export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
+export type AgentSessionEventListener = (event: AgentSessionEvent) => void | Promise<void>;
 
 /** 应用层的最小 Agent 生命周期包装器，负责将完成消息写入 Session。 */
 export class AgentSession {
@@ -58,7 +52,9 @@ export class AgentSession {
     this.sessionManager = config.sessionManager;
     this.compactionService = config.compactionService;
     this.compactionSettings = config.compactionSettings;
-    this.unsubscribeAgent = this.agent.subscribe((event) => this.handleAgentEvent(event));
+    this.unsubscribeAgent = this.agent.subscribe(
+      async (event) => await this.handleAgentEvent(event),
+    );
   }
 
   /** 将一条或多条用户消息交给 Agent Runtime 执行。 */
@@ -118,23 +114,23 @@ export class AgentSession {
     if (this.disposed) throw new Error('AgentSession is disposed.');
   }
 
-  private handleAgentEvent(event: AgentEvent): void {
+  private async handleAgentEvent(event: AgentEvent): Promise<void> {
     if (event.type === 'message_end' && isStandardMessage(event.message)) {
       this.sessionManager.appendMessage(event.message);
     }
 
-    this.emit(event);
+    await this.emit(event);
   }
 
-  private emit(event: AgentSessionEvent): void {
+  private async emit(event: AgentSessionEvent): Promise<void> {
     for (const listener of this.eventListeners) {
-      listener(event);
+      await listener(event);
     }
   }
 
   /** Performs best-effort compaction before the next prompt and refreshes Runtime history. */
-  private async maybeCompactBeforePrompt(): Promise<AutoCompactionResult> {
-    return await this.runAutoCompactionIfNeeded();
+  private async maybeCompactBeforePrompt(): Promise<void> {
+    await this.runAutoCompactionIfNeeded();
   }
 
   /** Performs best-effort post-run compaction after normal message persistence completes. */
@@ -144,70 +140,75 @@ export class AgentSession {
   }
 
   /** Runs threshold compaction once and refreshes Runtime history after success. */
-  private async runAutoCompactionIfNeeded(): Promise<AutoCompactionResult> {
+  private async runAutoCompactionIfNeeded(): Promise<void> {
     const compactionService = this.compactionService;
     const compactionSettings = this.compactionSettings;
     const state = this.agent.state;
-    if (compactionService === undefined || compactionSettings === undefined) return 'skipped';
-    if (state.model.contextWindow === undefined) return 'skipped';
+    if (compactionService === undefined || compactionSettings === undefined) return;
+    if (state.model.contextWindow === undefined) return;
 
-    const estimate = estimateSessionContextTokens(this.sessionManager.getBranch());
-    if (!shouldCompact(estimate.tokens, state.model.contextWindow, compactionSettings))
-      return 'skipped';
+    const entries = this.sessionManager.getBranch();
+    const estimate = estimateSessionContextTokens(entries);
+    if (!shouldCompact(estimate.tokens, state.model.contextWindow, compactionSettings)) return;
+
+    const preparation = prepareCompaction(entries, compactionSettings);
+    if (preparation === undefined) return;
 
     const controller = new AbortController();
     this.autoCompactionAbortController = controller;
-    let compactionStarted = false;
     try {
-      compactionStarted = true;
-      this.emit({ type: 'compaction_start', reason: 'threshold' });
+      // Event dispatch is deliberately outside the operation catch below. A listener
+      // failure is an observer failure, not a compaction failure.
+      await this.emit({ type: 'compaction_start', reason: 'threshold' });
 
-      const result = await compactionService.compact({
-        entries: this.sessionManager.getBranch(),
-        model: state.model,
-        settings: compactionSettings,
-        signal: controller.signal,
-      });
+      let result: CompactionResult | undefined;
+      let operationError: unknown;
+      try {
+        result = await compactionService.compact({
+          entries,
+          model: state.model,
+          settings: compactionSettings,
+          signal: controller.signal,
+        });
+        if (result === undefined) {
+          operationError = new Error('Compaction service returned no result.');
+        } else if (!controller.signal.aborted) {
+          this.sessionManager.appendCompaction(
+            result.summary,
+            result.firstKeptEntryId,
+            result.tokensBefore,
+          );
+          const sessionContext = this.sessionManager.buildSessionContext();
+          this.agent.replaceMessages(sessionContext.messages);
+        }
+      } catch (error: unknown) {
+        operationError = error;
+      }
+
       if (controller.signal.aborted) {
-        this.emitCompactionEnd(compactionStarted, {
+        await this.emitCompactionEnd({
           result: undefined,
           aborted: true,
         });
-        return 'aborted';
+        return;
       }
-      if (result === undefined) {
-        this.emitCompactionEnd(compactionStarted, {
+
+      if (operationError !== undefined) {
+        await this.emitCompactionEnd({
           result: undefined,
           aborted: false,
+          errorMessage:
+            operationError instanceof Error ? operationError.message : String(operationError),
         });
-        return 'skipped';
+        return;
       }
 
-      this.sessionManager.appendCompaction(
-        result.summary,
-        result.firstKeptEntryId,
-        result.tokensBefore,
-      );
-      const sessionContext = this.sessionManager.buildSessionContext();
-      this.agent.replaceMessages(sessionContext.messages);
-      this.emitCompactionEnd(compactionStarted, { result, aborted: false });
-      return 'compacted';
-    } catch (error: unknown) {
-      // Auto compaction is best-effort maintenance. Non-abort failures do not mutate Session or Runtime history.
-      if (controller.signal.aborted) {
-        this.emitCompactionEnd(compactionStarted, {
-          result: undefined,
-          aborted: true,
-        });
-        return 'aborted';
+      // The undefined-result case is converted to an explicit failure above, so a
+      // successful lifecycle end always carries a concrete result.
+      if (result === undefined) {
+        throw new Error('Compaction completed without a result.');
       }
-
-      this.emitCompactionEnd(compactionStarted, {
-        result: undefined,
-        aborted: false,
-        errorMessage: error instanceof Error ? error.message : String(error),
-      });
-      return 'skipped';
+      await this.emitCompactionEnd({ result, aborted: false });
     } finally {
       if (this.autoCompactionAbortController === controller) {
         this.autoCompactionAbortController = undefined;
@@ -216,11 +217,9 @@ export class AgentSession {
   }
 
   private emitCompactionEnd(
-    started: boolean,
     event: Omit<Extract<AgentSessionEvent, { type: 'compaction_end' }>, 'type' | 'reason'>,
-  ): void {
-    if (!started) return;
-    this.emit({ type: 'compaction_end', reason: 'threshold', ...event });
+  ): Promise<void> {
+    return this.emit({ type: 'compaction_end', reason: 'threshold', ...event });
   }
 }
 

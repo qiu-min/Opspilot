@@ -295,9 +295,7 @@ describe('RunConversationTurn', () => {
 
     const firstResult = await runner.execute({ message: firstInput });
     const afterCompaction = store.load(firstResult.sessionId);
-    const compaction = afterCompaction
-      .getEntries()
-      .find((entry) => entry.type === 'compaction');
+    const compaction = afterCompaction.getEntries().find((entry) => entry.type === 'compaction');
 
     expect(compaction).toEqual(
       expect.objectContaining({
@@ -450,10 +448,7 @@ describe('RunConversationTurn', () => {
     const compactingModel = { ...model, contextWindow: 1 };
     const inputMessage = userMessage('input');
     const response = assistantMessage('response', compactingModel);
-    const gateway = createGateway(
-      [assistantStream(response, compactingModel)],
-      [compactingModel],
-    );
+    const gateway = createGateway([assistantStream(response, compactingModel)], [compactingModel]);
     const runner = new RunConversationTurn({
       sessionStore: store,
       modelGateway: gateway,
@@ -637,6 +632,44 @@ describe('RunConversationTurn', () => {
       type: 'agent_end',
       messages: expect.any(Array),
     });
+  });
+
+  it('awaits an async execution listener before completing the turn', async () => {
+    const { store } = createStore();
+    const gateway = createGateway([assistantStream(assistantMessage('done'), model)]);
+    const runner = new RunConversationTurn({
+      sessionStore: store,
+      modelGateway: gateway,
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+    const listenerStarted = createDeferred<void>();
+    const releaseListener = createDeferred<void>();
+    let settled = false;
+
+    const execution = runner
+      .execute(
+        { message: userMessage('hello') },
+        {
+          onEvent: async (event) => {
+            if (event.type !== 'agent_start') return;
+            listenerStarted.resolve(undefined);
+            await releaseListener.promise;
+          },
+        },
+      )
+      .then((result) => {
+        settled = true;
+        return result;
+      });
+
+    await listenerStarted.promise;
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    releaseListener.resolve(undefined);
+    await execution;
+    expect(settled).toBe(true);
   });
 
   it('prefers input.model over defaultModel for a new session', async () => {

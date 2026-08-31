@@ -24,6 +24,11 @@ import {
 
 const directories: string[] = [];
 
+interface Deferred<T> {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+}
+
 const model: Model = {
   provider: 'test-provider',
   id: 'test-model',
@@ -109,6 +114,14 @@ function createGateway(
       throw new Error('complete is not used by this test.');
     },
   };
+}
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 function messageEntries(sessionManager: SessionManager): AgentMessage[] {
@@ -270,6 +283,50 @@ describe('AgentSession composition and persistence', () => {
     ]);
   });
 
+  it('awaits AgentSession event listeners sequentially before continuing the Runtime event', async () => {
+    const listenerStarted = createDeferred<void>();
+    const releaseListener = createDeferred<void>();
+    const events: string[] = [];
+    const session = createAgentSession({
+      sessionManager: SessionManager.inMemory(),
+      modelGateway: createGateway([assistantStream(assistantMessage('done'))]),
+      model,
+    });
+
+    session.subscribe(async (event) => {
+      if (event.type !== 'agent_start') return;
+      events.push('first-start');
+      listenerStarted.resolve(undefined);
+      await releaseListener.promise;
+      events.push('first-end');
+    });
+    session.subscribe((event) => {
+      if (event.type === 'agent_start') events.push('second');
+    });
+
+    let settled = false;
+    const run = session.prompt(userMessage('input')).then(
+      (messages) => {
+        settled = true;
+        return messages;
+      },
+      (error: unknown) => {
+        settled = true;
+        throw error;
+      },
+    );
+    await listenerStarted.promise;
+    await Promise.resolve();
+
+    expect(events).toEqual(['first-start']);
+    expect(settled).toBe(false);
+
+    releaseListener.resolve(undefined);
+    await run;
+    expect(events).toEqual(['first-start', 'first-end', 'second']);
+    session.dispose();
+  });
+
   it('rejects dispose while running and keeps persistence until the run is idle', async () => {
     let resolveStarted!: () => void;
     const started = new Promise<void>((resolve) => {
@@ -425,6 +482,128 @@ describe('AgentSession composition and persistence', () => {
         errorMessage: 'summary generation failed',
       },
     ]);
+    session.dispose();
+  });
+
+  it('does not run compaction or emit an end event when the start listener fails', async () => {
+    const compactingModel = { ...model, contextWindow: 100 };
+    const sessionManager = SessionManager.inMemory();
+    sessionManager.appendModelChange(compactingModel.provider, compactingModel.id);
+    sessionManager.appendMessage(userMessage('x'.repeat(500)));
+    sessionManager.appendMessage(assistantMessage('old response'));
+    let compactionCalls = 0;
+    const events: AgentSessionEvent[] = [];
+    const session = createAgentSession({
+      sessionManager,
+      modelGateway: createGateway([], [compactingModel]),
+      model: compactingModel,
+      compactionService: {
+        compact: async () => {
+          compactionCalls += 1;
+          throw new Error('compaction must not start');
+        },
+      },
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+    session.subscribe((event) => {
+      events.push(event);
+      if (event.type === 'compaction_start') throw new Error('start listener failed');
+    });
+
+    await expect(session.prompt(userMessage('new input'))).rejects.toThrow('start listener failed');
+    expect(compactionCalls).toBe(0);
+    expect(events).toEqual([{ type: 'compaction_start', reason: 'threshold' }]);
+    expect(sessionManager.getEntries().some((entry) => entry.type === 'compaction')).toBe(false);
+    session.dispose();
+  });
+
+  it('keeps a successful compaction successful when its end listener fails', async () => {
+    const compactingModel = { ...model, contextWindow: 1 };
+    const sessionManager = SessionManager.inMemory();
+    let compactionCalls = 0;
+    const events: AgentSessionEvent[] = [];
+    const response = assistantMessage('response');
+    const session = createAgentSession({
+      sessionManager,
+      modelGateway: createGateway([assistantStream(response)], [compactingModel]),
+      model: compactingModel,
+      compactionService: {
+        compact: async ({ entries }) => {
+          compactionCalls += 1;
+          const responseEntry = entries.find(
+            (entry) => entry.type === 'message' && entry.message.role === 'assistant',
+          );
+          if (responseEntry === undefined || responseEntry.type !== 'message') {
+            throw new Error('Expected an assistant message to keep.');
+          }
+          return {
+            summary: 'Summary',
+            firstKeptEntryId: responseEntry.id,
+            tokensBefore: 2,
+          };
+        },
+      },
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+    session.subscribe((event) => {
+      events.push(event);
+      if (event.type === 'compaction_end') throw new Error('end listener failed');
+    });
+
+    await expect(session.prompt(userMessage('input'))).rejects.toThrow('end listener failed');
+    expect(compactionCalls).toBe(1);
+    expect(events.filter((event) => event.type === 'compaction_start')).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'compaction_end')).toHaveLength(1);
+    expect(events.at(-1)).toEqual(
+      expect.objectContaining({
+        type: 'compaction_end',
+        result: {
+          summary: 'Summary',
+          firstKeptEntryId: expect.any(String),
+          tokensBefore: 2,
+        },
+        aborted: false,
+      }),
+    );
+    expect(sessionManager.getEntries().some((entry) => entry.type === 'compaction')).toBe(true);
+    expect(session.agent.state.messages).toEqual(sessionManager.buildSessionContext().messages);
+    session.dispose();
+  });
+
+  it('skips compaction without lifecycle events when there is no new history to summarize', async () => {
+    const compactingModel = { ...model, contextWindow: 1 };
+    const sessionManager = SessionManager.inMemory();
+    sessionManager.appendModelChange(compactingModel.provider, compactingModel.id);
+    sessionManager.appendMessage(userMessage('old input'));
+    const oldResponse = assistantMessage('old response');
+    sessionManager.appendMessage(oldResponse);
+    sessionManager.appendCompaction('Existing summary', sessionManager.getEntries()[2]!.id, 2);
+    const newInput = userMessage('new input');
+    const response = {
+      ...assistantMessage('response'),
+      usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+    };
+    const events: AgentSessionEvent[] = [];
+    const session = createAgentSession({
+      sessionManager,
+      modelGateway: createGateway([assistantStream(response)], [compactingModel]),
+      model: compactingModel,
+      compactionService: {
+        compact: async () => {
+          throw new Error('compaction must not be called for a no-op');
+        },
+      },
+      compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
+    });
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    await expect(session.prompt(newInput)).resolves.toEqual([newInput, response]);
+    expect(events.filter((event) => event.type.startsWith('compaction_'))).toEqual([]);
+    expect(sessionManager.getEntries().filter((entry) => entry.type === 'compaction')).toHaveLength(
+      1,
+    );
     session.dispose();
   });
 
@@ -598,9 +777,7 @@ describe('AgentSession composition and persistence', () => {
         compactionSignal = signal;
         resolveCompactionStarted();
         await compactionRelease;
-        const firstMessage = sessionManager
-          .getEntries()
-          .find((entry) => entry.type === 'message');
+        const firstMessage = sessionManager.getEntries().find((entry) => entry.type === 'message');
         if (firstMessage === undefined) throw new Error('Expected persisted input message.');
         return {
           summary: 'should not be appended after abort',
@@ -611,7 +788,10 @@ describe('AgentSession composition and persistence', () => {
     };
     const session = createAgentSession({
       sessionManager,
-      modelGateway: createGateway([assistantStream(assistantMessage('response'))], [compactingModel]),
+      modelGateway: createGateway(
+        [assistantStream(assistantMessage('response'))],
+        [compactingModel],
+      ),
       model: compactingModel,
       compactionService,
       compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
@@ -629,7 +809,10 @@ describe('AgentSession composition and persistence', () => {
     await run;
 
     expect(sessionManager.getEntries().some((entry) => entry.type === 'compaction')).toBe(false);
-    expect(messageEntries(sessionManager)).toEqual([userMessage('input'), assistantMessage('response')]);
+    expect(messageEntries(sessionManager)).toEqual([
+      userMessage('input'),
+      assistantMessage('response'),
+    ]);
     expect(
       (session as unknown as { autoCompactionAbortController?: AbortController })
         .autoCompactionAbortController,
@@ -651,7 +834,10 @@ describe('AgentSession composition and persistence', () => {
     const sessionManager = SessionManager.inMemory();
     const session = createAgentSession({
       sessionManager,
-      modelGateway: createGateway([assistantStream(assistantMessage('response'))], [compactingModel]),
+      modelGateway: createGateway(
+        [assistantStream(assistantMessage('response'))],
+        [compactingModel],
+      ),
       model: compactingModel,
       compactionService: {
         compact: async ({ signal }) => {
