@@ -84,9 +84,22 @@ describe('Conversation API', () => {
     const server = await startServer(execute);
     app = server.app;
 
-    const response = await postJson(server.port, '/conversations/turns', {
-      message: '   ',
+    const response = await postBody(server.port, '/conversations/turns', '{not-json');
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.body)).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: 'Invalid JSON body.',
     });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('continues an empty body request without hanging', async () => {
+    const execute = vi.fn<RunConversationTurn['execute']>(async () => turnResult);
+    const server = await startServer(execute);
+    app = server.app;
+
+    const response = await postBody(server.port, '/conversations/turns', '');
 
     expect(response.statusCode).toBe(400);
     expect(JSON.parse(response.body)).toMatchObject({
@@ -292,6 +305,10 @@ async function startServer(execute: RunConversationTurn['execute']): Promise<{
 }
 
 function postJson(port: number, path: string, body: unknown): Promise<HttpResponse> {
+  return postBody(port, path, JSON.stringify(body));
+}
+
+function postBody(port: number, path: string, body: string): Promise<HttpResponse> {
   return new Promise((resolve, reject) => {
     const request = httpRequest(
       {
@@ -315,7 +332,7 @@ function postJson(port: number, path: string, body: unknown): Promise<HttpRespon
       },
     );
     request.on('error', reject);
-    request.end(JSON.stringify(body));
+    request.end(body);
   });
 }
 

@@ -16,9 +16,12 @@ export class JsonBodyMiddleware {
 
     const chunks: Buffer[] = [];
     let size = 0;
+    let settled = false;
     request.on('data', (chunk: Buffer) => {
+      if (settled) return;
       size += chunk.length;
       if (size > MAX_JSON_BODY_BYTES) {
+        settled = true;
         sendValidationError(response, request, 413, 'Request body is too large.');
         request.destroy();
         return;
@@ -26,7 +29,8 @@ export class JsonBodyMiddleware {
       chunks.push(chunk);
     });
     request.on('end', () => {
-      if (response.headersSent) return;
+      if (settled) return;
+      settled = true;
       const raw = Buffer.concat(chunks).toString('utf8');
       if (!raw) {
         request.body = undefined;
@@ -40,7 +44,11 @@ export class JsonBodyMiddleware {
         sendValidationError(response, request, 400, 'Invalid JSON body.');
       }
     });
-    request.on('error', next);
+    request.on('error', (error: Error) => {
+      if (settled) return;
+      settled = true;
+      next(error);
+    });
   }
 }
 

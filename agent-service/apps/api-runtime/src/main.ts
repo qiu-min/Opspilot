@@ -11,7 +11,7 @@ import { createApiRuntimeModule } from './runtime-module.js';
 async function bootstrap(): Promise<void> {
   const config = loadRuntimeConfig();
   const module = await createApiRuntimeModule(config);
-  const app = await NestFactory.create(module);
+  const app = await NestFactory.create(module, { bodyParser: false });
 
   app.enableShutdownHooks();
   await app.listen(config.port, config.host);
