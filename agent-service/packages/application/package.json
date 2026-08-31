@@ -12,6 +12,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "smoke:agent-session:kimi": "tsx scripts/smoke-agent-session-kimi.ts",
+    "smoke:conversation:kimi": "tsx scripts/smoke-run-conversation-turn-kimi.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
