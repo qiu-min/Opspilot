@@ -84,7 +84,7 @@ export function estimateSessionContextTokens(
 
   if (projection.latestCompactionIndex === null) {
     return estimateContextTokens(messages);
-  }
+  } 
 
   const estimate = estimateContextTokens(messages);
   if (estimate.lastUsageIndex === null) return estimate;
