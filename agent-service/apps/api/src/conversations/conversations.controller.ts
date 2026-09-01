@@ -1,5 +1,5 @@
-import { Body, Controller, HttpCode, Post, Req, Res } from '@nestjs/common';
-import { RunConversationTurn } from '@opspilot/application';
+import { Body, Controller, HttpCode, Inject, Post, Req, Res } from '@nestjs/common';
+import { RunConversationTurn, type ExcelResource } from '@opspilot/application';
 import type { Request, Response } from 'express';
 
 import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
@@ -13,12 +13,20 @@ import {
   conversationTurnRequestSchema,
   type ConversationTurnRequest,
 } from './conversation.schemas.js';
+import {
+  EXCEL_RESOURCE_PATH_RESOLVER,
+  type ExcelResourcePathResolver,
+} from './excel-resource-path-resolver.js';
 
 const SSE_ERROR_MESSAGE = 'Internal server error.';
 
 @Controller('conversations')
 export class ConversationsController {
-  constructor(private readonly runConversationTurn: RunConversationTurn) {}
+  constructor(
+    private readonly runConversationTurn: RunConversationTurn,
+    @Inject(EXCEL_RESOURCE_PATH_RESOLVER)
+    private readonly excelResourcePathResolver: ExcelResourcePathResolver,
+  ) {}
 
   @Post('turns')
   @HttpCode(200)
@@ -26,7 +34,7 @@ export class ConversationsController {
     @Body(new ZodValidationPipe(conversationTurnRequestSchema))
     request: ConversationTurnRequest,
   ): Promise<ConversationTurnResponse> {
-    const result = await this.runConversationTurn.execute(mapConversationTurnRequest(request));
+    const result = await this.runConversationTurn.execute(this.mapRequest(request));
     return mapConversationTurnResult(result);
   }
 
@@ -53,7 +61,7 @@ export class ConversationsController {
     response.on('close', onClose);
 
     try {
-      const result = await this.runConversationTurn.execute(mapConversationTurnRequest(request), {
+      const result = await this.runConversationTurn.execute(this.mapRequest(request), {
         onEvent: (event) => {
           if (disconnected || !canWrite(response)) return;
           if (writeSsePayload(response, event.type, serializeConversationEvent(event))) {
@@ -87,6 +95,15 @@ export class ConversationsController {
       incomingRequest.off('close', onClose);
       response.off('close', onClose);
     }
+  }
+
+  private mapRequest(request: ConversationTurnRequest) {
+    const excelResource: ExcelResource | undefined =
+      request.excelResource === undefined
+        ? undefined
+        : this.excelResourcePathResolver.resolve(request.excelResource);
+
+    return mapConversationTurnRequest(request, excelResource);
   }
 }
 

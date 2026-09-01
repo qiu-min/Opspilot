@@ -73,8 +73,9 @@ pnpm build
 1. `pnpm install`
 2. 复制 `.env.example` 为 `.env`
 3. 在 `.env` 中配置 `MOONSHOT_API_KEY`
-4. 根据需要设置 `DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID`
-5. 执行 `pnpm dev:api`
+4. 配置 `OPS_PILOT_SHARED_STORAGE_ROOT` 为 Backend 共享文件存储根目录
+5. 根据需要设置 `DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID`
+6. 执行 `pnpm dev:api`
 
 默认模型由 `DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID` 显式指定。`api-runtime` 会加载 `agent-service/.env`，并装配 Model Gateway、`RunConversationTurn` 和 filesystem SessionStore。
 

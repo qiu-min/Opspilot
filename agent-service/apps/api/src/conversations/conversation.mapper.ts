@@ -1,4 +1,8 @@
-import type { RunConversationTurnInput, RunConversationTurnResult } from '@opspilot/application';
+import type {
+  ExcelResource,
+  RunConversationTurnInput,
+  RunConversationTurnResult,
+} from '@opspilot/application';
 
 import type { ConversationTurnRequest } from './conversation.schemas.js';
 
@@ -13,6 +17,7 @@ export type ConversationTurnStatus = 'completed' | 'error' | 'aborted';
 
 export function mapConversationTurnRequest(
   request: ConversationTurnRequest,
+  excelResource?: ExcelResource,
 ): RunConversationTurnInput {
   return {
     ...(request.sessionId === undefined ? {} : { sessionId: request.sessionId }),
@@ -20,6 +25,7 @@ export function mapConversationTurnRequest(
       role: 'user',
       content: [{ type: 'text', text: request.message }],
     },
+    ...(excelResource === undefined ? {} : { excelResource }),
   };
 }
 

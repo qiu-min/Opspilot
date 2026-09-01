@@ -8,8 +8,9 @@ import type { INestApplication } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ApiModule } from '../src/index.js';
+import { ApiModule, EXCEL_RESOURCE_PATH_RESOLVER } from '../src/index.js';
 import { ConversationsController } from '../src/conversations/conversations.controller.js';
+import type { ExcelResourcePathResolver } from '../src/conversations/excel-resource-path-resolver.js';
 
 interface HttpResponse {
   readonly statusCode: number;
@@ -43,6 +44,11 @@ class FakeResponse extends EventEmitter {
 }
 
 const turnResult = createTurnResult('stop');
+const defaultExcelResourcePathResolver: ExcelResourcePathResolver = {
+  resolve(resource) {
+    return { id: resource.id, filePath: resource.storagePath };
+  },
+};
 
 describe('Conversation API', () => {
   let app: INestApplication | undefined;
@@ -77,6 +83,73 @@ describe('Conversation API', () => {
       output: 'hello back',
     });
     expect(execute.mock.calls[0]).toHaveLength(1);
+  });
+
+  it('resolves an Excel resource without exposing its file path to the request contract', async () => {
+    const resolve = vi.fn(() => ({ id: 'file-1', filePath: '/shared/uploads/report.xlsx' }));
+    const execute = vi.fn<RunConversationTurn['execute']>(async (input) => {
+      expect(input).toEqual({
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'inspect workbook' }],
+        },
+        excelResource: { id: 'file-1', filePath: '/shared/uploads/report.xlsx' },
+      });
+      return turnResult;
+    });
+    const server = await startServer(execute, { resolve });
+    app = server.app;
+
+    const response = await postJson(server.port, '/conversations/turns', {
+      message: 'inspect workbook',
+      excelResource: { id: 'file-1', storagePath: 'uploads/report.xlsx' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(resolve).toHaveBeenCalledWith({ id: 'file-1', storagePath: 'uploads/report.xlsx' });
+    expect(response.body).not.toContain('filePath');
+  });
+
+  it.each([
+    {
+      message: 'rejects an empty resource id',
+      excelResource: { id: '', storagePath: 'report.xlsx' },
+    },
+    {
+      message: 'rejects an empty storage path',
+      excelResource: { id: 'file-1', storagePath: '' },
+    },
+    {
+      message: 'rejects an absolute storage path',
+      excelResource: { id: 'file-1', storagePath: '/shared/report.xlsx' },
+    },
+    {
+      message: 'rejects a Windows absolute storage path',
+      excelResource: { id: 'file-1', storagePath: 'C:\\shared\\report.xlsx' },
+    },
+    {
+      message: 'rejects an extra file path field',
+      excelResource: { id: 'file-1', storagePath: 'report.xlsx', filePath: '/shared/report.xlsx' },
+    },
+    {
+      message: 'rejects a top-level file path field',
+      excelResource: { id: 'file-1', storagePath: 'report.xlsx' },
+      filePath: '/shared/report.xlsx',
+    },
+  ])('$message', async ({ excelResource, filePath }) => {
+    const execute = vi.fn<RunConversationTurn['execute']>(async () => turnResult);
+    const server = await startServer(execute);
+    app = server.app;
+
+    const response = await postJson(server.port, '/conversations/turns', {
+      message: 'inspect workbook',
+      excelResource,
+      ...(filePath === undefined ? {} : { filePath }),
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.body)).toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('rejects an invalid JSON turn body', async () => {
@@ -159,7 +232,10 @@ describe('Conversation API', () => {
       });
       return turnResult;
     };
-    const controller = new ConversationsController({ execute } as RunConversationTurn);
+    const controller = new ConversationsController(
+      { execute } as RunConversationTurn,
+      defaultExcelResourcePathResolver,
+    );
     const request = new EventEmitter() as Request;
     const response = new FakeResponse();
 
@@ -202,6 +278,25 @@ describe('Conversation API', () => {
         'event: done\ndata: {"sessionId":"session-1","leafId":"leaf-1","status":"completed"}\n\n',
       ].join(''),
     );
+  });
+
+  it('resolves an Excel resource for the stream endpoint as well', async () => {
+    const resolve = vi.fn(() => ({ id: 'file-2', filePath: '/shared/data/book.xlsx' }));
+    const execute = vi.fn<RunConversationTurn['execute']>(async (input) => {
+      expect(input.excelResource).toEqual({ id: 'file-2', filePath: '/shared/data/book.xlsx' });
+      return turnResult;
+    });
+    const server = await startServer(execute, { resolve });
+    app = server.app;
+
+    const response = await postJson(server.port, '/conversations/turns/stream', {
+      message: 'inspect workbook',
+      excelResource: { id: 'file-2', storagePath: 'data/book.xlsx' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(resolve).toHaveBeenCalledWith({ id: 'file-2', storagePath: 'data/book.xlsx' });
+    expect(execute).toHaveBeenCalledOnce();
   });
 
   it('sanitizes Agent error events and sends done with error status', async () => {
@@ -249,7 +344,10 @@ describe('Conversation API', () => {
       options?.onEvent?.({ type: 'agent_start' });
       throw new Error('provider secret');
     };
-    const controller = new ConversationsController({ execute } as RunConversationTurn);
+    const controller = new ConversationsController(
+      { execute } as RunConversationTurn,
+      defaultExcelResourcePathResolver,
+    );
     const request = new EventEmitter() as Request;
     const response = new FakeResponse();
 
@@ -271,7 +369,10 @@ describe('Conversation API', () => {
       options?.onEvent?.({ type: 'agent_end', messages: turnResult.messages });
       return turnResult;
     };
-    const controller = new ConversationsController({ execute } as RunConversationTurn);
+    const controller = new ConversationsController(
+      { execute } as RunConversationTurn,
+      defaultExcelResourcePathResolver,
+    );
 
     await controller.streamTurn({ message: 'hello' }, request, response as unknown as Response);
 
@@ -280,15 +381,21 @@ describe('Conversation API', () => {
   });
 });
 
-async function startServer(execute: RunConversationTurn['execute']): Promise<{
+async function startServer(
+  execute: RunConversationTurn['execute'],
+  excelResourcePathResolver: ExcelResourcePathResolver = defaultExcelResourcePathResolver,
+): Promise<{
   readonly app: INestApplication;
   readonly port: number;
 }> {
   const module = await Test.createTestingModule({
     imports: [
       ApiModule.register({
-        providers: [{ provide: RunConversationTurn, useValue: { execute } }],
-        exports: [RunConversationTurn],
+        providers: [
+          { provide: RunConversationTurn, useValue: { execute } },
+          { provide: EXCEL_RESOURCE_PATH_RESOLVER, useValue: excelResourcePathResolver },
+        ],
+        exports: [RunConversationTurn, EXCEL_RESOURCE_PATH_RESOLVER],
       }),
     ],
   }).compile();

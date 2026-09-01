@@ -1,15 +1,16 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ApiModule } from '@opspilot/api';
+import { ApiModule, EXCEL_RESOURCE_PATH_RESOLVER } from '@opspilot/api';
 import { RunConversationTurn } from '@opspilot/application';
 import { describe, expect, it } from 'vitest';
 
 import { Test, type TestingModule } from '@nestjs/testing';
 
 import { loadRuntimeConfig, type RuntimeConfig } from '../src/runtime-config.js';
+import { FileSystemExcelResourcePathResolver } from '../src/files/excel-resource-path-resolver.js';
 import { createApiRuntimeModule } from '../src/runtime-module.js';
 
 const testApiKeyEnvironmentVariable = 'OPSPILOT_RUNTIME_TEST_API_KEY';
@@ -25,6 +26,9 @@ describe('API runtime composition root', () => {
       }).compile();
 
       expect(module.get(RunConversationTurn)).toBeInstanceOf(RunConversationTurn);
+      expect(module.get(EXCEL_RESOURCE_PATH_RESOLVER)).toBeInstanceOf(
+        FileSystemExcelResourcePathResolver,
+      );
       await module.close();
     });
   });
@@ -64,12 +68,14 @@ describe('API runtime composition root', () => {
           DEFAULT_MODEL_ID: testModelId,
           SESSION_DIRECTORY: '',
           MODEL_CONFIG_PATH: '',
+          OPS_PILOT_SHARED_STORAGE_ROOT: temporaryWorkingDirectory,
         }),
       ).toMatchObject({
         sessionDirectory: fileURLToPath(new URL('../../../data/sessions', import.meta.url)),
         modelConfigPath: fileURLToPath(
           new URL('../../../config/model-providers.json', import.meta.url),
         ),
+        sharedStorageRoot: temporaryWorkingDirectory,
       });
     } finally {
       process.chdir(originalWorkingDirectory);
@@ -82,12 +88,14 @@ describe('API runtime composition root', () => {
       loadRuntimeConfig({
         SESSION_DIRECTORY: 'custom/sessions',
         MODEL_CONFIG_PATH: 'custom/models.json',
+        OPS_PILOT_SHARED_STORAGE_ROOT: 'custom/storage',
         DEFAULT_MODEL_PROVIDER: testProviderId,
         DEFAULT_MODEL_ID: testModelId,
       }),
     ).toMatchObject({
       sessionDirectory: 'custom/sessions',
       modelConfigPath: 'custom/models.json',
+      sharedStorageRoot: resolvePath('custom/storage'),
     });
   });
 
@@ -95,12 +103,20 @@ describe('API runtime composition root', () => {
     expect(() =>
       loadRuntimeConfig({
         PORT: 'not-a-port',
+        OPS_PILOT_SHARED_STORAGE_ROOT: 'shared/storage',
         DEFAULT_MODEL_PROVIDER: testProviderId,
         DEFAULT_MODEL_ID: testModelId,
       }),
     ).toThrow('Runtime configuration is invalid.');
 
     expect(() => loadRuntimeConfig({})).toThrow('Runtime configuration is invalid.');
+    expect(() =>
+      loadRuntimeConfig({
+        DEFAULT_MODEL_PROVIDER: testProviderId,
+        DEFAULT_MODEL_ID: testModelId,
+        OPS_PILOT_SHARED_STORAGE_ROOT: ' ',
+      }),
+    ).toThrow('OPS_PILOT_SHARED_STORAGE_ROOT is required.');
   });
 
   it('starts the built entrypoint with the package start script', async () => {
@@ -153,6 +169,7 @@ function createRuntimeConfig(modelConfigPath: string, sessionDirectory: string):
     host: '127.0.0.1',
     sessionDirectory,
     modelConfigPath,
+    sharedStorageRoot: sessionDirectory,
     defaultProviderId: testProviderId,
     defaultModelId: testModelId,
   };

@@ -2,7 +2,8 @@ import { DynamicModule } from '@nestjs/common';
 import { RunConversationTurn, FileSystemSessionStore } from '@opspilot/application';
 import { createModelGateway, loadModelGatewayConfig } from '@opspilot/model-gateway';
 
-import { ApiModule } from '@opspilot/api';
+import { ApiModule, EXCEL_RESOURCE_PATH_RESOLVER } from '@opspilot/api';
+import { FileSystemExcelResourcePathResolver } from './files/excel-resource-path-resolver.js';
 import type { RuntimeConfig } from './runtime-config.js';
 
 export async function createApiRuntimeModule(config: RuntimeConfig): Promise<DynamicModule> {
@@ -17,6 +18,9 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
   }
 
   const sessionStore = new FileSystemSessionStore(config.sessionDirectory);
+  const excelResourcePathResolver = new FileSystemExcelResourcePathResolver(
+    config.sharedStorageRoot,
+  );
   const runConversationTurn = new RunConversationTurn({
     sessionStore,
     modelGateway,
@@ -25,7 +29,10 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
   });
 
   return ApiModule.register({
-    providers: [{ provide: RunConversationTurn, useValue: runConversationTurn }],
-    exports: [RunConversationTurn],
+    providers: [
+      { provide: RunConversationTurn, useValue: runConversationTurn },
+      { provide: EXCEL_RESOURCE_PATH_RESOLVER, useValue: excelResourcePathResolver },
+    ],
+    exports: [RunConversationTurn, EXCEL_RESOURCE_PATH_RESOLVER],
   });
 }
