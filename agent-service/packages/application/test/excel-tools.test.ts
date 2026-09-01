@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { AgentToolExecutionError } from '@opspilot/agent-runtime';
 import type {
   ExcelDiscoveryConnector,
   GetSheetProfileResult,
@@ -8,6 +9,7 @@ import type {
 import {
   createGetSheetProfileTool,
   createGetWorkbookInfoTool,
+  requireExcelResource,
   type ToolContext,
 } from '../src/index.js';
 
@@ -54,6 +56,24 @@ const sheetProfile: GetSheetProfileResult = {
 };
 
 describe('Excel discovery Application Tools', () => {
+  it('returns the same ExcelResource when one is present', () => {
+    expect(requireExcelResource(context)).toBe(excelResource);
+  });
+
+  it('throws a recoverable error with a stable code when no resource is present', () => {
+    let error: unknown;
+    try {
+      requireExcelResource(contextWithoutResource);
+    } catch (caught: unknown) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(AgentToolExecutionError);
+    expect(error).toMatchObject({ code: 'EXCEL_RESOURCE_REQUIRED' });
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('No Excel workbook is attached');
+  });
+
   it('exposes workbook metadata without filePath and preserves connector result', async () => {
     const signal = new AbortController().signal;
     const getWorkbookInfo = vi.fn(async () => workbookInfo);
@@ -168,7 +188,10 @@ describe('Excel discovery Application Tools', () => {
 
     await expect(
       createGetWorkbookInfoTool(connector).execute('call-4', {}, undefined, contextWithoutResource),
-    ).rejects.toThrow('Excel tool requires an ExcelResource.');
+    ).rejects.toMatchObject({
+      code: 'EXCEL_RESOURCE_REQUIRED',
+      message: expect.stringContaining('No Excel workbook is attached'),
+    });
     await expect(
       createGetSheetProfileTool(connector).execute(
         'call-5',
@@ -176,7 +199,10 @@ describe('Excel discovery Application Tools', () => {
         undefined,
         contextWithoutResource,
       ),
-    ).rejects.toThrow('Excel tool requires an ExcelResource.');
+    ).rejects.toMatchObject({
+      code: 'EXCEL_RESOURCE_REQUIRED',
+      message: expect.stringContaining('No Excel workbook is attached'),
+    });
 
     expect(getWorkbookInfo).not.toHaveBeenCalled();
     expect(getSheetProfile).not.toHaveBeenCalled();

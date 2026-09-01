@@ -190,6 +190,67 @@ describe('Application Excel discovery conversation integration', () => {
       expect.arrayContaining(['tool_execution_start', 'tool_execution_end']),
     );
   });
+
+  it('continues after get_workbook_info is called without an ExcelResource', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'opspilot-application-missing-excel-e2e-'));
+    directories.push(directory);
+    const sessionDirectory = join(directory, 'sessions');
+    await mkdir(sessionDirectory);
+
+    const gateway = createGateway([
+      assistantMessage('', [
+        { callId: 'missing-resource-call', name: 'get_workbook_info', arguments: {} },
+      ]),
+      assistantMessage('Please attach an Excel workbook before I inspect it.'),
+    ]);
+    const store = new FileSystemSessionStore(sessionDirectory);
+    const runner = new RunConversationTurn({
+      sessionStore: store,
+      modelGateway: gateway,
+      defaultModel: model,
+      toolDefinitions: [createGetWorkbookInfoTool(new ExcelJsDiscoveryAdapter())],
+    });
+
+    const result = await runner.execute({
+      message: userMessage('Inspect the workbook.'),
+    });
+
+    expect(gateway.streamMock).toHaveBeenCalledTimes(2);
+    expect(lastAssistantText(result.messages)).toBe(
+      'Please attach an Excel workbook before I inspect it.',
+    );
+    const finalAssistant = [...result.messages]
+      .reverse()
+      .find((message) => message.role === 'assistant');
+    expect(finalAssistant).toMatchObject({ finishReason: 'stop' });
+
+    const toolResult = findToolResult(result.messages);
+    expect(toolResult).toMatchObject({
+      role: 'tool',
+      name: 'get_workbook_info',
+      isError: true,
+      details: {
+        kind: 'recoverable',
+        code: 'EXCEL_RESOURCE_REQUIRED',
+      },
+    });
+    expect(toolResult.content[0]?.text).toContain('No Excel workbook is attached');
+    expect(gateway.requestedContexts[1]?.messages.at(-1)).toEqual(toolResult);
+
+    const persistedMessages = store
+      .load(result.sessionId)
+      .getEntries()
+      .filter((entry) => entry.type === 'message')
+      .map((entry) => entry.message);
+    expect(findToolResult(persistedMessages)).toMatchObject({
+      role: 'tool',
+      isError: true,
+      details: {
+        kind: 'recoverable',
+        code: 'EXCEL_RESOURCE_REQUIRED',
+      },
+    });
+  });
 });
 
 function createGateway(responses: readonly AssistantMessage[]): FakeGateway {
