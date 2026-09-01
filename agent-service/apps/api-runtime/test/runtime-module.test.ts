@@ -11,13 +11,40 @@ import { Test, type TestingModule } from '@nestjs/testing';
 
 import { loadRuntimeConfig, type RuntimeConfig } from '../src/runtime-config.js';
 import { FileSystemExcelResourcePathResolver } from '../src/files/excel-resource-path-resolver.js';
-import { createApiRuntimeModule } from '../src/runtime-module.js';
+import {
+  createApiRuntimeModule,
+  createExcelDiscoveryToolDefinitions,
+} from '../src/runtime-module.js';
 
 const testApiKeyEnvironmentVariable = 'OPSPILOT_RUNTIME_TEST_API_KEY';
 const testProviderId = 'test-provider';
 const testModelId = 'test-model';
 
 describe('API runtime composition root', () => {
+  it('creates exactly the two Excel discovery tools', () => {
+    const tools = createExcelDiscoveryToolDefinitions();
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      'get_workbook_info',
+      'get_sheet_profile',
+    ]);
+    expect(tools).toHaveLength(2);
+    expect(tools[0]?.parameters).toEqual({
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    });
+    expect(tools[1]?.parameters).toMatchObject({
+      type: 'object',
+      properties: {
+        sheetName: expect.any(Object),
+        sampleSize: expect.any(Object),
+      },
+      required: ['sheetName'],
+      additionalProperties: false,
+    });
+  });
+
   it('creates the composition root and resolves RunConversationTurn', async () => {
     await withModelConfig(async (config) => {
       const runtimeModule = await createApiRuntimeModule(config);

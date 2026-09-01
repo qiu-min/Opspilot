@@ -78,6 +78,11 @@ pnpm build
 4. 配置 `OPS_PILOT_SHARED_STORAGE_ROOT` 为 Backend 共享文件存储根目录
 5. 根据需要设置 `DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID`
 6. 执行 `pnpm dev:api`
+7. 手动验证真实 Excel Tool Calling 可执行 `pnpm --filter @opspilot/application smoke:excel:kimi`
+
+本地 Backend → Agent Service 联调时，`FileStorage:RootPath` 与
+`OPS_PILOT_SHARED_STORAGE_ROOT` 必须指向同一个实际目录；Backend 保存的
+`uploads/<file>.xlsx` 才能被 Agent Service 通过同一相对路径读取。
 
 默认模型由 `DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID` 显式指定。`api-runtime` 会加载 `agent-service/.env`，并装配 Model Gateway、`RunConversationTurn` 和 filesystem SessionStore。
 

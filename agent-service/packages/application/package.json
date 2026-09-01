@@ -13,6 +13,7 @@
     "build": "tsc -p tsconfig.build.json",
     "smoke:agent-session:kimi": "tsx scripts/smoke-agent-session-kimi.ts",
     "smoke:conversation:kimi": "tsx scripts/smoke-run-conversation-turn-kimi.ts",
+    "smoke:excel:kimi": "tsx scripts/smoke-excel-conversation-kimi.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
+    "exceljs": "^4.4.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.10"
