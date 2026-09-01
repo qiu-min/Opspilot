@@ -29,7 +29,10 @@ describe('ToolDefinition wrappers', () => {
     const execute = vi.fn(async () => ({ content: [{ type: 'text' as const, text: 'result' }] }));
     const definition = createDefinition('lookup', execute);
 
-    const wrapped = wrapToolDefinition(definition, { sessionId: 'session-1' });
+    const wrapped = wrapToolDefinition(definition, {
+      sessionId: 'session-1',
+      excelResource: { id: 'resource-1', filePath: 'workbook.xlsx' },
+    });
 
     expect(wrapped.name).toBe(definition.name);
     expect(wrapped.description).toBe(definition.description);
@@ -38,7 +41,10 @@ describe('ToolDefinition wrappers', () => {
   });
 
   it('forwards runtime execute arguments and returns the definition result', async () => {
-    const context: ToolContext = { sessionId: 'session-1' };
+    const context: ToolContext = {
+      sessionId: 'session-1',
+      excelResource: { id: 'resource-1', filePath: 'workbook.xlsx' },
+    };
     const args: JsonObject = { query: 'value' };
     const signal = new AbortController().signal;
     const result: AgentToolResult<{ source: string }> = {
@@ -84,7 +90,10 @@ describe('ToolDefinition wrappers', () => {
       ),
     ];
 
-    const wrapped = wrapToolDefinitions(definitions, { sessionId: 'session-1' });
+    const wrapped = wrapToolDefinitions(definitions, {
+      sessionId: 'session-1',
+      excelResource: { id: 'resource-1', filePath: 'workbook.xlsx' },
+    });
 
     expect(wrapped.map((tool) => tool.name)).toEqual(['first', 'second']);
   });

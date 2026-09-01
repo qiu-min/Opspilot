@@ -531,7 +531,12 @@ describe('RunConversationTurn', () => {
       content: [{ type: 'text', text: 'tool result' }],
       details: { source: 'fake' },
     };
-    let receivedContext: { readonly sessionId: string } | undefined;
+    let receivedContext:
+      | {
+          readonly sessionId: string;
+          readonly excelResource: { readonly id: string; readonly filePath: string };
+        }
+      | undefined;
     let receivedSignal: AbortSignal | undefined;
     const definition: ToolDefinition<{ source: string }> = {
       name: 'lookup',
@@ -557,6 +562,7 @@ describe('RunConversationTurn', () => {
       sessionStore: store,
       modelGateway: gateway,
       toolDefinitions: [definition],
+      excelResource: { id: 'resource-1', filePath: 'workbook.xlsx' },
       defaultModel: model,
     });
     const events: AgentSessionEvent[] = [];
@@ -570,7 +576,10 @@ describe('RunConversationTurn', () => {
       },
     );
 
-    expect(receivedContext).toEqual({ sessionId: result.sessionId });
+    expect(receivedContext).toEqual({
+      sessionId: result.sessionId,
+      excelResource: { id: 'resource-1', filePath: 'workbook.xlsx' },
+    });
     expect(receivedSignal).toBe(gateway.requestedOptions[0]?.signal);
     expect(result.messages[2]).toEqual({
       role: 'tool',
