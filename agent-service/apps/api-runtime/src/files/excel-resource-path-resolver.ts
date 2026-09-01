@@ -1,4 +1,4 @@
-import { statSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import * as path from 'node:path';
 
 import type { ExcelResource } from '@opspilot/application';
@@ -13,7 +13,12 @@ export class FileSystemExcelResourcePathResolver implements ExcelResourcePathRes
       throw new Error('sharedStorageRoot is required.');
     }
 
-    this.sharedStorageRoot = path.resolve(sharedStorageRoot);
+    const configuredRoot = path.resolve(sharedStorageRoot);
+    try {
+      this.sharedStorageRoot = realpathSync(configuredRoot);
+    } catch (cause) {
+      throw new Error('sharedStorageRoot does not exist or cannot be accessed.', { cause });
+    }
   }
 
   /** Resolves and verifies one regular file under the configured shared storage root. */
@@ -41,17 +46,35 @@ export class FileSystemExcelResourcePathResolver implements ExcelResourcePathRes
       throw new Error('Excel resource storagePath must remain within sharedStorageRoot.');
     }
 
-    let fileStats: ReturnType<typeof statSync>;
+    let realFilePath: string;
     try {
-      fileStats = statSync(filePath);
+      realFilePath = realpathSync(filePath);
     } catch (cause) {
-      throw new Error('Excel resource file does not exist.', { cause });
+      if (isFileNotFoundError(cause)) {
+        throw new Error('Excel resource file does not exist.', { cause });
+      }
+
+      throw new Error('Unable to access Excel resource file.', { cause });
     }
 
+    const realRelativePath = path.relative(this.sharedStorageRoot, realFilePath);
+    if (
+      realRelativePath === '..' ||
+      realRelativePath.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(realRelativePath)
+    ) {
+      throw new Error('Excel resource storagePath must remain within sharedStorageRoot.');
+    }
+
+    const fileStats = statSync(realFilePath);
     if (!fileStats.isFile()) {
       throw new Error('Excel resource path must point to a regular file.');
     }
 
-    return { id: resource.id, filePath };
+    return { id: resource.id, filePath: realFilePath };
   }
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
 }

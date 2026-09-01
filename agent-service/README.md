@@ -49,12 +49,14 @@ Session 负责生命周期和会话树语义。消息树不使用 PostgreSQL 保
 
 ## API Boundary
 
-`apps/api` 提供当前 Conversation API；`apps/api-runtime` 负责 composition root 和 bootstrap。本次不连接 ASP.NET Backend。
+`apps/api` 提供当前 Conversation API；`apps/api-runtime` 负责 composition root 和 bootstrap。Backend 通过 HTTP 调用普通 Conversation endpoint。
 
 当前接口：
 
 - `POST /conversations/turns`：执行一次普通 JSON Conversation Turn。
 - `POST /conversations/turns/stream`：以 SSE 透传 AgentEvent，并发送最终 `done` 事件。
+
+普通 Conversation 请求可以携带相对共享存储根目录的 Excel `storagePath`。`api-runtime` 将其安全解析为 Application 使用的绝对 `filePath`；SSE 和普通入口使用同一请求契约。
 
 Session 使用 filesystem JSONL 持久化；API 通过 Application 的 `RunConversationTurn` 访问，不直接操作 SessionManager 或 Model Gateway。
 

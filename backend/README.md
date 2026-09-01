@@ -121,6 +121,7 @@ backend/AGENTS.md
 * EF Core Migration
 * 创建 AnalysisTask 的 Vertical Slice
 * 上传 `.xlsx` 文件的 Vertical Slice
+* 通过 Agent Service 执行普通 Conversation Turn
 
 当前主要业务链路：
 
@@ -136,7 +137,19 @@ POST /api/analysis-tasks
 AnalysisTask
 ```
 
-后续将在此基础上继续连接 Agent Service。
+普通 Conversation Turn 的最小调用链为：
+
+```text
+POST /api/conversations/turns
+  ↓
+RunConversationTurnHandler
+  ↓
+FileId → FileAsset.StoragePath
+  ↓
+AgentServiceClient
+  ↓
+POST Agent Service /conversations/turns
+```
 
 ---
 
@@ -317,6 +330,8 @@ Agent Execution
 ```
 
 Agent Service 执行期间需要使用具体工具能力时，由 Agent Service 自己的 Tool Gateway 负责。
+
+当前 Backend 仅代理非流式 Conversation Turn；SSE 代理及更完整的 AgentRun 状态流转仍待实现。
 
 ---
 
