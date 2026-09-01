@@ -3,7 +3,6 @@ import type { Model, ModelGateway } from '@opspilot/model-gateway';
 import { createAgentSession } from '../agent-session/create-agent-session.js';
 import type { CompactionService, CompactionSettings, ContextManager } from '../context/index.js';
 import type { SessionStore } from '../session-store/session-store.js';
-import type { ExcelResource } from '../tools/excel-resource.js';
 import type { ToolDefinition } from '../tools/tool-definition.js';
 import { wrapToolDefinitions } from '../tools/wrap-tool-definition.js';
 import type {
@@ -21,7 +20,6 @@ export interface RunConversationTurnOptions {
   readonly sessionStore: SessionStore;
   readonly modelGateway: ModelGateway;
   readonly toolDefinitions: readonly ToolDefinition[];
-  readonly excelResource?: ExcelResource;
   readonly defaultModel?: Model;
   readonly systemPrompt?: string;
   readonly contextManager?: ContextManager;
@@ -35,7 +33,6 @@ export class RunConversationTurn {
   private readonly sessionStore: SessionStore;
   private readonly modelGateway: ModelGateway;
   private readonly toolDefinitions: readonly ToolDefinition[];
-  private readonly excelResource?: ExcelResource;
   private readonly defaultModel?: Model;
   private readonly systemPrompt?: string;
   private readonly contextManager?: ContextManager;
@@ -47,7 +44,6 @@ export class RunConversationTurn {
     this.sessionStore = options.sessionStore;
     this.modelGateway = options.modelGateway;
     this.toolDefinitions = [...options.toolDefinitions];
-    this.excelResource = options.excelResource;
     this.defaultModel = options.defaultModel;
     this.systemPrompt = options.systemPrompt;
     this.contextManager = options.contextManager;
@@ -81,13 +77,10 @@ export class RunConversationTurn {
         ? this.sessionStore.create()
         : this.sessionStore.load(input.sessionId);
     const sessionId = sessionManager.getHeader().id;
-    const tools =
-      this.toolDefinitions.length === 0
-        ? []
-        : wrapToolDefinitions(this.toolDefinitions, {
-            sessionId,
-            excelResource: this.requireExcelResource(),
-          });
+    const tools = wrapToolDefinitions(this.toolDefinitions, {
+      sessionId,
+      ...(input.excelResource === undefined ? {} : { excelResource: input.excelResource }),
+    });
     const agentSession = createAgentSession({
       sessionManager,
       modelGateway: this.modelGateway,
@@ -117,14 +110,5 @@ export class RunConversationTurn {
       unsubscribe?.();
       agentSession.dispose();
     }
-  }
-
-  /** Requires the resource needed by the configured Application Tools. */
-  private requireExcelResource(): ExcelResource {
-    if (this.excelResource === undefined) {
-      throw new Error('RunConversationTurn requires an excelResource when tools are configured.');
-    }
-
-    return this.excelResource;
   }
 }

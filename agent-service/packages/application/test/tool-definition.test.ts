@@ -31,7 +31,6 @@ describe('ToolDefinition wrappers', () => {
 
     const wrapped = wrapToolDefinition(definition, {
       sessionId: 'session-1',
-      excelResource: { id: 'resource-1', filePath: 'workbook.xlsx' },
     });
 
     expect(wrapped.name).toBe(definition.name);
@@ -43,7 +42,6 @@ describe('ToolDefinition wrappers', () => {
   it('forwards runtime execute arguments and returns the definition result', async () => {
     const context: ToolContext = {
       sessionId: 'session-1',
-      excelResource: { id: 'resource-1', filePath: 'workbook.xlsx' },
     };
     const args: JsonObject = { query: 'value' };
     const signal = new AbortController().signal;
@@ -92,7 +90,6 @@ describe('ToolDefinition wrappers', () => {
 
     const wrapped = wrapToolDefinitions(definitions, {
       sessionId: 'session-1',
-      excelResource: { id: 'resource-1', filePath: 'workbook.xlsx' },
     });
 
     expect(wrapped.map((tool) => tool.name)).toEqual(['first', 'second']);

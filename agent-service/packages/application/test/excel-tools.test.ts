@@ -11,10 +11,10 @@ import {
   type ToolContext,
 } from '../src/index.js';
 
-const context: ToolContext = {
-  sessionId: 'session-1',
-  excelResource: { id: 'resource-1', filePath: 'C:/workbooks/report.xlsx' },
-};
+const excelResource = { id: 'resource-1', filePath: 'C:/workbooks/report.xlsx' };
+const context: ToolContext = { sessionId: 'session-1', excelResource };
+
+const contextWithoutResource: ToolContext = { sessionId: 'session-1' };
 
 const workbookInfo: GetWorkbookInfoResult = {
   sheetCount: 2,
@@ -72,10 +72,7 @@ describe('Excel discovery Application Tools', () => {
 
     const result = await tool.execute('call-1', {}, signal, context);
 
-    expect(getWorkbookInfo).toHaveBeenCalledWith(
-      { filePath: context.excelResource.filePath },
-      signal,
-    );
+    expect(getWorkbookInfo).toHaveBeenCalledWith({ filePath: excelResource.filePath }, signal);
     expect(result.content[0]).toMatchObject({ type: 'text' });
     expect(result.content[0]?.type === 'text' && result.content[0].text).toContain('sheetCount: 2');
     expect(result.content[0]?.type === 'text' && result.content[0].text).toContain('name: Summary');
@@ -122,7 +119,7 @@ describe('Excel discovery Application Tools', () => {
 
     expect(getSheetProfile).toHaveBeenCalledWith(
       {
-        filePath: context.excelResource.filePath,
+        filePath: excelResource.filePath,
         sheetName: 'Data',
         sampleSize: 10,
       },
@@ -157,10 +154,31 @@ describe('Excel discovery Application Tools', () => {
 
     expect(getSheetProfile).toHaveBeenCalledWith(
       {
-        filePath: context.excelResource.filePath,
+        filePath: excelResource.filePath,
         sheetName: 'Data',
       },
       undefined,
     );
+  });
+
+  it('fails both Excel tools without a resource and does not call the connector', async () => {
+    const getWorkbookInfo = vi.fn(async () => workbookInfo);
+    const getSheetProfile = vi.fn(async () => sheetProfile);
+    const connector: ExcelDiscoveryConnector = { getWorkbookInfo, getSheetProfile };
+
+    await expect(
+      createGetWorkbookInfoTool(connector).execute('call-4', {}, undefined, contextWithoutResource),
+    ).rejects.toThrow('Excel tool requires an ExcelResource.');
+    await expect(
+      createGetSheetProfileTool(connector).execute(
+        'call-5',
+        { sheetName: 'Data' },
+        undefined,
+        contextWithoutResource,
+      ),
+    ).rejects.toThrow('Excel tool requires an ExcelResource.');
+
+    expect(getWorkbookInfo).not.toHaveBeenCalled();
+    expect(getSheetProfile).not.toHaveBeenCalled();
   });
 });

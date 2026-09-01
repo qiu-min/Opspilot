@@ -1,6 +1,7 @@
 import type { ExcelDiscoveryConnector, GetWorkbookInfoResult } from '@opspilot/tool-gateway';
 import type { JsonObject } from '@opspilot/model-gateway';
 
+import { requireExcelResource } from './require-excel-resource.js';
 import type { ToolDefinition } from '../tool-definition.js';
 
 const GET_WORKBOOK_INFO_PARAMETERS: JsonObject = {
@@ -18,8 +19,9 @@ export function createGetWorkbookInfoTool(
     description: 'Inspect the workbook structure and worksheet summaries.',
     parameters: GET_WORKBOOK_INFO_PARAMETERS,
     async execute(_callId, _args, signal, context) {
+      const excelResource = requireExcelResource(context);
       const result = await discoveryConnector.getWorkbookInfo(
-        { filePath: context.excelResource.filePath },
+        { filePath: excelResource.filePath },
         signal,
       );
 

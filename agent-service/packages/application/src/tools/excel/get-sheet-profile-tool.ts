@@ -1,6 +1,7 @@
 import type { ExcelDiscoveryConnector, GetSheetProfileResult } from '@opspilot/tool-gateway';
 import type { JsonObject } from '@opspilot/model-gateway';
 
+import { requireExcelResource } from './require-excel-resource.js';
 import type { ToolDefinition } from '../tool-definition.js';
 
 const GET_SHEET_PROFILE_PARAMETERS: JsonObject = {
@@ -28,8 +29,9 @@ export function createGetSheetProfileTool(
     parameters: GET_SHEET_PROFILE_PARAMETERS,
     async execute(_callId, args, signal, context) {
       const { sheetName, sampleSize } = narrowArguments(args);
+      const excelResource = requireExcelResource(context);
       const input = {
-        filePath: context.excelResource.filePath,
+        filePath: excelResource.filePath,
         sheetName,
         ...(sampleSize === undefined ? {} : { sampleSize }),
       };

@@ -23,6 +23,7 @@ import {
   RunConversationTurn,
   SessionManager,
   type SessionStore,
+  type ToolContext,
   type ToolDefinition,
 } from '../src/index.js';
 
@@ -531,12 +532,7 @@ describe('RunConversationTurn', () => {
       content: [{ type: 'text', text: 'tool result' }],
       details: { source: 'fake' },
     };
-    let receivedContext:
-      | {
-          readonly sessionId: string;
-          readonly excelResource: { readonly id: string; readonly filePath: string };
-        }
-      | undefined;
+    let receivedContext: ToolContext | undefined;
     let receivedSignal: AbortSignal | undefined;
     const definition: ToolDefinition<{ source: string }> = {
       name: 'lookup',
@@ -562,13 +558,15 @@ describe('RunConversationTurn', () => {
       sessionStore: store,
       modelGateway: gateway,
       toolDefinitions: [definition],
-      excelResource: { id: 'resource-1', filePath: 'workbook.xlsx' },
       defaultModel: model,
     });
     const events: AgentSessionEvent[] = [];
 
     const result = await runner.execute(
-      { message: userMessage('use lookup') },
+      {
+        message: userMessage('use lookup'),
+        excelResource: { id: 'resource-1', filePath: 'workbook.xlsx' },
+      },
       {
         onEvent: (event) => {
           events.push(event);
@@ -605,6 +603,84 @@ describe('RunConversationTurn', () => {
         )
         .map((event) => event.toolCall.callId),
     ).toEqual([call.callId]);
+  });
+
+  it('runs an ordinary ToolDefinition without an ExcelResource', async () => {
+    const { store } = createStore();
+    const call: ModelToolCall = {
+      callId: 'call-without-resource',
+      name: 'lookup',
+      arguments: {},
+    };
+    let receivedContext: ToolContext | undefined;
+    const definition: ToolDefinition = {
+      name: 'lookup',
+      description: 'Lookup description',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      execute: async (_callId, _args, _signal, context) => {
+        receivedContext = context;
+        return { content: [{ type: 'text', text: 'tool result' }] };
+      },
+    };
+    const gateway = createGateway([
+      assistantStream(assistantMessage('', model, [call]), model),
+      assistantStream(assistantMessage('done'), model),
+    ]);
+    const runner = new RunConversationTurn({
+      sessionStore: store,
+      modelGateway: gateway,
+      toolDefinitions: [definition],
+      defaultModel: model,
+    });
+
+    await runner.execute({ message: userMessage('use lookup') });
+
+    expect(receivedContext).toEqual({ sessionId: expect.any(String) });
+  });
+
+  it('uses the input ExcelResource independently for each turn on one runner', async () => {
+    const { store } = createStore();
+    const callOne: ModelToolCall = { callId: 'call-a', name: 'lookup', arguments: {} };
+    const callTwo: ModelToolCall = { callId: 'call-b', name: 'lookup', arguments: {} };
+    const receivedContexts: ToolContext[] = [];
+    const definition: ToolDefinition = {
+      name: 'lookup',
+      description: 'Lookup description',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      execute: async (_callId, _args, _signal, context) => {
+        receivedContexts.push(context);
+        return { content: [{ type: 'text', text: 'tool result' }] };
+      },
+    };
+    const gateway = createGateway([
+      assistantStream(assistantMessage('', model, [callOne]), model),
+      assistantStream(assistantMessage('first done'), model),
+      assistantStream(assistantMessage('', model, [callTwo]), model),
+      assistantStream(assistantMessage('second done'), model),
+    ]);
+    const runner = new RunConversationTurn({
+      sessionStore: store,
+      modelGateway: gateway,
+      toolDefinitions: [definition],
+      defaultModel: model,
+    });
+    const resourceA = { id: 'resource-a', filePath: 'workbook-a.xlsx' };
+    const resourceB = { id: 'resource-b', filePath: 'workbook-b.xlsx' };
+
+    const firstResult = await runner.execute({
+      message: userMessage('use workbook a'),
+      excelResource: resourceA,
+    });
+    await runner.execute({
+      sessionId: firstResult.sessionId,
+      message: userMessage('use workbook b'),
+      excelResource: resourceB,
+    });
+
+    expect(receivedContexts).toEqual([
+      { sessionId: firstResult.sessionId, excelResource: resourceA },
+      { sessionId: firstResult.sessionId, excelResource: resourceB },
+    ]);
   });
 
   it('forwards AgentSession events to the execution listener', async () => {
