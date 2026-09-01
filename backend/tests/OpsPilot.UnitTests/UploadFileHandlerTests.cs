@@ -152,6 +152,13 @@ public sealed class UploadFileHandlerTests
 
         public Exception? SaveException { get; init; }
 
+        public Task<FileAsset?> GetByIdAsync(
+            Guid fileId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult<FileAsset?>(null);
+        }
+
         public Task AddAsync(FileAsset fileAsset, CancellationToken cancellationToken)
         {
             AddedFileAsset = fileAsset;
