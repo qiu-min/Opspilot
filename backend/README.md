@@ -112,6 +112,7 @@ backend/AGENTS.md
 
 * ASP.NET Core API 基础启动
 * `GET /health`
+* `POST /api/auth/register`
 * `ProblemDetails` 统一异常响应
 * Application / Infrastructure DI 注册
 * EF Core + PostgreSQL
@@ -122,6 +123,20 @@ backend/AGENTS.md
 * 创建 AnalysisTask 的 Vertical Slice
 * 上传 `.xlsx` 文件的 Vertical Slice
 * 通过 Agent Service 执行普通 Conversation Turn
+
+用户注册的最小调用链为：
+
+```text
+POST /api/auth/register
+  ↓
+RegisterUserHandler
+  ↓
+IUserRepository
+  ↓
+User.Create(...)
+  ↓
+PostgreSQL
+```
 
 当前主要业务链路：
 
@@ -350,6 +365,7 @@ PostgreSQL
 主要持久化模型包括：
 
 ```text
+User
 AnalysisTask
 AgentRun
 FileAsset

@@ -1,0 +1,35 @@
+using Microsoft.AspNetCore.Mvc;
+using OpsPilot.Api.Features.Auth.Contracts.Requests;
+using OpsPilot.Api.Features.Auth.Contracts.Responses;
+using OpsPilot.Application.Exceptions;
+using OpsPilot.Application.Users.Register;
+
+namespace OpsPilot.Api.Features.Auth;
+
+[ApiController]
+[Route("api/auth")]
+public sealed class AuthController(RegisterUserHandler registerUserHandler) : ControllerBase
+{
+    [HttpPost("register")]
+    [ProducesResponseType(typeof(RegisterResponse), StatusCodes.Status201Created)]
+    public async Task<ActionResult<RegisterResponse>> Register(
+        RegisterRequest? request,
+        CancellationToken cancellationToken)
+    {
+        if (request is null)
+        {
+            throw new ApplicationValidationException("Request body is required.");
+        }
+
+        RegisterUserResult result = await registerUserHandler.HandleAsync(
+            new RegisterUserCommand(request.Email, request.Password),
+            cancellationToken);
+
+        var response = new RegisterResponse(
+            result.Id,
+            result.Email,
+            result.CreatedAtUtc);
+
+        return StatusCode(StatusCodes.Status201Created, response);
+    }
+}

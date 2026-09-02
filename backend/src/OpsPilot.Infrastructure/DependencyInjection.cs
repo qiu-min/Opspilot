@@ -4,10 +4,12 @@ using Microsoft.Extensions.DependencyInjection;
 using OpsPilot.Application.Abstractions.AgentService;
 using OpsPilot.Application.Abstractions.Files;
 using OpsPilot.Application.Abstractions.Persistence;
+using OpsPilot.Application.Abstractions.Security;
 using OpsPilot.Infrastructure.AgentService;
 using OpsPilot.Infrastructure.Files;
 using OpsPilot.Infrastructure.Persistence;
 using OpsPilot.Infrastructure.Persistence.Repositories;
+using OpsPilot.Infrastructure.Security;
 
 namespace OpsPilot.Infrastructure;
 
@@ -28,6 +30,8 @@ public static class DependencyInjection
             options.UseNpgsql(connectionString));
         services.AddScoped<IAnalysisTaskRepository, AnalysisTaskRepository>();
         services.AddScoped<IFileAssetRepository, FileAssetRepository>();
+        services.AddScoped<IUserRepository, UserRepository>();
+        services.AddSingleton<IPasswordHasher, AspNetCorePasswordHasher>();
 
         string? configuredAgentServiceBaseUrl = configuration[
             $"{AgentServiceOptions.SectionName}:BaseUrl"];

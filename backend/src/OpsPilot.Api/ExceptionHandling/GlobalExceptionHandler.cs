@@ -15,15 +15,18 @@ public sealed class GlobalExceptionHandler(
         CancellationToken cancellationToken)
     {
         bool isValidationException = exception is ApplicationValidationException;
+        bool isConflictException = exception is ApplicationConflictException;
         int statusCode = isValidationException
             ? StatusCodes.Status400BadRequest
-            : StatusCodes.Status500InternalServerError;
+            : isConflictException
+                ? StatusCodes.Status409Conflict
+                : StatusCodes.Status500InternalServerError;
 
-        if (isValidationException)
+        if (isValidationException || isConflictException)
         {
             logger.LogWarning(
                 exception,
-                "Request validation failed for {RequestMethod} {RequestPath}",
+                "Request failed with a business error for {RequestMethod} {RequestPath}",
                 httpContext.Request.Method,
                 httpContext.Request.Path);
         }
@@ -46,7 +49,9 @@ public sealed class GlobalExceptionHandler(
                 Status = statusCode,
                 Title = isValidationException
                     ? "The request is invalid."
-                    : "An unexpected error occurred."
+                    : isConflictException
+                        ? "The request conflicts with existing data."
+                        : "An unexpected error occurred."
             }
         });
 
