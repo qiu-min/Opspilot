@@ -16,13 +16,14 @@ public sealed class GlobalExceptionHandler(
     {
         bool isValidationException = exception is ApplicationValidationException;
         bool isConflictException = exception is ApplicationConflictException;
+        bool isSafeBusinessException = isValidationException || isConflictException;
         int statusCode = isValidationException
             ? StatusCodes.Status400BadRequest
             : isConflictException
                 ? StatusCodes.Status409Conflict
                 : StatusCodes.Status500InternalServerError;
 
-        if (isValidationException || isConflictException)
+        if (isSafeBusinessException)
         {
             logger.LogWarning(
                 exception,
@@ -51,7 +52,8 @@ public sealed class GlobalExceptionHandler(
                     ? "The request is invalid."
                     : isConflictException
                         ? "The request conflicts with existing data."
-                        : "An unexpected error occurred."
+                        : "An unexpected error occurred.",
+                Detail = isSafeBusinessException ? exception.Message : null
             }
         });
 

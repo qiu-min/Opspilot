@@ -28,7 +28,6 @@ public static class DependencyInjection
 
         services.AddDbContext<OpsPilotDbContext>(options =>
             options.UseNpgsql(connectionString));
-        services.AddScoped<IAnalysisTaskRepository, AnalysisTaskRepository>();
         services.AddScoped<IFileAssetRepository, FileAssetRepository>();
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddSingleton<IPasswordHasher, AspNetCorePasswordHasher>();

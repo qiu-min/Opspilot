@@ -1,3 +1,4 @@
+using System.Net.Mail;
 using OpsPilot.Application.Abstractions.Persistence;
 using OpsPilot.Application.Abstractions.Security;
 using OpsPilot.Application.Exceptions;
@@ -64,7 +65,36 @@ public sealed class RegisterUserHandler(
                 $"Email cannot exceed {User.MaxEmailLength} characters.");
         }
 
+        if (!IsValidEmailFormat(normalizedEmail))
+        {
+            throw new ApplicationValidationException("Email format is invalid.");
+        }
+
         return normalizedEmail;
+    }
+
+    private static bool IsValidEmailFormat(string email)
+    {
+        int atSignIndex = email.IndexOf('@');
+        if (atSignIndex <= 0 ||
+            atSignIndex == email.Length - 1 ||
+            atSignIndex != email.LastIndexOf('@'))
+        {
+            return false;
+        }
+
+        try
+        {
+            MailAddress parsedEmail = new(email);
+            return string.Equals(
+                parsedEmail.Address,
+                email,
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
     }
 
     private static string ValidatePassword(string? password)

@@ -2,15 +2,3 @@
 
 GET {{OpsPilot.Api_HostAddress}}/health
 Accept: application/json
-
-###
-
-POST {{OpsPilot.Api_HostAddress}}/api/analysis-tasks
-Content-Type: application/json
-
-{
-  "fileId": "11111111-1111-1111-1111-111111111111",
-  "prompt": "Analyze this Excel file"
-}
-
-###

@@ -76,6 +76,28 @@ public sealed class RegisterUserHandlerTests
         Assert.False(repository.WasSaved);
     }
 
+    [Theory]
+    [InlineData("abc")]
+    [InlineData("hello")]
+    [InlineData("123456")]
+    [InlineData("@example.com")]
+    [InlineData("user@")]
+    public async Task HandleAsync_WithInvalidEmailFormatThrowsValidationWithoutPersisting(
+        string email)
+    {
+        var repository = new FakeUserRepository();
+        var hasher = new FakePasswordHasher("hashed-password");
+        var handler = CreateHandler(repository, hasher);
+
+        await Assert.ThrowsAsync<ApplicationValidationException>(() => handler.HandleAsync(
+            new RegisterUserCommand(email, "password123"),
+            CancellationToken.None));
+
+        Assert.Null(repository.AddedUser);
+        Assert.False(repository.WasSaved);
+        Assert.Null(hasher.PasswordPassedToHash);
+    }
+
     [Fact]
     public async Task HandleAsync_PropagatesCancellationTokenToRepository()
     {

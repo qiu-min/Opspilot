@@ -16,7 +16,7 @@ Backend 主要负责：
 * 业务用例与状态管理
 * PostgreSQL 数据持久化
 * 文件上传、存储与文件资产管理
-* AnalysisTask / AgentRun 等业务记录
+* User / FileAsset 等业务记录
 * 身份认证与权限控制
 * 与 Agent Service 的跨服务协作
 * 后续需要的缓存、任务调度和实时通信能力
@@ -116,11 +116,8 @@ backend/AGENTS.md
 * `ProblemDetails` 统一异常响应
 * Application / Infrastructure DI 注册
 * EF Core + PostgreSQL
-* AnalysisTask 持久化
-* AgentRun 持久化
-* FileAsset 持久化
+* User / FileAsset 持久化
 * EF Core Migration
-* 创建 AnalysisTask 的 Vertical Slice
 * 上传 `.xlsx` 文件的 Vertical Slice
 * 通过 Agent Service 执行普通 Conversation Turn
 
@@ -143,13 +140,19 @@ PostgreSQL
 ```text
 Client
   ↓
+POST /api/auth/register
+  ↓
+User
+  ↓
 POST /api/files
   ↓
 FileAsset
   ↓
-POST /api/analysis-tasks
+POST /api/conversations/turns
   ↓
-AnalysisTask
+Conversation
+  ↓
+Agent Service
 ```
 
 普通 Conversation Turn 的最小调用链为：
@@ -213,7 +216,7 @@ FileId
 * 内部存储文件名
 * Infrastructure 实现细节
 
-`FileId` 可以继续用于 AnalysisTask、Agent Run 或跨服务文件访问。
+`FileId` 可以继续用于 Conversation 或跨服务文件访问。
 
 ### File Boundary
 
@@ -239,64 +242,6 @@ ExcelJS
 ```
 
 Excel 内容处理由 Agent Service 的 Tool Gateway 提供。
-
----
-
-## AnalysisTask
-
-当前接口：
-
-```http
-POST /api/analysis-tasks
-Content-Type: application/json
-```
-
-AnalysisTask 表达一次用户发起的分析业务任务。
-
-典型流程：
-
-```text
-FileAsset
-   ↓
-AnalysisTask
-   ↓
-AgentRun
-   ↓
-Agent Service
-```
-
-当前创建 AnalysisTask 时会建立任务记录。
-
-AgentRun 创建、Agent Service 调度和完整任务状态流转将在后续业务链路中继续完善。
-
----
-
-## AgentRun
-
-AgentRun 表达 Backend 业务层看到的一次 Agent 执行记录。
-
-它用于连接：
-
-```text
-AnalysisTask
-     ↓
-AgentRun
-     ↓
-Agent Service Execution
-```
-
-Backend 保存业务需要的 Agent Run 状态和关联关系。
-
-Agent 内部的：
-
-* Agent Loop
-* Turn
-* Context
-* Model Message
-* Tool Execution
-* Agent State
-
-属于 Agent Service 内部运行机制，不复制到 Backend 领域模型中。
 
 ---
 
@@ -335,9 +280,7 @@ User Request
      ↓
 Backend
      ↓
-AnalysisTask
-     ↓
-AgentRun
+Conversation
      ↓
 Agent Service
      ↓
@@ -346,7 +289,7 @@ Agent Execution
 
 Agent Service 执行期间需要使用具体工具能力时，由 Agent Service 自己的 Tool Gateway 负责。
 
-当前 Backend 仅代理非流式 Conversation Turn；SSE 代理及更完整的 AgentRun 状态流转仍待实现。
+当前 Backend 仅代理非流式 Conversation Turn；SSE 代理仍待后续实现。
 
 ---
 
@@ -366,8 +309,6 @@ PostgreSQL
 
 ```text
 User
-AnalysisTask
-AgentRun
 FileAsset
 ```
 
