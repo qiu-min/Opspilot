@@ -89,6 +89,7 @@ public sealed class FilesTestFactory : WebApplicationFactory<Program>
         builder.UseEnvironment("Testing");
         builder.UseSetting("ConnectionStrings:Postgres", _postgresDatabase.ConnectionString);
         builder.UseSetting("AgentService:BaseUrl", "http://127.0.0.1:3000");
+        builder.UseSetting("Jwt:SigningKey", TestJwtConfiguration.SigningKey);
         builder.UseSetting("FileStorage:RootPath", StorageRootPath);
         builder.ConfigureLogging(logging =>
         {

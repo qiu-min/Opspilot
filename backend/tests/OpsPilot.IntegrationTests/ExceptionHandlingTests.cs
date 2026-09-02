@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using OpsPilot.Application.Abstractions.Persistence;
 using OpsPilot.Domain.Users;
+using OpsPilot.IntegrationTests.Infrastructure;
 
 namespace OpsPilot.IntegrationTests;
 
@@ -42,8 +43,9 @@ public sealed class UnknownExceptionTestFactory : WebApplicationFactory<Program>
         builder.UseEnvironment("Testing");
         builder.UseSetting(
             "ConnectionStrings:Postgres",
-            "Host=localhost;Port=5432;Database=opspilot_test;Username=opspilot;Password=opspilot_dev_password");
+            "Host=localhost;Port=5432;Database=unused;Username=unused;Password=unused");
         builder.UseSetting("AgentService:BaseUrl", "http://127.0.0.1:3000");
+        builder.UseSetting("Jwt:SigningKey", TestJwtConfiguration.SigningKey);
         builder.ConfigureLogging(logging =>
         {
             logging.ClearProviders();

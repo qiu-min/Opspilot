@@ -4,9 +4,11 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using OpsPilot.Application.Abstractions.AgentService;
 using OpsPilot.Application.Abstractions.Persistence;
 using OpsPilot.Domain.Files;
+using OpsPilot.IntegrationTests.Infrastructure;
 
 namespace OpsPilot.IntegrationTests;
 
@@ -135,6 +137,17 @@ public sealed class ConversationTestFactory : WebApplicationFactory<Program>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        builder.UseEnvironment("Testing");
+        builder.UseSetting(
+            "ConnectionStrings:Postgres",
+            "Host=localhost;Port=5432;Database=unused;Username=unused;Password=unused");
+        builder.UseSetting("AgentService:BaseUrl", "http://127.0.0.1:3000");
+        builder.UseSetting("Jwt:SigningKey", TestJwtConfiguration.SigningKey);
+        builder.ConfigureLogging(logging =>
+        {
+            logging.ClearProviders();
+            logging.AddConsole();
+        });
         builder.ConfigureServices(services =>
         {
             services.RemoveAll<IFileAssetRepository>();

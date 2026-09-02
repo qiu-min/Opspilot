@@ -19,6 +19,12 @@ public static class DependencyInjection
         this IServiceCollection services,
         IConfiguration configuration)
     {
+        JwtOptions jwtOptions = ReadJwtOptions(configuration);
+        jwtOptions.Validate();
+
+        services.AddSingleton(jwtOptions);
+        services.AddSingleton<IAccessTokenProvider, JwtAccessTokenProvider>();
+
         var connectionString = configuration.GetConnectionString("Postgres");
         if (string.IsNullOrWhiteSpace(connectionString))
         {
@@ -71,5 +77,22 @@ public static class DependencyInjection
         services.AddSingleton<IFileStorage, LocalFileStorage>();
 
         return services;
+    }
+
+    private static JwtOptions ReadJwtOptions(IConfiguration configuration)
+    {
+        string sectionName = JwtOptions.SectionName;
+        string lifetimeValue = configuration[$"{sectionName}:AccessTokenLifetimeMinutes"]
+            ?? string.Empty;
+
+        return new JwtOptions
+        {
+            Issuer = configuration[$"{sectionName}:Issuer"] ?? string.Empty,
+            Audience = configuration[$"{sectionName}:Audience"] ?? string.Empty,
+            SigningKey = configuration[$"{sectionName}:SigningKey"] ?? string.Empty,
+            AccessTokenLifetimeMinutes = int.TryParse(lifetimeValue, out int lifetime)
+                ? lifetime
+                : 0,
+        };
     }
 }

@@ -15,13 +15,18 @@ public sealed class GlobalExceptionHandler(
         CancellationToken cancellationToken)
     {
         bool isValidationException = exception is ApplicationValidationException;
+        bool isUnauthorizedException = exception is ApplicationUnauthorizedException;
         bool isConflictException = exception is ApplicationConflictException;
-        bool isSafeBusinessException = isValidationException || isConflictException;
-        int statusCode = isValidationException
-            ? StatusCodes.Status400BadRequest
-            : isConflictException
-                ? StatusCodes.Status409Conflict
-                : StatusCodes.Status500InternalServerError;
+        bool isSafeBusinessException =
+            isValidationException || isUnauthorizedException || isConflictException;
+        int statusCode =
+            isValidationException
+                ? StatusCodes.Status400BadRequest
+                : isUnauthorizedException
+                    ? StatusCodes.Status401Unauthorized
+                    : isConflictException
+                        ? StatusCodes.Status409Conflict
+                        : StatusCodes.Status500InternalServerError;
 
         if (isSafeBusinessException)
         {
@@ -48,11 +53,14 @@ public sealed class GlobalExceptionHandler(
             ProblemDetails = new ProblemDetails
             {
                 Status = statusCode,
-                Title = isValidationException
-                    ? "The request is invalid."
-                    : isConflictException
-                        ? "The request conflicts with existing data."
-                        : "An unexpected error occurred.",
+                Title =
+                    isValidationException
+                        ? "The request is invalid."
+                        : isUnauthorizedException
+                            ? "Authentication failed."
+                            : isConflictException
+                                ? "The request conflicts with existing data."
+                                : "An unexpected error occurred.",
                 Detail = isSafeBusinessException ? exception.Message : null
             }
         });
