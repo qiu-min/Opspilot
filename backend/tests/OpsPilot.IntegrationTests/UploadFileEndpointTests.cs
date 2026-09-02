@@ -6,7 +6,10 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using OpsPilot.Infrastructure.Persistence;
+using OpsPilot.IntegrationTests.Infrastructure;
 
 namespace OpsPilot.IntegrationTests;
 
@@ -70,6 +73,8 @@ public sealed class UploadFileEndpointTests : IClassFixture<FilesTestFactory>
 
 public sealed class FilesTestFactory : WebApplicationFactory<Program>
 {
+    private readonly PostgresTestDatabase _postgresDatabase = new();
+
     public FilesTestFactory()
     {
         StorageRootPath = Path.Combine(
@@ -81,16 +86,54 @@ public sealed class FilesTestFactory : WebApplicationFactory<Program>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        builder.UseEnvironment("Testing");
+        builder.UseSetting("ConnectionStrings:Postgres", _postgresDatabase.ConnectionString);
+        builder.UseSetting("AgentService:BaseUrl", "http://127.0.0.1:3000");
         builder.UseSetting("FileStorage:RootPath", StorageRootPath);
+        builder.ConfigureLogging(logging =>
+        {
+            logging.ClearProviders();
+            logging.AddConsole();
+        });
+    }
+
+    protected override IHost CreateHost(IHostBuilder builder)
+    {
+        _postgresDatabase.Initialize();
+        IHost host = base.CreateHost(builder);
+
+        using IServiceScope scope = host.Services.CreateScope();
+        OpsPilotDbContext dbContext = scope.ServiceProvider
+            .GetRequiredService<OpsPilotDbContext>();
+        _postgresDatabase.Migrate(dbContext);
+
+        return host;
     }
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing && Directory.Exists(StorageRootPath))
+        try
         {
-            Directory.Delete(StorageRootPath, recursive: true);
+            base.Dispose(disposing);
         }
+        finally
+        {
+            if (disposing)
+            {
+                _postgresDatabase.Dispose();
 
-        base.Dispose(disposing);
+                try
+                {
+                    if (Directory.Exists(StorageRootPath))
+                    {
+                        Directory.Delete(StorageRootPath, recursive: true);
+                    }
+                }
+                catch (Exception exception)
+                {
+                    Console.Error.WriteLine($"Unable to remove temporary file-test storage '{StorageRootPath}': {exception.Message}");
+                }
+            }
+        }
     }
 }
