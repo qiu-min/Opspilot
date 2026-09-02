@@ -1,3 +1,4 @@
+using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -122,6 +123,9 @@ public sealed class JwtBearerIntegrationTests : IClassFixture<RegisterTestFactor
         using HttpResponseMessage response = await httpClient.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        JsonElement body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(login.UserId.ToString(), body.GetProperty("userId").GetString());
+        Assert.Equal(login.Email, body.GetProperty("email").GetString());
     }
 
     [Fact]
@@ -201,5 +205,12 @@ public sealed class JwtBearerIntegrationTests : IClassFixture<RegisterTestFactor
 public sealed class TestProtectedController : ControllerBase
 {
     [HttpGet]
-    public IActionResult Get() => Ok();
+    public IActionResult Get()
+    {
+        return Ok(new
+        {
+            userId = User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value,
+            email = User.FindFirst(JwtRegisteredClaimNames.Email)?.Value,
+        });
+    }
 }

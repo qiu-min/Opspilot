@@ -19,6 +19,8 @@ builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        options.MapInboundClaims = false;
+
         string issuer = builder.Configuration[$"{JwtOptions.SectionName}:Issuer"] ?? string.Empty;
         string audience = builder.Configuration[$"{JwtOptions.SectionName}:Audience"] ?? string.Empty;
         string signingKey = builder.Configuration[$"{JwtOptions.SectionName}:SigningKey"] ?? string.Empty;
