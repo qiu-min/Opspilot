@@ -113,12 +113,14 @@ backend/AGENTS.md
 * ASP.NET Core API 基础启动
 * `GET /health`
 * `POST /api/auth/register`
+* `POST /api/auth/login` with JWT Bearer authentication
 * `ProblemDetails` 统一异常响应
 * Application / Infrastructure DI 注册
 * EF Core + PostgreSQL
 * User / FileAsset 持久化
 * EF Core Migration
 * 上传 `.xlsx` 文件的 Vertical Slice
+* 通过 `FileAsset.UserId` 隔离用户文件归属
 * 通过 Agent Service 执行普通 Conversation Turn
 
 用户注册的最小调用链为：
@@ -146,7 +148,7 @@ User
   ↓
 POST /api/files
   ↓
-FileAsset
+JwtBearer → ICurrentUser → FileAsset.UserId
   ↓
 POST /api/conversations/turns
   ↓
@@ -197,6 +199,8 @@ Upload
   ↓
 Validate
   ↓
+ICurrentUser.UserId
+  ↓
 File Storage
   ↓
 FileAsset
@@ -217,6 +221,9 @@ FileId
 * Infrastructure 实现细节
 
 `FileId` 可以继续用于 Conversation 或跨服务文件访问。
+
+文件上传和带 `fileId` 的 Conversation 请求都要求 JWT Bearer 认证，并且只允许
+当前用户访问自己拥有的 `FileAsset`。不存在或不属于当前用户的文件统一返回 404。
 
 ### File Boundary
 
@@ -313,6 +320,9 @@ FileAsset
 ```
 
 数据库模型变化通过 EF Core Migration 管理。
+
+`AddFileAssetOwnership` 为 `file_assets` 增加必填 `user_id`。已有旧文件没有可推断的
+用户归属，迁移会明确终止；开发环境应重建数据库，或在迁移前显式完成数据回填。
 
 开发环境更新数据库：
 

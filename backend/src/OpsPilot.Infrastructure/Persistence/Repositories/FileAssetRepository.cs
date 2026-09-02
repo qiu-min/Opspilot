@@ -17,6 +17,18 @@ public sealed class FileAssetRepository(OpsPilotDbContext dbContext) : IFileAsse
                 cancellationToken);
     }
 
+    public Task<FileAsset?> GetByIdAndUserIdAsync(
+        Guid fileId,
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        return dbContext.FileAssets
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                fileAsset => fileAsset.Id == fileId && fileAsset.UserId == userId,
+                cancellationToken);
+    }
+
     public async Task AddAsync(
         FileAsset fileAsset,
         CancellationToken cancellationToken)

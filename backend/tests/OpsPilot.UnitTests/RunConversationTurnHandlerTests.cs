@@ -1,5 +1,6 @@
 using OpsPilot.Application.Abstractions.AgentService;
 using OpsPilot.Application.Abstractions.Persistence;
+using OpsPilot.Application.Abstractions.Security;
 using OpsPilot.Application.Conversations.RunTurn;
 using OpsPilot.Application.Exceptions;
 using OpsPilot.Domain.Files;
@@ -8,6 +9,9 @@ namespace OpsPilot.UnitTests;
 
 public sealed class RunConversationTurnHandlerTests
 {
+    private static readonly Guid CurrentUserId =
+        Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
+
     [Fact]
     public async Task HandleAsync_WithFileIdLoadsAssetAndForwardsStorageResource()
     {
@@ -15,7 +19,8 @@ public sealed class RunConversationTurnHandlerTests
         FileAsset fileAsset = CreateFileAsset();
         var repository = new FakeFileAssetRepository(fileAsset);
         var getFileAssetHandler = new OpsPilot.Application.Files.GetById.GetFileAssetHandler(
-            repository);
+            repository,
+            new FakeCurrentUser(CurrentUserId));
         var agentClient = new FakeAgentConversationClient();
         var handler = new RunConversationTurnHandler(getFileAssetHandler, agentClient);
         using var cancellationSource = new CancellationTokenSource();
@@ -36,6 +41,7 @@ public sealed class RunConversationTurnHandlerTests
                 new AgentExcelResource(fileAsset.Id, fileAsset.StoragePath)),
             agentClient.Request);
         Assert.Equal(cancellationSource.Token, repository.RequestedCancellationToken);
+        Assert.Equal(CurrentUserId, repository.RequestedUserId);
         Assert.Equal(cancellationSource.Token, agentClient.RequestedCancellationToken);
     }
 
@@ -45,7 +51,9 @@ public sealed class RunConversationTurnHandlerTests
         var repository = new FakeFileAssetRepository(null);
         var agentClient = new FakeAgentConversationClient();
         var handler = new RunConversationTurnHandler(
-            new OpsPilot.Application.Files.GetById.GetFileAssetHandler(repository),
+            new OpsPilot.Application.Files.GetById.GetFileAssetHandler(
+                repository,
+                new FakeCurrentUser(CurrentUserId)),
             agentClient);
 
         RunConversationTurnResult? result = await handler.HandleAsync(
@@ -63,14 +71,15 @@ public sealed class RunConversationTurnHandlerTests
         var repository = new FakeFileAssetRepository(null);
         var agentClient = new FakeAgentConversationClient();
         var handler = new RunConversationTurnHandler(
-            new OpsPilot.Application.Files.GetById.GetFileAssetHandler(repository),
+            new OpsPilot.Application.Files.GetById.GetFileAssetHandler(
+                repository,
+                new FakeCurrentUser(CurrentUserId)),
             agentClient);
 
-        RunConversationTurnResult? result = await handler.HandleAsync(
+        await Assert.ThrowsAsync<ApplicationNotFoundException>(() => handler.HandleAsync(
             new RunConversationTurnCommand(null, Guid.NewGuid(), "Inspect the workbook."),
-            CancellationToken.None);
+            CancellationToken.None));
 
-        Assert.Null(result);
         Assert.Equal(0, agentClient.CallCount);
     }
 
@@ -80,7 +89,8 @@ public sealed class RunConversationTurnHandlerTests
         var agentClient = new FakeAgentConversationClient();
         var handler = new RunConversationTurnHandler(
             new OpsPilot.Application.Files.GetById.GetFileAssetHandler(
-                new FakeFileAssetRepository(null)),
+                new FakeFileAssetRepository(null),
+                new FakeCurrentUser(CurrentUserId)),
             agentClient);
 
         await Assert.ThrowsAsync<ApplicationValidationException>(() =>
@@ -94,6 +104,7 @@ public sealed class RunConversationTurnHandlerTests
     private static FileAsset CreateFileAsset()
     {
         return FileAsset.Create(
+            CurrentUserId,
             "report.xlsx",
             "stored-report.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -133,6 +144,8 @@ public sealed class RunConversationTurnHandlerTests
 
         public CancellationToken RequestedCancellationToken { get; private set; }
 
+        public Guid RequestedUserId { get; private set; }
+
         public Task<FileAsset?> GetByIdAsync(
             Guid fileId,
             CancellationToken cancellationToken)
@@ -140,6 +153,19 @@ public sealed class RunConversationTurnHandlerTests
             CallCount++;
             RequestedCancellationToken = cancellationToken;
             return Task.FromResult(fileAsset);
+        }
+
+        public Task<FileAsset?> GetByIdAndUserIdAsync(
+            Guid fileId,
+            Guid userId,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            RequestedUserId = userId;
+            RequestedCancellationToken = cancellationToken;
+            return Task.FromResult(fileAsset?.Id == fileId && fileAsset.UserId == userId
+                ? fileAsset
+                : null);
         }
 
         public Task AddAsync(FileAsset fileAsset, CancellationToken cancellationToken)
@@ -151,5 +177,10 @@ public sealed class RunConversationTurnHandlerTests
         {
             throw new NotSupportedException();
         }
+    }
+
+    private sealed class FakeCurrentUser(Guid userId) : ICurrentUser
+    {
+        public Guid UserId { get; } = userId;
     }
 }

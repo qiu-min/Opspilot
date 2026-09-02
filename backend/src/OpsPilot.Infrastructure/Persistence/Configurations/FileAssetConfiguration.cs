@@ -16,6 +16,10 @@ public sealed class FileAssetConfiguration : IEntityTypeConfiguration<FileAsset>
             .HasColumnName("id")
             .ValueGeneratedNever();
 
+        builder.Property(fileAsset => fileAsset.UserId)
+            .HasColumnName("user_id")
+            .IsRequired();
+
         builder.Property(fileAsset => fileAsset.OriginalFileName)
             .HasColumnName("original_file_name")
             .HasMaxLength(FileAsset.MaxOriginalFileNameLength)
@@ -46,6 +50,7 @@ public sealed class FileAssetConfiguration : IEntityTypeConfiguration<FileAsset>
 
         builder.HasIndex(fileAsset => fileAsset.StoredFileName)
             .IsUnique();
+        builder.HasIndex(fileAsset => fileAsset.UserId);
         builder.HasIndex(fileAsset => fileAsset.CreatedAtUtc);
     }
 }

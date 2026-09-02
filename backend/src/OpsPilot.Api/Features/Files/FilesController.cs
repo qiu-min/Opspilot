@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OpsPilot.Api.Features.Files.Contracts.Requests;
 using OpsPilot.Api.Features.Files.Contracts.Responses;
@@ -9,6 +10,7 @@ namespace OpsPilot.Api.Features.Files;
 
 [ApiController]
 [Route("api/files")]
+[Authorize]
 public sealed class FilesController(UploadFileHandler uploadFileHandler) : ControllerBase
 {
     [HttpPost]

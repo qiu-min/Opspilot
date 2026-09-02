@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using OpsPilot.Application.Abstractions.Files;
 using OpsPilot.Application.Abstractions.Persistence;
+using OpsPilot.Application.Abstractions.Security;
 using OpsPilot.Application.Exceptions;
 using OpsPilot.Application.Files.Upload;
 using OpsPilot.Domain.Files;
@@ -9,6 +10,9 @@ namespace OpsPilot.UnitTests;
 
 public sealed class UploadFileHandlerTests
 {
+    private static readonly Guid CurrentUserId =
+        Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+
     private static readonly DateTimeOffset CurrentTime =
         new(2026, 8, 25, 12, 0, 0, TimeSpan.Zero);
 
@@ -30,6 +34,7 @@ public sealed class UploadFileHandlerTests
 
         Assert.True(storage.WasSaved);
         Assert.NotNull(repository.AddedFileAsset);
+        Assert.Equal(CurrentUserId, repository.AddedFileAsset!.UserId);
         Assert.Equal("report.XLSX", repository.AddedFileAsset!.OriginalFileName);
         Assert.Equal(content.Length, result.SizeBytes);
         Assert.Equal(CurrentTime.UtcDateTime, result.CreatedAtUtc);
@@ -115,6 +120,7 @@ public sealed class UploadFileHandlerTests
         return new UploadFileHandler(
             storage,
             repository,
+            new FakeCurrentUser(CurrentUserId),
             new FixedTimeProvider(CurrentTime),
             NullLogger<UploadFileHandler>.Instance);
     }
@@ -159,6 +165,14 @@ public sealed class UploadFileHandlerTests
             return Task.FromResult<FileAsset?>(null);
         }
 
+        public Task<FileAsset?> GetByIdAndUserIdAsync(
+            Guid fileId,
+            Guid userId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult<FileAsset?>(null);
+        }
+
         public Task AddAsync(FileAsset fileAsset, CancellationToken cancellationToken)
         {
             AddedFileAsset = fileAsset;
@@ -174,5 +188,10 @@ public sealed class UploadFileHandlerTests
 
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class FakeCurrentUser(Guid userId) : ICurrentUser
+    {
+        public Guid UserId { get; } = userId;
     }
 }

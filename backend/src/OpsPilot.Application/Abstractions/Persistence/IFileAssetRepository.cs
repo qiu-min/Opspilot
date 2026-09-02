@@ -8,6 +8,11 @@ public interface IFileAssetRepository
         Guid fileId,
         CancellationToken cancellationToken);
 
+    Task<FileAsset?> GetByIdAndUserIdAsync(
+        Guid fileId,
+        Guid userId,
+        CancellationToken cancellationToken);
+
     Task AddAsync(FileAsset fileAsset, CancellationToken cancellationToken);
 
     Task SaveChangesAsync(CancellationToken cancellationToken);

@@ -17,8 +17,12 @@ public sealed class GlobalExceptionHandler(
         bool isValidationException = exception is ApplicationValidationException;
         bool isUnauthorizedException = exception is ApplicationUnauthorizedException;
         bool isConflictException = exception is ApplicationConflictException;
+        bool isNotFoundException = exception is ApplicationNotFoundException;
         bool isSafeBusinessException =
-            isValidationException || isUnauthorizedException || isConflictException;
+            isValidationException
+            || isUnauthorizedException
+            || isConflictException
+            || isNotFoundException;
         int statusCode =
             isValidationException
                 ? StatusCodes.Status400BadRequest
@@ -26,7 +30,9 @@ public sealed class GlobalExceptionHandler(
                     ? StatusCodes.Status401Unauthorized
                     : isConflictException
                         ? StatusCodes.Status409Conflict
-                        : StatusCodes.Status500InternalServerError;
+                        : isNotFoundException
+                            ? StatusCodes.Status404NotFound
+                            : StatusCodes.Status500InternalServerError;
 
         if (isSafeBusinessException)
         {
@@ -60,7 +66,9 @@ public sealed class GlobalExceptionHandler(
                             ? "Authentication failed."
                             : isConflictException
                                 ? "The request conflicts with existing data."
-                                : "An unexpected error occurred.",
+                                : isNotFoundException
+                                    ? "The requested resource was not found."
+                                    : "An unexpected error occurred.",
                 Detail = isSafeBusinessException ? exception.Message : null
             }
         });

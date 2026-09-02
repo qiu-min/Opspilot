@@ -1,8 +1,10 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using OpsPilot.Api.Authentication;
 using OpsPilot.Api.ExceptionHandling;
 using OpsPilot.Application;
+using OpsPilot.Application.Abstractions.Security;
 using OpsPilot.Infrastructure;
 using OpsPilot.Infrastructure.Security;
 
@@ -15,6 +17,8 @@ builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddHealthChecks();
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>

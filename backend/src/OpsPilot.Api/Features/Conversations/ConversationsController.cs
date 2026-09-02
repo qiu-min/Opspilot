@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OpsPilot.Api.Features.Conversations.Contracts.Requests;
 using OpsPilot.Api.Features.Conversations.Contracts.Responses;
@@ -8,6 +9,7 @@ namespace OpsPilot.Api.Features.Conversations;
 
 [ApiController]
 [Route("api/conversations")]
+[Authorize]
 public sealed class ConversationsController(
     RunConversationTurnHandler runConversationTurnHandler) : ControllerBase
 {

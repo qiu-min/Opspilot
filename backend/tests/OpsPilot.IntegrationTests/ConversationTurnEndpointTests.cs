@@ -1,5 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Claims;
+using System.Text.Encodings.Web;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -7,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using OpsPilot.Application.Abstractions.AgentService;
 using OpsPilot.Application.Abstractions.Persistence;
+using OpsPilot.Application.Abstractions.Security;
 using OpsPilot.Domain.Files;
 using OpsPilot.IntegrationTests.Infrastructure;
 
@@ -26,7 +31,7 @@ public sealed class ConversationTurnEndpointTests : IClassFixture<ConversationTe
     [Fact]
     public async Task PostTurn_WithFileIdForwardsFileResourceAndReturnsAgentResult()
     {
-        FileAsset fileAsset = CreateFileAsset();
+        FileAsset fileAsset = CreateFileAsset(factory.CurrentUserId);
         factory.FileAsset = fileAsset;
         factory.FileAssetRepository.Reset();
         factory.AgentClient.Reset();
@@ -103,9 +108,10 @@ public sealed class ConversationTurnEndpointTests : IClassFixture<ConversationTe
         Assert.Equal(0, factory.AgentClient.CallCount);
     }
 
-    private static FileAsset CreateFileAsset()
+    private static FileAsset CreateFileAsset(Guid userId)
     {
         return FileAsset.Create(
+            userId,
             "report.xlsx",
             "stored-report.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -123,6 +129,9 @@ public sealed class ConversationTurnEndpointTests : IClassFixture<ConversationTe
 
 public sealed class ConversationTestFactory : WebApplicationFactory<Program>
 {
+    public static readonly Guid TestUserId =
+        Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd");
+
     public ConversationTestFactory()
     {
         FileAssetRepository = new TestFileAssetRepository(this);
@@ -134,6 +143,8 @@ public sealed class ConversationTestFactory : WebApplicationFactory<Program>
     public TestFileAssetRepository FileAssetRepository { get; }
 
     public TestAgentConversationClient AgentClient { get; }
+
+    public Guid CurrentUserId => TestUserId;
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -150,6 +161,23 @@ public sealed class ConversationTestFactory : WebApplicationFactory<Program>
         });
         builder.ConfigureServices(services =>
         {
+            services.AddAuthentication(options =>
+                {
+                    options.DefaultAuthenticateScheme = ConversationTestAuthenticationHandler.TestScheme;
+                    options.DefaultChallengeScheme = ConversationTestAuthenticationHandler.TestScheme;
+                })
+                .AddScheme<AuthenticationSchemeOptions, ConversationTestAuthenticationHandler>(
+                    ConversationTestAuthenticationHandler.TestScheme,
+                    _ => { });
+            services.AddAuthorization(options =>
+            {
+                options.DefaultPolicy = new AuthorizationPolicyBuilder(
+                        ConversationTestAuthenticationHandler.TestScheme)
+                    .RequireAuthenticatedUser()
+                    .Build();
+            });
+            services.RemoveAll<ICurrentUser>();
+            services.AddSingleton<ICurrentUser>(new TestCurrentUser(TestUserId));
             services.RemoveAll<IFileAssetRepository>();
             services.AddSingleton<IFileAssetRepository>(FileAssetRepository);
             services.RemoveAll<IAgentConversationClient>();
@@ -169,6 +197,19 @@ public sealed class TestFileAssetRepository(ConversationTestFactory factory) : I
         return Task.FromResult(factory.FileAsset?.Id == fileId ? factory.FileAsset : null);
     }
 
+    public Task<FileAsset?> GetByIdAndUserIdAsync(
+        Guid fileId,
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        CallCount++;
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(
+            factory.FileAsset?.Id == fileId && factory.FileAsset.UserId == userId
+                ? factory.FileAsset
+                : null);
+    }
+
     public Task AddAsync(FileAsset fileAsset, CancellationToken cancellationToken)
     {
         throw new NotSupportedException();
@@ -182,6 +223,30 @@ public sealed class TestFileAssetRepository(ConversationTestFactory factory) : I
     public void Reset()
     {
         CallCount = 0;
+    }
+}
+
+public sealed class TestCurrentUser(Guid userId) : ICurrentUser
+{
+    public Guid UserId { get; } = userId;
+}
+
+public sealed class ConversationTestAuthenticationHandler(
+    Microsoft.Extensions.Options.IOptionsMonitor<AuthenticationSchemeOptions> options,
+    ILoggerFactory logger,
+    UrlEncoder encoder)
+    : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+{
+    public const string TestScheme = "ConversationTest";
+
+    protected override Task<AuthenticateResult> HandleAuthenticateAsync()
+    {
+        var identity = new ClaimsIdentity(
+            [new Claim("sub", ConversationTestFactory.TestUserId.ToString())],
+            TestScheme);
+        var principal = new ClaimsPrincipal(identity);
+        var ticket = new AuthenticationTicket(principal, TestScheme);
+        return Task.FromResult(AuthenticateResult.Success(ticket));
     }
 }
 

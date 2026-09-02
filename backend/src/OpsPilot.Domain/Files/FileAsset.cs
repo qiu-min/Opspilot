@@ -17,6 +17,7 @@ public sealed class FileAsset
 
     private FileAsset(
         Guid id,
+        Guid userId,
         string originalFileName,
         string storedFileName,
         string contentType,
@@ -25,6 +26,7 @@ public sealed class FileAsset
         DateTime createdAtUtc)
     {
         Id = id;
+        UserId = userId;
         OriginalFileName = originalFileName;
         StoredFileName = storedFileName;
         ContentType = contentType;
@@ -34,6 +36,8 @@ public sealed class FileAsset
     }
 
     public Guid Id { get; private set; }
+
+    public Guid UserId { get; private set; }
 
     public string OriginalFileName { get; private set; }
 
@@ -48,6 +52,7 @@ public sealed class FileAsset
     public DateTime CreatedAtUtc { get; private set; }
 
     public static FileAsset Create(
+        Guid userId,
         string originalFileName,
         string storedFileName,
         string contentType,
@@ -55,6 +60,11 @@ public sealed class FileAsset
         string storagePath,
         DateTime createdAtUtc)
     {
+        if (userId == Guid.Empty)
+        {
+            throw new ArgumentException("UserId cannot be empty.", nameof(userId));
+        }
+
         string normalizedOriginalFileName = originalFileName?.Trim() ?? string.Empty;
         string normalizedStoredFileName = storedFileName?.Trim() ?? string.Empty;
         string normalizedContentType = contentType?.Trim() ?? string.Empty;
@@ -85,6 +95,7 @@ public sealed class FileAsset
 
         return new FileAsset(
             Guid.NewGuid(),
+            userId,
             normalizedOriginalFileName,
             normalizedStoredFileName,
             normalizedContentType,

@@ -8,7 +8,7 @@ public sealed class RunConversationTurnHandler(
     GetFileAssetHandler getFileAssetHandler,
     IAgentConversationClient agentConversationClient)
 {
-    public async Task<RunConversationTurnResult?> HandleAsync(
+    public async Task<RunConversationTurnResult> HandleAsync(
         RunConversationTurnCommand command,
         CancellationToken cancellationToken)
     {
@@ -20,14 +20,9 @@ public sealed class RunConversationTurnHandler(
         AgentExcelResource? excelResource = null;
         if (command.FileId is Guid fileId)
         {
-            GetFileAssetResult? fileAsset = await getFileAssetHandler.HandleAsync(
+            GetFileAssetResult fileAsset = await getFileAssetHandler.HandleAsync(
                 new GetFileAssetQuery(fileId),
                 cancellationToken);
-
-            if (fileAsset is null)
-            {
-                return null;
-            }
 
             excelResource = new AgentExcelResource(fileAsset.Id, fileAsset.StoragePath);
         }

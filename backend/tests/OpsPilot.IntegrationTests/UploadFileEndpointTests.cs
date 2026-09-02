@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using OpsPilot.Api.Features.Auth.Contracts.Responses;
 using OpsPilot.Infrastructure.Persistence;
 using OpsPilot.IntegrationTests.Infrastructure;
 
@@ -27,6 +28,7 @@ public sealed class UploadFileEndpointTests : IClassFixture<FilesTestFactory>
     [Fact]
     public async Task PostFile_WithXlsxMultipartContent_ReturnsCreatedAndStoresFile()
     {
+        LoginResponse login = await RegisterAndLoginAsync();
         byte[] fileBytes = [80, 75, 3, 4, 1, 2, 3];
         using var form = new MultipartFormDataContent();
         using var fileContent = new ByteArrayContent(fileBytes);
@@ -34,7 +36,13 @@ public sealed class UploadFileEndpointTests : IClassFixture<FilesTestFactory>
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
         form.Add(fileContent, "file", "monthly-report.XLSX");
 
-        using HttpResponseMessage response = await httpClient.PostAsync("/api/files", form);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/files")
+        {
+            Content = form
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", login.AccessToken);
+
+        using HttpResponseMessage response = await httpClient.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
@@ -53,6 +61,7 @@ public sealed class UploadFileEndpointTests : IClassFixture<FilesTestFactory>
             .SingleAsync(asset => asset.Id == fileAssetId);
 
         Assert.Equal("monthly-report.XLSX", fileAsset.OriginalFileName);
+        Assert.Equal(login.UserId, fileAsset.UserId);
         Assert.EndsWith(".XLSX", fileAsset.StoredFileName, StringComparison.Ordinal);
         Assert.Equal($"uploads/{fileAsset.StoredFileName}", fileAsset.StoragePath);
         Assert.Equal(fileBytes.LongLength, fileAsset.SizeBytes);
@@ -69,9 +78,42 @@ public sealed class UploadFileEndpointTests : IClassFixture<FilesTestFactory>
             Path.GetFullPath(storedFilePath));
         Assert.Equal(fileBytes, await File.ReadAllBytesAsync(storedFilePath));
     }
+
+    [Fact]
+    public async Task PostFile_WithoutAuthenticationReturnsUnauthorized()
+    {
+        byte[] fileBytes = [80, 75, 3, 4];
+        using var form = new MultipartFormDataContent();
+        using var fileContent = new ByteArrayContent(fileBytes);
+        fileContent.Headers.ContentType = new MediaTypeHeaderValue(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        form.Add(fileContent, "file", "anonymous.xlsx");
+
+        using HttpResponseMessage response = await httpClient.PostAsync("/api/files", form);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    private async Task<LoginResponse> RegisterAndLoginAsync()
+    {
+        string email = $"file-test-{Guid.NewGuid():N}@example.com";
+        const string password = "Password123!";
+
+        using HttpResponseMessage registerResponse = await httpClient.PostAsJsonAsync(
+            "/api/auth/register",
+            new { email, password });
+        Assert.Equal(HttpStatusCode.Created, registerResponse.StatusCode);
+
+        using HttpResponseMessage loginResponse = await httpClient.PostAsJsonAsync(
+            "/api/auth/login",
+            new { email, password });
+        Assert.Equal(HttpStatusCode.OK, loginResponse.StatusCode);
+
+        return (await loginResponse.Content.ReadFromJsonAsync<LoginResponse>())!;
+    }
 }
 
-public sealed class FilesTestFactory : WebApplicationFactory<Program>
+public class FilesTestFactory : WebApplicationFactory<Program>
 {
     private readonly PostgresTestDatabase _postgresDatabase = new();
 

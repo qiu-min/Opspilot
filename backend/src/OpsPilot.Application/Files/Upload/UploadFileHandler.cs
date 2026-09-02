@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using OpsPilot.Application.Abstractions.Files;
 using OpsPilot.Application.Abstractions.Persistence;
+using OpsPilot.Application.Abstractions.Security;
 using OpsPilot.Application.Exceptions;
 using OpsPilot.Domain.Files;
 
@@ -9,6 +10,7 @@ namespace OpsPilot.Application.Files.Upload;
 public sealed class UploadFileHandler(
     IFileStorage fileStorage,
     IFileAssetRepository fileAssetRepository,
+    ICurrentUser currentUser,
     TimeProvider timeProvider,
     ILogger<UploadFileHandler> logger)
 {
@@ -17,6 +19,7 @@ public sealed class UploadFileHandler(
         CancellationToken cancellationToken)
     {
         string safeFileName = Validate(command);
+        Guid userId = currentUser.UserId;
         DateTime createdAtUtc = timeProvider.GetUtcNow().UtcDateTime;
         StoredFile? storedFile = null;
 
@@ -31,6 +34,7 @@ public sealed class UploadFileHandler(
             try
             {
                 fileAsset = FileAsset.Create(
+                    userId,
                     safeFileName,
                     storedFile.StoredFileName,
                     command.ContentType ?? string.Empty,
