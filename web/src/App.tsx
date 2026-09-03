@@ -1,4 +1,4 @@
-import { ConversationPage } from "./components/conversation-page";
+import { ConversationPage } from "./features/conversation/conversation-page";
 import { useAuth } from "./features/auth/auth-provider";
 import { LoginPage } from "./features/auth/login-page";
 import { RegisterPage } from "./features/auth/register-page";

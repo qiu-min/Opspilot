@@ -1,19 +1,24 @@
-import type { Attachment, ConnectedTool, ContextFile, ConversationItem, RecentOutput, RunContextStatus } from "../types";
+import type { Attachment, ConnectedTool, ContextFile, ConversationItem, ConversationSummary, RecentOutput, RunContextStatus } from "../types";
 
 export const demoAgentName = "OpsPilot";
 
-export const demoConversation = {
-  title: "Workbook review",
-  subtitle: "Workspace / Conversations / Operations workbook",
-  dateLabel: "Today · 10:41 AM",
-  statusLabel: "Live",
-};
+export const demoConversationId = "conversation-workbook-review";
 
-export const demoWorkspace = {
-  userName: "J. Lin",
-  teamName: "Ops team",
-  environmentLabel: "Preview environment",
-};
+function getDemoUpdatedAt(daysAgo: number, hour: number, minute: number) {
+  const date = new Date();
+  date.setDate(date.getDate() - daysAgo);
+  date.setHours(hour, minute, 0, 0);
+  return date.toISOString();
+}
+
+export const demoConversationSummaries: ConversationSummary[] = [
+  { id: demoConversationId, title: "Workbook review", updatedAt: getDemoUpdatedAt(0, 10, 41) },
+  { id: "conversation-inventory-analysis", title: "Inventory analysis", updatedAt: getDemoUpdatedAt(0, 9, 18) },
+  { id: "conversation-sales-workbook", title: "Sales workbook", updatedAt: getDemoUpdatedAt(1, 16, 24) },
+  { id: "conversation-operations-report", title: "Operations report", updatedAt: getDemoUpdatedAt(4, 11, 6) },
+];
+
+export const demoEnvironmentLabel = "Preview environment";
 
 export const demoComposerAttachments: Attachment[] = [
   { id: "file-1", name: "workbook.xlsx", size: "4.8 MB", kind: "xlsx" },

@@ -15,6 +15,12 @@ export type ChatMessage = {
   attachments?: Attachment[];
 };
 
+export type ConversationSummary = {
+  id: string;
+  title: string;
+  updatedAt: string;
+};
+
 export type AgentExecutionStatus = "queued" | "running" | "complete" | "failed";
 
 export type AgentExecutionStep = {
