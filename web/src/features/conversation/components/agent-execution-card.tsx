@@ -1,9 +1,9 @@
 import { Check, ChevronDown, CircleDashed, Clock3, Terminal, XCircle, Zap } from "lucide-react";
-import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
-import { Progress } from "./ui/progress";
+import { Badge } from "../../../components/ui/badge";
+import { Button } from "../../../components/ui/button";
+import { Progress } from "../../../components/ui/progress";
 import type { AgentExecution, AgentExecutionStatus } from "../types";
-import { cn } from "../lib/utils";
+import { cn } from "../../../lib/utils";
 
 type AgentExecutionCardProps = {
   execution: AgentExecution;

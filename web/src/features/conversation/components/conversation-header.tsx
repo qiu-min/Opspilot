@@ -1,6 +1,6 @@
 import { Activity, ChevronDown, MoreHorizontal, PanelRight, Share2 } from "lucide-react";
-import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
+import { Badge } from "../../../components/ui/badge";
+import { Button } from "../../../components/ui/button";
 
 type ConversationHeaderProps = {
   title: string;

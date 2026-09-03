@@ -1,6 +1,6 @@
 import { FilePlus2, Mic, Paperclip, Send, X } from "lucide-react";
 import { useRef } from "react";
-import { Button } from "./ui/button";
+import { Button } from "../../../components/ui/button";
 import type { Attachment } from "../types";
 
 export type ComposerSubmitPayload = {

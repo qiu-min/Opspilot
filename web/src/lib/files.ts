@@ -1,6 +1,6 @@
-import type { AttachmentKind } from "../types";
+export type FileKind = "xlsx" | "pdf" | "csv" | "file";
 
-export function getFileKind(name: string): AttachmentKind {
+export function getFileKind(name: string): FileKind {
   const extension = name.split(".").pop()?.toLowerCase();
   if (extension === "xlsx" || extension === "xls") return "xlsx";
   if (extension === "pdf") return "pdf";

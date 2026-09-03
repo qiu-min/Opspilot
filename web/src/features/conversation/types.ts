@@ -1,4 +1,6 @@
-export type AttachmentKind = "xlsx" | "pdf" | "csv" | "file";
+import type { FileKind } from "../../lib/files";
+
+export type AttachmentKind = FileKind;
 
 export type Attachment = {
   id: string;

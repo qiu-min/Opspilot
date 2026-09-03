@@ -1,7 +1,7 @@
 import { Check, ChevronRight, Database, FileSpreadsheet, FileText, Gauge, Info, MoreHorizontal, Sparkles, X } from "lucide-react";
-import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
-import { cn } from "../lib/utils";
+import { Badge } from "../../../components/ui/badge";
+import { Button } from "../../../components/ui/button";
+import { cn } from "../../../lib/utils";
 import type { AgentExecutionStatus, ConnectedTool, ContextFile, RecentOutput, RunContextStatus } from "../types";
 
 type ContextPanelProps = {

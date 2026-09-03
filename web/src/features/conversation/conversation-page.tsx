@@ -1,13 +1,13 @@
 import { Menu, X } from "lucide-react";
 import { useState } from "react";
-import { demoAgentName, demoComposerAttachments, demoConnectedTools, demoContextFiles, demoContextStatus, demoConversationId, demoConversationSummaries, demoEnvironmentLabel, demoRecentOutputs, demoTimeline } from "../../demo/conversation";
+import { demoAgentName, demoComposerAttachments, demoConnectedTools, demoContextFiles, demoContextStatus, demoConversationId, demoConversationSummaries, demoEnvironmentLabel, demoRecentOutputs, demoTimeline } from "./demo";
 import { getFileKind, getFileSize } from "../../lib/files";
-import type { Attachment, ChatMessage, ConversationItem, ConversationSummary } from "../../types";
+import type { Attachment, ChatMessage, ConversationItem, ConversationSummary } from "./types";
 import { useAuth } from "../auth/auth-provider";
-import { Composer, type ComposerSubmitPayload } from "../../components/composer";
-import { ContextPanel } from "../../components/context-panel";
-import { ConversationHeader } from "../../components/conversation-header";
-import { ConversationThread } from "../../components/conversation-thread";
+import { Composer, type ComposerSubmitPayload } from "./components/composer";
+import { ContextPanel } from "./components/context-panel";
+import { ConversationHeader } from "./components/conversation-header";
+import { ConversationThread } from "./components/conversation-thread";
 import { ConversationSidebar } from "./conversation-sidebar";
 
 function createLocalConversationId() {

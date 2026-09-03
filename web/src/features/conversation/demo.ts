@@ -1,4 +1,4 @@
-import type { Attachment, ConnectedTool, ContextFile, ConversationItem, ConversationSummary, RecentOutput, RunContextStatus } from "../types";
+import type { Attachment, ConnectedTool, ContextFile, ConversationItem, ConversationSummary, RecentOutput, RunContextStatus } from "./types";
 
 export const demoAgentName = "OpsPilot";
 

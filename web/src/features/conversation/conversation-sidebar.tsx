@@ -1,6 +1,6 @@
 import { Plus, Sparkles, UserRound } from "lucide-react";
 import { Button } from "../../components/ui/button";
-import type { ConversationSummary } from "../../types";
+import type { ConversationSummary } from "./types";
 
 type ConversationGroupKey = "today" | "yesterday" | "previous-7-days";
 
