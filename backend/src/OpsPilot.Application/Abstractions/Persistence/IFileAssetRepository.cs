@@ -4,10 +4,6 @@ namespace OpsPilot.Application.Abstractions.Persistence;
 
 public interface IFileAssetRepository
 {
-    Task<FileAsset?> GetByIdAsync(
-        Guid fileId,
-        CancellationToken cancellationToken);
-
     Task<FileAsset?> GetByIdAndUserIdAsync(
         Guid fileId,
         Guid userId,

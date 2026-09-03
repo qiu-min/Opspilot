@@ -20,14 +20,9 @@ public sealed class ConversationsController(
         ConversationTurnRequest request,
         CancellationToken cancellationToken)
     {
-        RunConversationTurnResult? result = await runConversationTurnHandler.HandleAsync(
+        RunConversationTurnResult result = await runConversationTurnHandler.HandleAsync(
             new RunConversationTurnCommand(request.SessionId, request.FileId, request.Message),
             cancellationToken);
-
-        if (result is null)
-        {
-            return NotFound();
-        }
 
         return Ok(new ConversationTurnResponse(
             result.SessionId,

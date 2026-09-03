@@ -64,15 +64,6 @@ public sealed class GetFileAssetHandlerTests
 
         public Guid RequestedUserId { get; private set; }
 
-        public Task<FileAsset?> GetByIdAsync(
-            Guid fileId,
-            CancellationToken cancellationToken)
-        {
-            RequestedFileId = fileId;
-            RequestedCancellationToken = cancellationToken;
-            return Task.FromResult(fileAsset);
-        }
-
         public Task<FileAsset?> GetByIdAndUserIdAsync(
             Guid fileId,
             Guid userId,

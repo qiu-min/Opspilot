@@ -25,12 +25,11 @@ public sealed class RunConversationTurnHandlerTests
         var handler = new RunConversationTurnHandler(getFileAssetHandler, agentClient);
         using var cancellationSource = new CancellationTokenSource();
 
-        RunConversationTurnResult? result = await handler.HandleAsync(
+        RunConversationTurnResult result = await handler.HandleAsync(
             new RunConversationTurnCommand(sessionId, fileAsset.Id, "Inspect the workbook."),
             cancellationSource.Token);
 
-        Assert.NotNull(result);
-        Assert.Equal(agentClient.Result.SessionId, result!.SessionId);
+        Assert.Equal(agentClient.Result.SessionId, result.SessionId);
         Assert.Equal(agentClient.Result.LeafId, result.LeafId);
         Assert.Equal(agentClient.Result.Status, result.Status);
         Assert.Equal(agentClient.Result.Output, result.Output);
@@ -56,11 +55,10 @@ public sealed class RunConversationTurnHandlerTests
                 new FakeCurrentUser(CurrentUserId)),
             agentClient);
 
-        RunConversationTurnResult? result = await handler.HandleAsync(
+        RunConversationTurnResult result = await handler.HandleAsync(
             new RunConversationTurnCommand(null, null, "Hello."),
             CancellationToken.None);
 
-        Assert.NotNull(result);
         Assert.Equal(new AgentConversationTurnRequest(null, "Hello.", null), agentClient.Request);
         Assert.Equal(0, repository.CallCount);
     }
@@ -145,15 +143,6 @@ public sealed class RunConversationTurnHandlerTests
         public CancellationToken RequestedCancellationToken { get; private set; }
 
         public Guid RequestedUserId { get; private set; }
-
-        public Task<FileAsset?> GetByIdAsync(
-            Guid fileId,
-            CancellationToken cancellationToken)
-        {
-            CallCount++;
-            RequestedCancellationToken = cancellationToken;
-            return Task.FromResult(fileAsset);
-        }
 
         public Task<FileAsset?> GetByIdAndUserIdAsync(
             Guid fileId,

@@ -190,13 +190,6 @@ public sealed class TestFileAssetRepository(ConversationTestFactory factory) : I
 {
     public int CallCount { get; private set; }
 
-    public Task<FileAsset?> GetByIdAsync(Guid fileId, CancellationToken cancellationToken)
-    {
-        CallCount++;
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(factory.FileAsset?.Id == fileId ? factory.FileAsset : null);
-    }
-
     public Task<FileAsset?> GetByIdAndUserIdAsync(
         Guid fileId,
         Guid userId,
