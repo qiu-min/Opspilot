@@ -1,13 +1,14 @@
 # OpsPilot Web
 
-未来的 Web 前端占位目录。本次不初始化 Vue、Vite 或任何前端工程文件。
+OpsPilot 的 React Web 工作台，当前包含桌面优先的 Agent 对话页面原型。
 
 ## Technology
 
-- Vue 3
+- React
 - TypeScript
 - Vite
-- Pinia
+- Tailwind CSS
+- shadcn/ui 风格组件
 - HTTP API
 - SSE / SignalR
 
@@ -15,9 +16,8 @@
 
 - 用户登录
 - Excel 文件上传
-- 创建分析任务
+- 调用后端接口agent对话
 - 展示 Agent 执行进度和分析结果
-- 下载处理后的 Excel
 
 ## Integration boundary
 

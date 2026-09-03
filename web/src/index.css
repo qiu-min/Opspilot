@@ -1,0 +1,78 @@
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  font-family: "Plus Jakarta Sans", "Noto Sans SC", ui-sans-serif, system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --canvas: 210 25% 97%;
+  --surface: 0 0% 100%;
+  --ink: 217 37% 15%;
+  --muted-ink: 214 16% 45%;
+  --line: 215 24% 88%;
+  --brand: 218 74% 54%;
+  --brand-strong: 219 65% 40%;
+  --accent: 16 75% 57%;
+  --teal: 174 66% 32%;
+  --navy: 215 48% 15%;
+  --navy-muted: 213 27% 72%;
+  --danger: 0 65% 48%;
+}
+
+* {
+  border-color: hsl(var(--line));
+}
+
+html {
+  min-width: 320px;
+  background: hsl(var(--canvas));
+}
+
+body {
+  min-width: 320px;
+  min-height: 100dvh;
+  margin: 0;
+  background: hsl(var(--canvas));
+}
+
+button,
+textarea,
+input {
+  font: inherit;
+  touch-action: manipulation;
+}
+
+::selection {
+  background: hsl(var(--brand) / 0.18);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: #cbd5e1;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
