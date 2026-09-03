@@ -75,6 +75,10 @@ async function createApiError(response: Response): Promise<ApiError> {
 async function parseJsonResponse<TResponse>(response: Response): Promise<TResponse> {
   const bodyText = await response.text();
 
+  if (!bodyText.trim()) {
+    return undefined as TResponse;
+  }
+
   try {
     return JSON.parse(bodyText) as TResponse;
   } catch (error: unknown) {
