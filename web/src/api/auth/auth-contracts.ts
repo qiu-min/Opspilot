@@ -9,3 +9,14 @@ export type LoginResponse = {
   accessToken: string;
   expiresAtUtc: string;
 };
+
+export type RegisterRequest = {
+  email: string;
+  password: string;
+};
+
+export type RegisterResponse = {
+  id: string;
+  email: string;
+  createdAtUtc: string;
+};
