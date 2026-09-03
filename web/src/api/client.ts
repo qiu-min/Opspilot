@@ -39,7 +39,9 @@ export async function apiRequest<TResponse>(
     signal: options.signal,
   };
 
-  if (options.body !== undefined) {
+  if (options.body instanceof FormData) {
+    requestInit.body = options.body;
+  } else if (options.body !== undefined) {
     headers.set("Content-Type", "application/json");
     requestInit.body = JSON.stringify(options.body);
   }
