@@ -1,33 +1,33 @@
 import { FilePlus2, Mic, Paperclip, Send, X } from "lucide-react";
 import { useRef } from "react";
 import { Button } from "./ui/button";
-import type { Attachment, AttachmentKind } from "../types";
+import type { Attachment } from "../types";
+
+export type ComposerSubmitPayload = {
+  body: string;
+  attachments: Attachment[];
+};
 
 type ComposerProps = {
   draft: string;
   attachments: Attachment[];
   isProcessing: boolean;
+  agentName: string;
   onDraftChange: (value: string) => void;
-  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+  onSubmit: (payload: ComposerSubmitPayload) => void;
   onAttach: (files: FileList) => void;
   onRemoveAttachment: (id: string) => void;
 };
 
-function getFileKind(name: string): AttachmentKind {
-  const extension = name.split(".").pop()?.toLowerCase();
-  if (extension === "xlsx" || extension === "xls") return "xlsx";
-  if (extension === "pdf") return "pdf";
-  if (extension === "csv") return "csv";
-  return "file";
-}
-
-function getFileSize(size: number) {
-  if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-export function Composer({ draft, attachments, isProcessing, onDraftChange, onSubmit, onAttach, onRemoveAttachment }: ComposerProps) {
+export function Composer({ draft, attachments, isProcessing, agentName, onDraftChange, onSubmit, onAttach, onRemoveAttachment }: ComposerProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const body = draft.trim();
+    if (!body || isProcessing) return;
+    onSubmit({ body, attachments: [...attachments] });
+  }
 
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     if (event.target.files && event.target.files.length > 0) {
@@ -50,13 +50,13 @@ export function Composer({ draft, attachments, isProcessing, onDraftChange, onSu
           ))}
         </div>
       )}
-      <form onSubmit={onSubmit} className="rounded-xl border border-line bg-[#fbfcfd] p-2 shadow-hairline transition focus-within:border-brand/50 focus-within:ring-2 focus-within:ring-brand/10">
-        <label htmlFor="message-composer" className="sr-only">Message Atlas</label>
+      <form onSubmit={handleSubmit} className="rounded-xl border border-line bg-[#fbfcfd] p-2 shadow-hairline transition focus-within:border-brand/50 focus-within:ring-2 focus-within:ring-brand/10">
+        <label htmlFor="message-composer" className="sr-only">Message {agentName}</label>
         <textarea
           id="message-composer"
           value={draft}
           onChange={(event) => onDraftChange(event.target.value)}
-          placeholder="Ask Atlas to analyze your workspace..."
+          placeholder={`Ask ${agentName} to analyze your workspace...`}
           rows={2}
           className="min-h-[52px] w-full resize-none border-0 bg-transparent px-2 py-1.5 text-[14px] leading-6 text-ink outline-none placeholder:text-slate-400"
           onKeyDown={(event) => {
@@ -75,15 +75,13 @@ export function Composer({ draft, attachments, isProcessing, onDraftChange, onSu
           </div>
           <div className="flex items-center gap-1.5">
             <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="Use voice input" title="Voice input"><Mic size={16} aria-hidden="true" /></Button>
-            <Button type="submit" variant="primary" size="icon" className="h-9 w-9 rounded-lg" disabled={isProcessing || draft.trim().length === 0} aria-label={isProcessing ? "Atlas is working" : "Send message"} title={isProcessing ? "Atlas is working" : "Send message"}>
+            <Button type="submit" variant="primary" size="icon" className="h-9 w-9 rounded-lg" disabled={isProcessing || draft.trim().length === 0} aria-label={isProcessing ? `${agentName} is working` : "Send message"} title={isProcessing ? `${agentName} is working` : "Send message"}>
               <Send size={15} className={isProcessing ? "opacity-60" : ""} aria-hidden="true" />
             </Button>
           </div>
         </div>
       </form>
-      <p className="mt-2 text-center text-[10px] text-mutedInk">Atlas can make mistakes. Review generated analysis before sharing.</p>
+      <p className="mt-2 text-center text-[10px] text-mutedInk">{agentName} can make mistakes. Review generated analysis before sharing.</p>
     </div>
   );
 }
-
-export { getFileKind, getFileSize };
