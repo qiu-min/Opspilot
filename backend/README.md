@@ -16,7 +16,7 @@ Backend 主要负责：
 * 业务用例与状态管理
 * PostgreSQL 数据持久化
 * 文件上传、存储与文件资产管理
-* User / FileAsset 等业务记录
+* User / FileAsset / Conversation 等业务记录
 * 身份认证与权限控制
 * 与 Agent Service 的跨服务协作
 * 后续需要的缓存、任务调度和实时通信能力
@@ -117,10 +117,12 @@ backend/AGENTS.md
 * `ProblemDetails` 统一异常响应
 * Application / Infrastructure DI 注册
 * EF Core + PostgreSQL
-* User / FileAsset 持久化
+* User / FileAsset / Conversation 持久化
 * EF Core Migration
 * 上传 `.xlsx` 文件的 Vertical Slice
 * 通过 `FileAsset.UserId` 隔离用户文件归属
+* `POST /api/conversations` 创建当前用户的 Conversation
+* `GET /api/conversations` 列出当前用户的 Conversation
 * 通过 Agent Service 执行普通 Conversation Turn
 
 用户注册的最小调用链为：
@@ -150,11 +152,11 @@ POST /api/files
   ↓
 JwtBearer → ICurrentUser → FileAsset.UserId
   ↓
-POST /api/conversations/turns
+POST /api/conversations
   ↓
 Conversation
   ↓
-Agent Service
+GET /api/conversations
 ```
 
 普通 Conversation Turn 的最小调用链为：
