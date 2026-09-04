@@ -5,7 +5,6 @@ export interface ResolvedOpenAiCompletionsCompat {
   readonly maxTokensField: 'max_tokens' | 'max_completion_tokens';
   readonly supportsTemperature: boolean;
   readonly supportsToolChoice: boolean;
-  readonly supportsStrictMode: boolean;
   readonly requiresReasoningContentOnAssistantMessages: boolean;
   readonly requiresAssistantContentForToolCalls: boolean;
 }
@@ -19,7 +18,6 @@ export function resolveOpenAiCompletionsCompat(
     maxTokensField: compat?.maxTokensField ?? 'max_tokens',
     supportsTemperature: compat?.supportsTemperature ?? true,
     supportsToolChoice: compat?.supportsToolChoice ?? true,
-    supportsStrictMode: compat?.supportsStrictMode ?? false,
     requiresReasoningContentOnAssistantMessages:
       compat?.requiresReasoningContentOnAssistantMessages ?? false,
     requiresAssistantContentForToolCalls:

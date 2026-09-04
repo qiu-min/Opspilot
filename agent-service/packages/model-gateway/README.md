@@ -256,6 +256,8 @@ K3 通过同一个 `openai-completions` Adapter 和模型级 `compat` 配置接�
 
 OpenAI-compatible Provider 共享 `openai-completions` Adapter。同一 wire protocol 下的差异通过 `Model.compat` 表达，例如最大 token 字段、`temperature` 支持、`tool_choice` 支持、assistant tool-call replay 和 `reasoning_content` replay。Adapter 不根据 Provider 名称或 URL 猜测行为。
 
+当前默认配置支持 `moonshot/kimi-k3` 和 `deepseek/deepseek-v4-flash`。DeepSeek V4 Flash 复用 `openai-completions` Adapter，通过 `reasoningProtocol` 与 `Model.compat` 描述协议差异；凭据分别使用 `MOONSHOT_API_KEY` 和 `DEEPSEEK_API_KEY`。
+
 ## Provider 配置
 
 默认配置为仓库根目录的 `config/model-providers.json`。Provider 使用 `apiKeyEnv` 引用环境变量，不能提交明文密钥：

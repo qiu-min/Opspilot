@@ -29,6 +29,37 @@
           }
         }
       ]
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "apiKeyEnv": "DEEPSEEK_API_KEY",
+      "baseUrl": "https://api.deepseek.com",
+      "timeoutMs": 30000,
+      "models": [
+        {
+          "id": "deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash",
+          "api": "openai-completions",
+          "supportsTools": true,
+          "contextWindow": 1000000,
+          "reasoning": true,
+          "reasoningProtocol": "deepseek-thinking",
+          "thinkingLevelMap": {
+            "off": "disabled",
+            "minimal": "low",
+            "low": "low",
+            "medium": "high",
+            "high": "max"
+          },
+          "compat": {
+            "maxTokensField": "max_tokens",
+            "supportsToolChoice": false,
+            "requiresReasoningContentOnAssistantMessages": true,
+            "requiresAssistantContentForToolCalls": true
+          }
+        }
+      ]
     }
   ]
 }

@@ -41,8 +41,8 @@ export function toOpenAiCompletionsTools(tools: readonly Tool[]): readonly OpenA
 export function toOpenAiCompletionsMessages(
   context: Context,
   model: Model,
-  compat: ResolvedOpenAiCompletionsCompat = resolveOpenAiCompletionsCompat(model),
 ): readonly unknown[] {
+  const compat = resolveOpenAiCompletionsCompat(model);
   const messages = context.systemPrompt
     ? [
         {

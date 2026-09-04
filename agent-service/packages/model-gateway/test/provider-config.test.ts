@@ -6,6 +6,7 @@ import {
   loadModelGatewayConfig,
   modelGatewayConfigSchema,
   resolveProviders,
+  type ModelGatewayConfig,
 } from '../src/index.js';
 
 const config = {
@@ -25,8 +26,38 @@ const config = {
         },
       ],
     },
+    {
+      id: 'deepseek',
+      name: 'DeepSeek',
+      apiKey: 'deepseek-key',
+      baseUrl: 'https://api.deepseek.com',
+      models: [
+        {
+          id: 'deepseek-v4-flash',
+          name: 'DeepSeek V4 Flash',
+          api: 'openai-completions',
+          supportsTools: true,
+          contextWindow: 1_000_000,
+          reasoning: true,
+          reasoningProtocol: 'deepseek-thinking',
+          thinkingLevelMap: {
+            off: 'disabled',
+            minimal: 'low',
+            low: 'low',
+            medium: 'high',
+            high: 'max',
+          },
+          compat: {
+            maxTokensField: 'max_tokens',
+            supportsToolChoice: false,
+            requiresReasoningContentOnAssistantMessages: true,
+            requiresAssistantContentForToolCalls: true,
+          },
+        },
+      ],
+    },
   ],
-};
+} satisfies ModelGatewayConfig;
 describe('provider configuration', () => {
   it('validates configuration and resolves inherited model URLs', () => {
     expect(modelGatewayConfigSchema.safeParse(config).success).toBe(true);
@@ -36,6 +67,37 @@ describe('provider configuration', () => {
       { provider: 'moonshot', baseUrl: 'https://moonshot.example/v1' },
       { baseUrl: 'https://other.example/v1' },
     ]);
+  });
+  it('validates and resolves the DeepSeek V4 Flash configuration', () => {
+    expect(modelGatewayConfigSchema.safeParse(config).success).toBe(true);
+    const deepSeek = resolveProviders(config)[1];
+    const model = deepSeek?.models[0];
+
+    expect(deepSeek).toMatchObject({
+      id: 'deepseek',
+      name: 'DeepSeek',
+      baseUrl: 'https://api.deepseek.com',
+    });
+    expect(model).toMatchObject({
+      provider: 'deepseek',
+      id: 'deepseek-v4-flash',
+      api: 'openai-completions',
+      contextWindow: 1_000_000,
+      reasoningProtocol: 'deepseek-thinking',
+      thinkingLevelMap: {
+        off: 'disabled',
+        minimal: 'low',
+        low: 'low',
+        medium: 'high',
+        high: 'max',
+      },
+      compat: {
+        maxTokensField: 'max_tokens',
+        supportsToolChoice: false,
+        requiresReasoningContentOnAssistantMessages: true,
+        requiresAssistantContentForToolCalls: true,
+      },
+    });
   });
   it('rejects duplicate IDs and invalid configuration files', async () => {
     expect(

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   OpenAiCompletionsModelAdapter,
-  resolveOpenAiCompletionsCompat,
   toOpenAiCompletionsMessages,
   type OpenAiCompletionsClient,
   type OpenAiCompletionsRequest,
@@ -35,6 +34,27 @@ const k3Model = {
     maxTokensField: 'max_completion_tokens' as const,
     supportsTemperature: false,
     requiresReasoningContentOnAssistantMessages: true,
+  },
+};
+const deepSeekV4FlashModel = {
+  ...model,
+  provider: 'deepseek',
+  id: 'deepseek-v4-flash',
+  name: 'DeepSeek V4 Flash',
+  baseUrl: 'https://api.deepseek.com',
+  reasoningProtocol: 'deepseek-thinking' as const,
+  thinkingLevelMap: {
+    off: 'disabled',
+    minimal: 'low',
+    low: 'low',
+    medium: 'high',
+    high: 'max',
+  },
+  compat: {
+    maxTokensField: 'max_tokens' as const,
+    supportsToolChoice: false,
+    requiresReasoningContentOnAssistantMessages: true,
+    requiresAssistantContentForToolCalls: true,
   },
 };
 const context = {
@@ -87,17 +107,6 @@ function failingAdapter(error: unknown): OpenAiCompletionsModelAdapter {
 }
 
 describe('OpenAI Chat Completions adapter', () => {
-  it('resolves OpenAI Completions compat defaults from the model only', () => {
-    expect(resolveOpenAiCompletionsCompat(model)).toEqual({
-      maxTokensField: 'max_tokens',
-      supportsTemperature: true,
-      supportsToolChoice: true,
-      supportsStrictMode: false,
-      requiresReasoningContentOnAssistantMessages: false,
-      requiresAssistantContentForToolCalls: false,
-    });
-  });
-
   it('normalizes text, tool calls, usage, and sends the configured endpoint', async () => {
     const requests: OpenAiCompletionsRequest[] = [];
     let endpoint = '';
@@ -330,6 +339,121 @@ describe('OpenAI Chat Completions adapter', () => {
     expect(sent[1]).toMatchObject({
       thinking: { type: 'enabled' },
       reasoning_effort: 'medium',
+    });
+  });
+
+  it('sends DeepSeek thinking enabled and its compatible tool payload', async () => {
+    let sent: OpenAiCompletionsRequest | undefined;
+    const adapter = new OpenAiCompletionsModelAdapter(() => ({
+      chat: {
+        completions: {
+          async create(input) {
+            sent = input;
+            return stream({ choices: [{ delta: { content: 'done' }, finish_reason: 'stop' }] });
+          },
+        },
+      },
+    }));
+
+    await adapter
+      .stream(
+        deepSeekV4FlashModel,
+        context,
+        resolveThinking(deepSeekV4FlashModel, { reasoning: 'high' }),
+        provider,
+      )
+      .result();
+
+    expect(sent).toMatchObject({
+      thinking: { type: 'enabled' },
+      reasoning_effort: 'max',
+    });
+    expect(sent?.tools).toBeDefined();
+    expect(sent).not.toHaveProperty('tool_choice');
+    expect(sent?.tools?.[0]).not.toHaveProperty('function.strict');
+  });
+
+  it('disables DeepSeek thinking when reasoning is off and maps max tokens', async () => {
+    let sent: OpenAiCompletionsRequest | undefined;
+    const adapter = new OpenAiCompletionsModelAdapter(() => ({
+      chat: {
+        completions: {
+          async create(input) {
+            sent = input;
+            return stream({ choices: [{ delta: { content: 'done' }, finish_reason: 'stop' }] });
+          },
+        },
+      },
+    }));
+
+    await adapter.stream(deepSeekV4FlashModel, context, { maxTokens: 12345 }, provider).result();
+
+    expect(sent).toMatchObject({ thinking: { type: 'disabled' }, max_tokens: 12345 });
+    expect(sent).not.toHaveProperty('reasoning_effort');
+    expect(sent).not.toHaveProperty('max_completion_tokens');
+  });
+
+  it('does not add explicit disabled thinking to Kimi without resolved reasoning', async () => {
+    let sent: OpenAiCompletionsRequest | undefined;
+    const adapter = new OpenAiCompletionsModelAdapter(() => ({
+      chat: {
+        completions: {
+          async create(input) {
+            sent = input;
+            return stream({ choices: [{ delta: { content: 'done' }, finish_reason: 'stop' }] });
+          },
+        },
+      },
+    }));
+
+    await adapter.stream(k3Model, { messages: context.messages }, {}, provider).result();
+
+    expect(sent).not.toHaveProperty('thinking');
+    expect(sent).not.toHaveProperty('reasoning_effort');
+    expect(sent).not.toHaveProperty('reasoning');
+  });
+
+  it('replays DeepSeek reasoning and assistant content for tool calls', () => {
+    const [assistant] = toOpenAiCompletionsMessages(
+      {
+        messages: [
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'thinking',
+                thinking: 'private reasoning',
+                thinkingSignature: 'reasoning_content',
+                source: {
+                  api: deepSeekV4FlashModel.api,
+                  provider: deepSeekV4FlashModel.provider,
+                  model: deepSeekV4FlashModel.id,
+                },
+              },
+            ],
+            toolCalls: [{ callId: 'call_1', name: 'query_logs', arguments: {} }],
+            finishReason: 'tool_calls',
+            api: deepSeekV4FlashModel.api,
+            provider: deepSeekV4FlashModel.provider,
+            model: deepSeekV4FlashModel.id,
+          },
+          {
+            role: 'tool',
+            callId: 'call_1',
+            name: 'query_logs',
+            content: [{ type: 'text', text: 'ok' }],
+            isError: false,
+          },
+        ],
+      },
+      deepSeekV4FlashModel,
+    );
+
+    expect(assistant).toMatchObject({
+      role: 'assistant',
+      content: '',
+      reasoning_content: 'private reasoning',
+      tool_calls: [{ id: 'call_1' }],
     });
   });
 

@@ -35,7 +35,7 @@ export interface OpenAiCompletionsRequest {
   readonly max_completion_tokens?: number;
   readonly reasoning_effort?: string;
   readonly reasoning?: { readonly effort: string };
-  readonly thinking?: { readonly type: 'enabled' };
+  readonly thinking?: { readonly type: 'enabled' | 'disabled' };
 }
 
 export interface OpenAiCompletionsClient {
@@ -127,9 +127,19 @@ function finish(value: string): Exclude<FinishReason, 'pending' | 'error' | 'abo
   }
 }
 
-function reasoningRequest(options: ResolvedOptions): Partial<OpenAiCompletionsRequest> {
+function reasoningRequest(
+  model: Model,
+  options: ResolvedOptions,
+): Partial<OpenAiCompletionsRequest> {
   const reasoning = options.resolvedReasoning;
-  if (!reasoning) return {};
+  if (!reasoning) {
+    if (
+      model.reasoningProtocol === 'deepseek-thinking' &&
+      typeof model.thinkingLevelMap?.off === 'string'
+    )
+      return { thinking: { type: 'disabled' } };
+    return {};
+  }
   switch (reasoning.protocol) {
     case 'openai-reasoning-effort':
       return { reasoning_effort: reasoning.providerValue };
@@ -251,7 +261,7 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
         const stream = await client.chat.completions.create(
           {
             model: model.id,
-            messages: toOpenAiCompletionsMessages(context, model, compat),
+            messages: toOpenAiCompletionsMessages(context, model),
             ...(context.tools && context.tools.length > 0
               ? {
                   tools: toOpenAiCompletionsTools(context.tools),
@@ -280,7 +290,7 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
               : compat.maxTokensField === 'max_completion_tokens'
                 ? { max_completion_tokens: options.maxTokens }
                 : { max_tokens: options.maxTokens }),
-            ...reasoningRequest(options),
+            ...reasoningRequest(model, options),
           },
           { signal: options.signal },
         );
