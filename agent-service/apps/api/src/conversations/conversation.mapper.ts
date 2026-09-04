@@ -19,6 +19,7 @@ export function mapConversationTurnRequest(
   request: ConversationTurnRequest,
   excelResource?: ExcelResource,
 ): RunConversationTurnInput {
+  
   return {
     ...(request.sessionId === undefined ? {} : { sessionId: request.sessionId }),
     message: {
@@ -33,7 +34,6 @@ export function mapConversationTurnResult(
   result: RunConversationTurnResult,
 ): ConversationTurnResponse {
   const assistantMessage = getFinalAssistantMessage(result);
-
   return {
     sessionId: result.sessionId,
     leafId: result.leafId,
