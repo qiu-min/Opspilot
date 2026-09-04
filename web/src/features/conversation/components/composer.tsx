@@ -12,6 +12,7 @@ type ComposerProps = {
   draft: string;
   attachments: Attachment[];
   isProcessing: boolean;
+  disabled?: boolean;
   agentName: string;
   onDraftChange: (value: string) => void;
   onSubmit: (payload: ComposerSubmitPayload) => void;
@@ -19,13 +20,13 @@ type ComposerProps = {
   onRemoveAttachment: (id: string) => void;
 };
 
-export function Composer({ draft, attachments, isProcessing, agentName, onDraftChange, onSubmit, onAttach, onRemoveAttachment }: ComposerProps) {
+export function Composer({ draft, attachments, isProcessing, disabled = false, agentName, onDraftChange, onSubmit, onAttach, onRemoveAttachment }: ComposerProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const body = draft.trim();
-    if (!body || isProcessing) return;
+    if (!body || disabled || isProcessing) return;
     onSubmit({ body, attachments: [...attachments] });
   }
 
@@ -56,7 +57,7 @@ export function Composer({ draft, attachments, isProcessing, agentName, onDraftC
           id="message-composer"
           value={draft}
           onChange={(event) => onDraftChange(event.target.value)}
-          placeholder={`Ask ${agentName} to analyze your workspace...`}
+          placeholder={disabled ? "Create a conversation to get started..." : `Ask ${agentName} to analyze your workspace...`}
           rows={2}
           className="min-h-[52px] w-full resize-none border-0 bg-transparent px-2 py-1.5 text-[14px] leading-6 text-ink outline-none placeholder:text-slate-400"
           onKeyDown={(event) => {
@@ -69,13 +70,13 @@ export function Composer({ draft, attachments, isProcessing, agentName, onDraftC
         <div className="flex items-center justify-between gap-2 px-1 pt-1">
           <div className="flex items-center gap-0.5">
             <input ref={inputRef} type="file" className="sr-only" multiple accept=".xlsx,.xls,.csv,.pdf" onChange={handleFileChange} />
-            <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => inputRef.current?.click()} aria-label="Attach files" title="Attach files"><Paperclip size={16} aria-hidden="true" /></Button>
+            <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => inputRef.current?.click()} disabled={disabled} aria-label="Attach files" title="Attach files"><Paperclip size={16} aria-hidden="true" /></Button>
             <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="Add analysis instruction" title="Add instruction"><FilePlus2 size={16} aria-hidden="true" /></Button>
             <span className="ml-2 hidden text-[10px] text-mutedInk sm:inline">Shift + Enter for new line</span>
           </div>
           <div className="flex items-center gap-1.5">
             <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="Use voice input" title="Voice input"><Mic size={16} aria-hidden="true" /></Button>
-            <Button type="submit" variant="primary" size="icon" className="h-9 w-9 rounded-lg" disabled={isProcessing || draft.trim().length === 0} aria-label={isProcessing ? `${agentName} is working` : "Send message"} title={isProcessing ? `${agentName} is working` : "Send message"}>
+            <Button type="submit" variant="primary" size="icon" className="h-9 w-9 rounded-lg" disabled={disabled || isProcessing || draft.trim().length === 0} aria-label={disabled ? "Create a conversation first" : isProcessing ? `${agentName} is working` : "Send message"} title={disabled ? "Create a conversation first" : isProcessing ? `${agentName} is working` : "Send message"}>
               <Send size={15} className={isProcessing ? "opacity-60" : ""} aria-hidden="true" />
             </Button>
           </div>

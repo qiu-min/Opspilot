@@ -11,6 +11,9 @@ type ConversationSidebarProps = {
   onNewConversation: () => void;
   accountEmail: string;
   environmentLabel: string;
+  isLoading?: boolean;
+  isNewConversationDisabled?: boolean;
+  errorMessage?: string | null;
   mobile?: boolean;
 };
 
@@ -49,7 +52,7 @@ function getGroupedConversations(conversations: ConversationSummary[]) {
     .filter((group) => group.conversations.length > 0);
 }
 
-export function ConversationSidebar({ conversations, activeConversationId, onConversationSelect, onNewConversation, accountEmail, environmentLabel, mobile = false }: ConversationSidebarProps) {
+export function ConversationSidebar({ conversations, activeConversationId, onConversationSelect, onNewConversation, accountEmail, environmentLabel, isLoading = false, isNewConversationDisabled = false, errorMessage = null, mobile = false }: ConversationSidebarProps) {
   const groupedConversations = getGroupedConversations(conversations);
 
   return (
@@ -62,39 +65,47 @@ export function ConversationSidebar({ conversations, activeConversationId, onCon
       </div>
 
       <div className="px-4 pt-5">
-        <Button variant="primary" size="md" className="w-full justify-start bg-accent/95" onClick={onNewConversation} aria-label="Start a new conversation">
+        <Button variant="primary" size="md" className="w-full justify-start bg-accent/95" onClick={onNewConversation} disabled={isNewConversationDisabled} aria-label="Start a new conversation">
           <Plus size={17} strokeWidth={2.4} aria-hidden="true" />
-          New conversation
+          {isNewConversationDisabled && !isLoading ? "Creating..." : "New conversation"}
         </Button>
       </div>
 
       <nav className="min-h-0 flex-1 overflow-y-auto px-3 py-6" aria-label="Conversation history">
         <p className="px-3 pb-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-navy-muted/75">Conversation history</p>
-        <div className="space-y-5">
-          {groupedConversations.map((group) => (
-            <section key={group.key} aria-labelledby={`conversation-group-${group.key}`}>
-              <h2 id={`conversation-group-${group.key}`} className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-navy-muted/75">{group.label}</h2>
-              <div className="space-y-0.5">
-                {group.conversations.map((conversation) => {
-                  const isActive = conversation.id === activeConversationId;
+        {isLoading ? (
+          <p className="px-3 text-xs text-navy-muted" role="status">Loading conversations...</p>
+        ) : errorMessage ? (
+          <p className="px-3 text-xs leading-5 text-[#f6b8ad]" role="alert">{errorMessage}</p>
+        ) : groupedConversations.length === 0 ? (
+          <p className="px-3 text-xs leading-5 text-navy-muted">No conversations yet. Start a new one to begin.</p>
+        ) : (
+          <div className="space-y-5">
+            {groupedConversations.map((group) => (
+              <section key={group.key} aria-labelledby={`conversation-group-${group.key}`}>
+                <h2 id={`conversation-group-${group.key}`} className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-navy-muted/75">{group.label}</h2>
+                <div className="space-y-0.5">
+                  {group.conversations.map((conversation) => {
+                    const isActive = conversation.id === activeConversationId;
 
-                  return (
-                    <button
-                      key={conversation.id}
-                      type="button"
-                      onClick={() => onConversationSelect(conversation.id)}
-                      className={`flex min-h-10 w-full cursor-pointer items-center rounded-lg px-3 text-left text-xs transition duration-200 ease-snappy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${isActive ? "bg-white/[0.12] font-semibold text-white" : "text-navy-muted hover:bg-white/[0.08] hover:text-white"}`}
-                      aria-current={isActive ? "page" : undefined}
-                      title={conversation.title}
-                    >
-                      <span className="min-w-0 truncate">{conversation.title}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-          ))}
-        </div>
+                    return (
+                      <button
+                        key={conversation.id}
+                        type="button"
+                        onClick={() => onConversationSelect(conversation.id)}
+                        className={`flex min-h-10 w-full cursor-pointer items-center rounded-lg px-3 text-left text-xs transition duration-200 ease-snappy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${isActive ? "bg-white/[0.12] font-semibold text-white" : "text-navy-muted hover:bg-white/[0.08] hover:text-white"}`}
+                        aria-current={isActive ? "page" : undefined}
+                        title={conversation.title}
+                      >
+                        <span className="min-w-0 truncate">{conversation.title}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
       </nav>
 
       <div className="shrink-0 border-t border-white/10 p-4">
