@@ -61,8 +61,9 @@ export function ConversationPage() {
   const [statusMessage, setStatusMessage] = useState("Ready");
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
-  const [conversationError, setConversationError] = useState<string | null>(null);
+  const [pageError, setPageError] = useState<string | null>(null);
   const [conversationListError, setConversationListError] = useState<string | null>(null);
+  const [errorsByConversationId, setErrorsByConversationId] = useState<Record<string, string | undefined>>({});
   const [processingConversationIds, setProcessingConversationIds] = useState<Set<string>>(new Set());
 
   const listAbortControllerRef = useRef<AbortController | null>(null);
@@ -95,21 +96,21 @@ export function ConversationPage() {
         return nextConversations[0]?.id ?? null;
       });
       setConversationListError(null);
-      setConversationError(null);
+      setPageError(null);
       return true;
     } catch (error: unknown) {
       if (controller.signal.aborted) return false;
 
       const message = getConversationErrorMessage(error, failureMessage);
       setConversationListError(message);
-      setConversationError(message);
+      setPageError(message);
       return false;
     } finally {
       if (listAbortControllerRef.current === controller) {
         listAbortControllerRef.current = null;
-      }
-      if (showLoading && !controller.signal.aborted) {
-        setIsLoadingConversations(false);
+        if (showLoading) {
+          setIsLoadingConversations(false);
+        }
       }
     }
   }, [accessToken]);
@@ -142,13 +143,16 @@ export function ConversationPage() {
   const timeline = activeConversation ? timelinesByConversationId[activeConversation.id] ?? [] : [];
   const attachments = activeConversation ? attachmentsByConversationId[activeConversation.id] ?? [] : [];
   const isProcessing = activeConversationId !== null && processingConversationIds.has(activeConversationId);
+  const conversationError = activeConversationId ? errorsByConversationId[activeConversationId] : undefined;
+  const visibleError = conversationError ?? pageError;
   const accountEmail = session?.email ?? "Signed-in account";
   const statusLabel = isProcessing ? "Processing" : "Ready";
 
   async function handleNewConversation() {
     if (!accessToken || isCreatingConversation) return;
 
-    setConversationError(null);
+    listAbortControllerRef.current?.abort();
+    setPageError(null);
     setIsCreatingConversation(true);
     createAbortControllerRef.current?.abort();
     const controller = new AbortController();
@@ -171,7 +175,7 @@ export function ConversationPage() {
     } catch (error: unknown) {
       if (controller.signal.aborted) return;
 
-      setConversationError(getConversationErrorMessage(error, "Unable to create a conversation. Try again."));
+      setPageError(getConversationErrorMessage(error, "Unable to create a conversation. Try again."));
       setStatusMessage("Conversation creation failed");
     } finally {
       if (createAbortControllerRef.current === controller) {
@@ -191,7 +195,6 @@ export function ConversationPage() {
     setDraft("");
     setIsExecutionExpanded(false);
     setIsMobileNavVisible(false);
-    setConversationError(null);
     setStatusMessage(`Selected ${conversation.title}`);
   }
 
@@ -202,7 +205,7 @@ export function ConversationPage() {
 
     if (submittedAttachments.length > 0) {
       const message = "File attachments are not connected yet. Remove the attachment before sending.";
-      setConversationError(message);
+      setErrorsByConversationId((current) => ({ ...current, [conversationId]: message }));
       setStatusMessage("Attachment sending is unavailable");
       return;
     }
@@ -211,7 +214,15 @@ export function ConversationPage() {
 
     processingConversationIdsRef.current.add(conversationId);
     setProcessingConversationIds(new Set(processingConversationIdsRef.current));
-    setConversationError(null);
+    setErrorsByConversationId((current) => {
+      if (!(conversationId in current)) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[conversationId];
+      return next;
+    });
 
     const userMessage: ChatMessage = {
       id: createTemporaryMessageId(),
@@ -255,7 +266,8 @@ export function ConversationPage() {
     } catch (error: unknown) {
       if (controller.signal.aborted) return;
 
-      setConversationError(getConversationErrorMessage(error, "The request failed. Try sending it again."));
+      const message = getConversationErrorMessage(error, "The request failed. Try sending it again.");
+      setErrorsByConversationId((current) => ({ ...current, [conversationId]: message }));
       setStatusMessage("Request failed. You can try again.");
     } finally {
       turnAbortControllersRef.current.delete(conversationId);
@@ -266,6 +278,7 @@ export function ConversationPage() {
 
   function handleAttach(files: FileList) {
     if (!activeConversationId) return;
+    const conversationId = activeConversationId;
 
     const nextFiles = Array.from(files).map((file, index): Attachment => ({
       id: `${file.name}-${file.lastModified}-${index}`,
@@ -276,9 +289,17 @@ export function ConversationPage() {
 
     setAttachmentsByConversationId((current) => ({
       ...current,
-      [activeConversationId]: [...(current[activeConversationId] ?? []), ...nextFiles],
+      [conversationId]: [...(current[conversationId] ?? []), ...nextFiles],
     }));
-    setConversationError(null);
+    setErrorsByConversationId((current) => {
+      if (!(conversationId in current)) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[conversationId];
+      return next;
+    });
     setStatusMessage(`${nextFiles.length} file${nextFiles.length === 1 ? "" : "s"} attached`);
   }
 
@@ -327,7 +348,7 @@ export function ConversationPage() {
               <div className="flex-1 overflow-y-auto scroll-smooth">
                 <div className="mx-auto w-full max-w-[920px] px-4 pb-8 pt-6 sm:px-8 sm:pt-8">
                   <div className="mb-7 flex items-center justify-between gap-4"><div><p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-mutedInk">Conversation</p><p className="mt-1 text-xs text-mutedInk">{activeConversation ? formatConversationUpdatedAt(activeConversation.updatedAt) : "No active conversation"}</p></div></div>
-                  {conversationError && <div role="alert" className="mb-6 flex items-start gap-2.5 rounded-lg border border-danger/25 bg-danger/[0.06] px-3.5 py-3 text-sm text-danger"><AlertCircle size={17} className="mt-0.5 shrink-0" aria-hidden="true" /><p>{conversationError}</p></div>}
+                  {visibleError && <div role="alert" className="mb-6 flex items-start gap-2.5 rounded-lg border border-danger/25 bg-danger/[0.06] px-3.5 py-3 text-sm text-danger"><AlertCircle size={17} className="mt-0.5 shrink-0" aria-hidden="true" /><p>{visibleError}</p></div>}
                   <ConversationThread items={timeline} agentName={demoAgentName} isExecutionExpanded={isExecutionExpanded} onToggleExecution={() => setIsExecutionExpanded((expanded) => !expanded)} />
                 </div>
               </div>
