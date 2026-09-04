@@ -1,0 +1,7 @@
+{"type":"session","version":1,"id":"f4961d0e-092a-402d-b03d-6f85d98e3c15","timestamp":"2026-09-04T10:11:24.203Z"}
+{"type":"model_change","id":"1aa4aa8e-d000-4348-8233-d321b06dc482","parentId":null,"timestamp":"2026-09-04T10:11:24.204Z","provider":"moonshot","modelId":"kimi-k3"}
+{"type":"thinking_level_change","id":"8a103c55-548a-4ac8-8350-896b70994ce3","parentId":"1aa4aa8e-d000-4348-8233-d321b06dc482","timestamp":"2026-09-04T10:11:24.204Z","thinkingLevel":"off"}
+{"type":"message","id":"dba097cd-aa7b-4d27-a8ea-b411a917111e","parentId":"8a103c55-548a-4ac8-8350-896b70994ce3","timestamp":"2026-09-04T10:11:24.205Z","message":{"role":"user","content":[{"type":"text","text":"你好"}]}}
+{"type":"message","id":"8f6e84ae-6c2d-4882-a804-383fb46607a9","parentId":"dba097cd-aa7b-4d27-a8ea-b411a917111e","timestamp":"2026-09-04T10:11:24.208Z","message":{"role":"assistant","api":"openai-completions","provider":"moonshot","model":"kimi-k3","content":[],"finishReason":"error","errorMessage":"Invalid model context."}}
+{"type":"message","id":"cc11d655-3637-4493-9ab4-b453b6b767e7","parentId":"8f6e84ae-6c2d-4882-a804-383fb46607a9","timestamp":"2026-09-04T10:13:32.034Z","message":{"role":"user","content":[{"type":"text","text":"你好"}]}}
+{"type":"message","id":"220ceeb7-4c60-4fc8-a7d9-7c2f0e63526e","parentId":"cc11d655-3637-4493-9ab4-b453b6b767e7","timestamp":"2026-09-04T10:13:32.035Z","message":{"role":"assistant","api":"openai-completions","provider":"moonshot","model":"kimi-k3","content":[],"finishReason":"error","errorMessage":"Invalid model context."}}

@@ -1,4 +1,5 @@
-import { Workbook, type Worksheet } from 'exceljs';
+import ExcelJS from "exceljs";
+import type { Worksheet } from "exceljs";
 
 import {
   ExcelCapabilityError,
@@ -31,9 +32,9 @@ export async function executeExcelOperation<T>(
 }
 
 /** Opens an Excel workbook after checking cancellation. */
-export async function openWorkbook(filePath: string, signal?: AbortSignal): Promise<Workbook> {
+export async function openWorkbook(filePath: string, signal?: AbortSignal): Promise<ExcelJS.Workbook> {
   throwIfAborted(signal, 'openWorkbook');
-  const workbook = new Workbook();
+  const workbook = new ExcelJS.Workbook();
 
   try {
     await workbook.xlsx.readFile(filePath);
@@ -55,7 +56,7 @@ export async function openWorkbook(filePath: string, signal?: AbortSignal): Prom
 
 /** Saves an Excel workbook after checking cancellation. */
 export async function saveWorkbook(
-  workbook: Workbook,
+  workbook: ExcelJS.Workbook,
   filePath: string,
   signal?: AbortSignal,
 ): Promise<void> {
@@ -79,13 +80,13 @@ export async function saveWorkbook(
 }
 
 /** Returns the workbook's active worksheet when one is available. */
-export function getActiveWorksheet(workbook: Workbook): Worksheet | undefined {
+export function getActiveWorksheet(workbook: ExcelJS.Workbook): Worksheet | undefined {
   const activeTab = workbook.views?.[0]?.activeTab;
   return activeTab === undefined ? workbook.worksheets[0] : workbook.worksheets[activeTab];
 }
 
 /** Returns a named worksheet or throws a worksheet-not-found error. */
-export function requireWorksheet(workbook: Workbook, sheetName: string): Worksheet {
+export function requireWorksheet(workbook: ExcelJS.Workbook, sheetName: string): Worksheet {
   const worksheet = workbook.getWorksheet(sheetName);
   if (!worksheet) {
     throw new ExcelCapabilityError(
