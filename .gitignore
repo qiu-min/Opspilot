@@ -35,7 +35,8 @@ agent-service/packages/db/generated/
 
 # Local uploaded files
 backend/storage/
-
+# Local persisted sessions
+agent-service/data/sessions/
 # Docker local overrides
 docker-compose.override.yml
 
