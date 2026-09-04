@@ -18,6 +18,7 @@ import {
   toOpenAiCompletionsMessages,
   toOpenAiCompletionsTools,
 } from './openai-completions-tools.js';
+import { resolveOpenAiCompletionsCompat } from './openai-completions-compat.js';
 import { parseStreamingJson } from '../utils/parse-streaming-json.js';
 import type { ModelAdapter } from './model-adapter.js';
 
@@ -151,7 +152,8 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
     options: ResolvedOptions,
     provider: ResolvedProvider,
   ): ModelEventStream {
-    if (options.temperature !== undefined && model.compat?.supportsTemperature === false)
+    const compat = resolveOpenAiCompletionsCompat(model);
+    if (options.temperature !== undefined && !compat.supportsTemperature)
       throw new Error(`Model ${model.provider}/${model.id} does not support temperature.`);
 
     return createModelEventStream(async (controller) => {
@@ -249,9 +251,12 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
         const stream = await client.chat.completions.create(
           {
             model: model.id,
-            messages: toOpenAiCompletionsMessages(context, model),
+            messages: toOpenAiCompletionsMessages(context, model, compat),
             ...(context.tools && context.tools.length > 0
-              ? { tools: toOpenAiCompletionsTools(context.tools), tool_choice: 'auto' as const }
+              ? {
+                  tools: toOpenAiCompletionsTools(context.tools),
+                  ...(compat.supportsToolChoice ? { tool_choice: 'auto' as const } : {}),
+                }
               : {}),
             stream: true,
             stream_options: { include_usage: true },
@@ -272,7 +277,7 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
               : { temperature: options.temperature }),
             ...(options.maxTokens === undefined
               ? {}
-              : model.compat?.maxTokensField === 'max_completion_tokens'
+              : compat.maxTokensField === 'max_completion_tokens'
                 ? { max_completion_tokens: options.maxTokens }
                 : { max_tokens: options.maxTokens }),
             ...reasoningRequest(options),

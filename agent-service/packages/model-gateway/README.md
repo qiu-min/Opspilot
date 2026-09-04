@@ -254,6 +254,8 @@ Gateway 在 Adapter 前验证能力并按 Pi 的规则回退：优先寻找更�
 
 K3 通过同一个 `openai-completions` Adapter 和模型级 `compat` 配置接入。它使用顶层 `reasoning_effort`，并将 `maxTokens` 映射为 `max_completion_tokens`；显式传入 `temperature` 会抛出普通 `Error`。多轮工具调用协议要求的 `reasoning_content` 会以带来源信息的 `ThinkingContent` 保留在内存上下文中，仅允许回传给产生它的同一 Provider、API 与模型；它既不是用户可见文本，也不会产生 `text.delta`、记录日志或跨 Provider 发送。
 
+OpenAI-compatible Provider 共享 `openai-completions` Adapter。同一 wire protocol 下的差异通过 `Model.compat` 表达，例如最大 token 字段、`temperature` 支持、`tool_choice` 支持、assistant tool-call replay 和 `reasoning_content` replay。Adapter 不根据 Provider 名称或 URL 猜测行为。
+
 ## Provider 配置
 
 默认配置为仓库根目录的 `config/model-providers.json`。Provider 使用 `apiKeyEnv` 引用环境变量，不能提交明文密钥：

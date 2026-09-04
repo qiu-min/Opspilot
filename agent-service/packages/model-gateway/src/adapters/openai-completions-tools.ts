@@ -7,6 +7,10 @@ import {
   type ThinkingContent,
   validateModelToolCall,
 } from '../contracts/index.js';
+import {
+  resolveOpenAiCompletionsCompat,
+  type ResolvedOpenAiCompletionsCompat,
+} from './openai-completions-compat.js';
 
 function textFromContent(blocks: readonly (TextContent | ThinkingContent)[]): string {
   return blocks
@@ -21,7 +25,6 @@ export type OpenAiCompletionTool = {
     readonly name: string;
     readonly description: string;
     readonly parameters: Record<string, unknown>;
-    readonly strict: true;
   };
 };
 export function toOpenAiCompletionsTools(tools: readonly Tool[]): readonly OpenAiCompletionTool[] {
@@ -31,12 +34,15 @@ export function toOpenAiCompletionsTools(tools: readonly Tool[]): readonly OpenA
       name: tool.name,
       description: tool.description,
       parameters: tool.parameters,
-      strict: true,
     },
   }));
 }
 /** 将统一上下文转换为 OpenAI Chat Completions 消息，保留 Provider 要求的推理字段。 */
-export function toOpenAiCompletionsMessages(context: Context, model: Model): readonly unknown[] {
+export function toOpenAiCompletionsMessages(
+  context: Context,
+  model: Model,
+  compat: ResolvedOpenAiCompletionsCompat = resolveOpenAiCompletionsCompat(model),
+): readonly unknown[] {
   const messages = context.systemPrompt
     ? [
         {
@@ -54,23 +60,24 @@ export function toOpenAiCompletionsMessages(context: Context, model: Model): rea
         (block): block is Extract<(typeof message.content)[number], { type: 'thinking' }> =>
           block.type === 'thinking' &&
           block.thinking.length > 0 &&
-          model.compat?.requiresReasoningContentOnAssistantMessages === true &&
+          compat.requiresReasoningContentOnAssistantMessages &&
           block.source.api === model.api &&
           block.source.provider === model.provider &&
           block.source.model === model.id,
       );
       const reasoning = thinkingBlocks[0];
       const toolCalls = message.toolCalls;
+      const hasToolCalls = toolCalls !== undefined && toolCalls.length > 0;
       const reasoningContent = reasoning
         ? thinkingBlocks.map((block) => block.thinking).join('\n')
         : undefined;
+      const assistantContent =
+        content || (compat.requiresAssistantContentForToolCalls && hasToolCalls ? '' : null);
       return {
         role: 'assistant',
-        content: content || null,
+        content: assistantContent,
         ...(reasoningContent === undefined
-          ? model.compat?.requiresReasoningContentOnAssistantMessages === true &&
-            toolCalls &&
-            toolCalls.length > 0
+          ? compat.requiresReasoningContentOnAssistantMessages && hasToolCalls
             ? { reasoning_content: '' }
             : {}
           : reasoning.thinkingSignature === 'reasoning_content'

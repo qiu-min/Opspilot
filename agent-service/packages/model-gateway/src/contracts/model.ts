@@ -33,13 +33,19 @@ export const openAiCompletionsCompatSchema = z
   .object({
     maxTokensField: z.enum(['max_tokens', 'max_completion_tokens']).optional(),
     supportsTemperature: z.boolean().optional(),
+    supportsToolChoice: z.boolean().optional(),
+    supportsStrictMode: z.boolean().optional(),
     requiresReasoningContentOnAssistantMessages: z.boolean().optional(),
+    requiresAssistantContentForToolCalls: z.boolean().optional(),
   })
   .strict();
 export interface OpenAiCompletionsCompat {
   readonly maxTokensField?: 'max_tokens' | 'max_completion_tokens';
   readonly supportsTemperature?: boolean;
+  readonly supportsToolChoice?: boolean;
+  readonly supportsStrictMode?: boolean;
   readonly requiresReasoningContentOnAssistantMessages?: boolean;
+  readonly requiresAssistantContentForToolCalls?: boolean;
 }
 
 export interface Model {

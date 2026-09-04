@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   OpenAiCompletionsModelAdapter,
+  resolveOpenAiCompletionsCompat,
   toOpenAiCompletionsMessages,
   type OpenAiCompletionsClient,
   type OpenAiCompletionsRequest,
@@ -54,6 +55,15 @@ const k3ThinkingSource = {
   provider: 'moonshot',
   model: 'kimi-k3',
 };
+const assistantToolCallMessage = {
+  role: 'assistant' as const,
+  content: [],
+  toolCalls: [{ callId: 'call_1', name: 'query_logs', arguments: {} }],
+  finishReason: 'tool_calls' as const,
+  api: model.api,
+  provider: model.provider,
+  model: model.id,
+};
 function stream(...items: unknown[]): AsyncIterable<unknown> {
   return (async function* () {
     yield* items;
@@ -77,6 +87,17 @@ function failingAdapter(error: unknown): OpenAiCompletionsModelAdapter {
 }
 
 describe('OpenAI Chat Completions adapter', () => {
+  it('resolves OpenAI Completions compat defaults from the model only', () => {
+    expect(resolveOpenAiCompletionsCompat(model)).toEqual({
+      maxTokensField: 'max_tokens',
+      supportsTemperature: true,
+      supportsToolChoice: true,
+      supportsStrictMode: false,
+      requiresReasoningContentOnAssistantMessages: false,
+      requiresAssistantContentForToolCalls: false,
+    });
+  });
+
   it('normalizes text, tool calls, usage, and sends the configured endpoint', async () => {
     const requests: OpenAiCompletionsRequest[] = [];
     let endpoint = '';
@@ -160,6 +181,53 @@ describe('OpenAI Chat Completions adapter', () => {
       reasoning_effort: 'high',
       tools: [{ type: 'function', function: { name: 'query_logs' } }],
     });
+    expect(requests[0]?.tools?.[0]).toEqual({
+      type: 'function',
+      function: {
+        name: 'query_logs',
+        description: 'Read logs.',
+        parameters: { type: 'object', properties: {} },
+      },
+    });
+  });
+
+  it('keeps tools while omitting tool_choice when the model disallows the field', async () => {
+    let sent: OpenAiCompletionsRequest | undefined;
+    const adapter = new OpenAiCompletionsModelAdapter(() => ({
+      chat: {
+        completions: {
+          async create(input) {
+            sent = input;
+            return stream({ choices: [{ delta: { content: 'done' }, finish_reason: 'stop' }] });
+          },
+        },
+      },
+    }));
+
+    await adapter
+      .stream({ ...model, compat: { supportsToolChoice: false } }, context, {}, provider)
+      .result();
+
+    expect(sent?.tools).toBeDefined();
+    expect(sent).not.toHaveProperty('tool_choice');
+  });
+
+  it('uses null for default assistant tool-call replay content', () => {
+    const [assistant] = toOpenAiCompletionsMessages(
+      { messages: [assistantToolCallMessage] },
+      model,
+    );
+
+    expect(assistant).toMatchObject({ role: 'assistant', content: null });
+  });
+
+  it('uses empty assistant content when tool-call replay requires it', () => {
+    const [assistant] = toOpenAiCompletionsMessages(
+      { messages: [assistantToolCallMessage] },
+      { ...model, compat: { requiresAssistantContentForToolCalls: true } },
+    );
+
+    expect(assistant).toMatchObject({ role: 'assistant', content: '' });
   });
   it('serializes assistant tool calls for a following tool result', async () => {
     let sent: OpenAiCompletionsRequest | undefined;
