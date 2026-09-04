@@ -10,6 +10,7 @@ import {
   type ModelEventStream,
   type ModelToolCall,
   type ToolResultMessage,
+  validateContext,
 } from '@opspilot/model-gateway';
 
 import { defaultConvertToLlm, runAgentLoop } from '../src/index.js';
@@ -242,6 +243,16 @@ describe('runAgentLoop tool loop', () => {
     expect(convertedInputs[0]).toEqual([...historicalMessages, prompt]);
     expect(convertedInputs[1]).toEqual([...historicalMessages, prompt, assistant1, toolResult]);
     expect(contexts[1]?.messages).toEqual([...historicalMessages, prompt, assistant1, toolResult]);
+    expect(tool).toHaveProperty('execute');
+    expect(contexts[0]?.tools).toEqual([
+      {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      },
+    ]);
+    expect(contexts[0]?.tools?.[0]).not.toHaveProperty('execute');
+    expect(() => validateContext(contexts[0])).not.toThrow();
     expect(execute).toHaveBeenCalledTimes(1);
     expect(result).toEqual([prompt, assistant1, toolResult, assistant2]);
     expect(events.map((event) => event.type)).toEqual([

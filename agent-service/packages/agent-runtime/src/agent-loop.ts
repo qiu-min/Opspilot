@@ -3,12 +3,24 @@ import type {
   AgentEventSink,
   AgentLoopConfig,
   AgentMessage,
+  AgentTool,
   StreamFn,
 } from './types.js';
-import type { AssistantMessage, Context, ToolResultMessage } from '@opspilot/model-gateway';
+import type { AssistantMessage, Context, Tool, ToolResultMessage } from '@opspilot/model-gateway';
 import type { Options } from '@opspilot/model-gateway';
 import { executeToolCalls } from './tool-executor.js';
 import { defaultConvertToLlm } from './convert-to-llm.js';
+
+/** Project executable AgentTools into the strict model-gateway Tool contract. */
+function toModelTools(tools: readonly AgentTool[] | undefined): readonly Tool[] | undefined {
+  if (tools === undefined) return undefined;
+
+  return tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.parameters,
+  }));
+}
 
 export interface AgentLoopTermination {
   readonly reason: 'error' | 'aborted';
@@ -248,7 +260,7 @@ async function streamAssistantResponse(
   const llmContext: Context = {
     systemPrompt: context.systemPrompt,
     messages: [...llmMessages],
-    tools: context.tools,
+    tools: toModelTools(context.tools),
   };
   const options: Options =
     config.thinkingLevel === undefined || config.thinkingLevel === 'off'
