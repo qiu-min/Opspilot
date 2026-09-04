@@ -1,7 +1,7 @@
 namespace OpsPilot.Api.Features.Conversations.Contracts.Responses;
 
 public sealed record ConversationTurnResponse(
-    Guid SessionId,
+    Guid ConversationId,
     string? LeafId,
     string Status,
     string Output);

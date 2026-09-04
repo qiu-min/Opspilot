@@ -1,7 +1,7 @@
 namespace OpsPilot.Application.Conversations.RunTurn;
 
 public sealed record RunConversationTurnResult(
-    Guid SessionId,
+    Guid ConversationId,
     string? LeafId,
     string Status,
     string Output);

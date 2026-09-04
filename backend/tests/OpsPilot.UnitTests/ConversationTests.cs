@@ -216,6 +216,14 @@ public sealed class ConversationTests
 
         public int SaveChangesCallCount { get; private set; }
 
+        public Task<Conversation?> GetByIdAndUserIdAsync(
+            Guid conversationId,
+            Guid userId,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
         public Task AddAsync(Conversation conversation, CancellationToken cancellationToken)
         {
             AddedConversation = conversation;

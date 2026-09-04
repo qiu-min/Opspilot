@@ -36,7 +36,13 @@ public sealed class ConversationConfiguration : IEntityTypeConfiguration<Convers
             .HasColumnName("updated_at_utc")
             .IsRequired();
 
-        builder.HasIndex(conversation => conversation.UserId);
-        builder.HasIndex(conversation => conversation.UpdatedAtUtc);
+        builder.HasIndex(conversation => conversation.AgentSessionId)
+            .IsUnique();
+
+        builder.HasIndex(conversation => new
+        {
+            conversation.UserId,
+            conversation.UpdatedAtUtc,
+        });
     }
 }

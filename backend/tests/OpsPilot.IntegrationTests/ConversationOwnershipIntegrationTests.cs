@@ -23,16 +23,16 @@ public sealed class ConversationOwnershipIntegrationTests
     }
 
     [Fact]
-    public async Task PostTurn_WhenAnotherUserReferencesTheFileReturnsNotFoundWithoutCallingAgent()
+    public async Task PostTurn_WhenAnotherUserReferencesConversationReturnsNotFoundWithoutCallingAgent()
     {
         LoginResponse owner = await RegisterAndLoginAsync("owner");
         LoginResponse otherUser = await RegisterAndLoginAsync("other");
-        Guid fileId = await UploadFileAsync(owner.AccessToken);
+        Guid conversationId = await CreateConversationAsync(owner.AccessToken);
 
         factory.AgentClient.Reset();
         using (HttpRequestMessage ownerRequest = CreateConversationRequest(
                    owner.AccessToken,
-                   fileId))
+                   conversationId))
         using (HttpResponseMessage ownerResponse = await httpClient.SendAsync(ownerRequest))
         {
             Assert.Equal(HttpStatusCode.OK, ownerResponse.StatusCode);
@@ -43,7 +43,7 @@ public sealed class ConversationOwnershipIntegrationTests
         factory.AgentClient.Reset();
         using (HttpRequestMessage otherRequest = CreateConversationRequest(
                    otherUser.AccessToken,
-                   fileId))
+                   conversationId))
         using (HttpResponseMessage otherResponse = await httpClient.SendAsync(otherRequest))
         {
             Assert.Equal(HttpStatusCode.NotFound, otherResponse.StatusCode);
@@ -70,18 +70,9 @@ public sealed class ConversationOwnershipIntegrationTests
         return (await loginResponse.Content.ReadFromJsonAsync<LoginResponse>())!;
     }
 
-    private async Task<Guid> UploadFileAsync(string accessToken)
+    private async Task<Guid> CreateConversationAsync(string accessToken)
     {
-        using var form = new MultipartFormDataContent();
-        using var fileContent = new ByteArrayContent([80, 75, 3, 4]);
-        fileContent.Headers.ContentType = new MediaTypeHeaderValue(
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-        form.Add(fileContent, "file", "owned.xlsx");
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/files")
-        {
-            Content = form
-        };
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/conversations");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
         using HttpResponseMessage response = await httpClient.SendAsync(request);
@@ -93,15 +84,16 @@ public sealed class ConversationOwnershipIntegrationTests
 
     private static HttpRequestMessage CreateConversationRequest(
         string accessToken,
-        Guid fileId)
+        Guid conversationId)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, "/api/conversations/turns")
+        var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/conversations/{conversationId}/turns")
         {
             Content = JsonContent.Create(new
             {
-                fileId,
-                message = "Inspect the workbook."
-            })
+                message = "Inspect the workbook.",
+            }),
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
         return request;

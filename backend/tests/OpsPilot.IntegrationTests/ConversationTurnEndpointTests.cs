@@ -12,6 +12,7 @@ using Microsoft.Extensions.Logging;
 using OpsPilot.Application.Abstractions.AgentService;
 using OpsPilot.Application.Abstractions.Persistence;
 using OpsPilot.Application.Abstractions.Security;
+using OpsPilot.Domain.Conversations;
 using OpsPilot.Domain.Files;
 using OpsPilot.IntegrationTests.Infrastructure;
 
@@ -29,19 +30,19 @@ public sealed class ConversationTurnEndpointTests : IClassFixture<ConversationTe
     }
 
     [Fact]
-    public async Task PostTurn_WithFileIdForwardsFileResourceAndReturnsAgentResult()
+    public async Task PostTurn_WithFileIdForwardsFileResourceBindsSessionAndHidesSessionId()
     {
+        Conversation conversation = CreateConversation(factory.CurrentUserId);
         FileAsset fileAsset = CreateFileAsset(factory.CurrentUserId);
+        factory.Conversation = conversation;
         factory.FileAsset = fileAsset;
+        factory.ConversationRepository.Reset();
         factory.FileAssetRepository.Reset();
         factory.AgentClient.Reset();
-        Guid sessionId = Guid.NewGuid();
-
         using HttpResponseMessage response = await httpClient.PostAsJsonAsync(
-            "/api/conversations/turns",
+            $"/api/conversations/{conversation.Id}/turns",
             new
             {
-                sessionId,
                 fileId = fileAsset.Id,
                 message = "Which sheets are in this workbook?",
             });
@@ -49,64 +50,145 @@ public sealed class ConversationTurnEndpointTests : IClassFixture<ConversationTe
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         ConversationResponse? body = await response.Content.ReadFromJsonAsync<ConversationResponse>();
         Assert.NotNull(body);
-        Assert.Equal(factory.AgentClient.Result.SessionId, body!.SessionId);
+        Assert.Equal(conversation.Id, body!.ConversationId);
         Assert.Equal(factory.AgentClient.Result.LeafId, body.LeafId);
         Assert.Equal(factory.AgentClient.Result.Status, body.Status);
         Assert.Equal(factory.AgentClient.Result.Output, body.Output);
+        string responseBody = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("sessionId", responseBody, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("agentSessionId", responseBody, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("userId", responseBody, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(
             new AgentConversationTurnRequest(
-                sessionId,
+                null,
                 "Which sheets are in this workbook?",
                 new AgentExcelResource(fileAsset.Id, fileAsset.StoragePath)),
             factory.AgentClient.Request);
+        Assert.Equal(factory.AgentClient.Result.SessionId, conversation.AgentSessionId);
+        Assert.Equal(1, factory.ConversationRepository.SaveChangesCallCount);
     }
 
     [Fact]
-    public async Task PostTurn_WithoutFileIdDoesNotQueryFileAssets()
+    public async Task PostTurn_TwiceReusesBoundSession()
     {
+        Conversation conversation = CreateConversation(factory.CurrentUserId);
+        factory.Conversation = conversation;
         factory.FileAsset = null;
+        factory.ConversationRepository.Reset();
+        factory.AgentClient.Reset();
+
+        using HttpResponseMessage firstResponse = await PostTurnAsync(
+            conversation.Id,
+            new { message = "Hello." });
+
+        Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+        Guid sessionId = factory.AgentClient.Result.SessionId;
+        Assert.Equal(sessionId, conversation.AgentSessionId);
+
+        factory.ConversationRepository.Reset();
+        factory.AgentClient.Reset();
+
+        using HttpResponseMessage secondResponse = await PostTurnAsync(
+            conversation.Id,
+            new { message = "Continue." });
+
+        Assert.Equal(HttpStatusCode.OK, secondResponse.StatusCode);
+        Assert.Equal(
+            new AgentConversationTurnRequest(sessionId, "Continue.", null),
+            factory.AgentClient.Request);
+        Assert.Equal(sessionId, conversation.AgentSessionId);
+        Assert.Equal(1, factory.ConversationRepository.SaveChangesCallCount);
+    }
+
+    [Fact]
+    public async Task PostTurn_WhenAgentReturnsDifferentSessionReturnsServerErrorWithoutSaving()
+    {
+        Conversation conversation = CreateConversation(factory.CurrentUserId);
+        conversation.BindAgentSession(factory.AgentClient.Result.SessionId, DateTime.UtcNow);
+        factory.Conversation = conversation;
+        factory.FileAsset = null;
+        factory.ConversationRepository.Reset();
+        factory.AgentClient.Reset();
+        factory.AgentClient.Result = new AgentConversationTurnResult(
+            Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            "leaf-2",
+            "completed",
+            "Unexpected session.");
+
+        using HttpResponseMessage response = await PostTurnAsync(
+            conversation.Id,
+            new { message = "Continue." });
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.Equal(0, factory.ConversationRepository.SaveChangesCallCount);
+        Assert.Equal(
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            conversation.AgentSessionId);
+    }
+
+    [Fact]
+    public async Task PostTurn_WhenConversationDoesNotExistReturnsNotFoundWithoutCallingAgent()
+    {
+        factory.Conversation = null;
+        factory.FileAsset = null;
+        factory.ConversationRepository.Reset();
+        factory.AgentClient.Reset();
+
+        using HttpResponseMessage response = await PostTurnAsync(
+            Guid.NewGuid(),
+            new { message = "Inspect the workbook." });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(1, factory.ConversationRepository.GetCallCount);
+        Assert.Equal(0, factory.AgentClient.CallCount);
+    }
+
+    [Fact]
+    public async Task PostTurn_WithBlankMessageDoesNotQueryConversationOrCallAgent()
+    {
+        factory.Conversation = null;
+        factory.FileAsset = null;
+        factory.ConversationRepository.Reset();
         factory.FileAssetRepository.Reset();
+        factory.AgentClient.Reset();
+
+        using HttpResponseMessage response = await PostTurnAsync(
+            Guid.NewGuid(),
+            new { message = "  " });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(0, factory.ConversationRepository.GetCallCount);
+        Assert.Equal(0, factory.FileAssetRepository.CallCount);
+        Assert.Equal(0, factory.AgentClient.CallCount);
+    }
+
+    [Fact]
+    public async Task PostTurn_WithoutConversationIdRouteReturnsNotFound()
+    {
         factory.AgentClient.Reset();
 
         using HttpResponseMessage response = await httpClient.PostAsJsonAsync(
             "/api/conversations/turns",
             new { message = "Hello." });
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(0, factory.FileAssetRepository.CallCount);
-        Assert.Equal(new AgentConversationTurnRequest(null, "Hello.", null), factory.AgentClient.Request);
-    }
-
-    [Fact]
-    public async Task PostTurn_WhenFileDoesNotExistReturnsNotFoundWithoutCallingAgentService()
-    {
-        factory.FileAsset = null;
-        factory.FileAssetRepository.Reset();
-        factory.AgentClient.Reset();
-
-        using HttpResponseMessage response = await httpClient.PostAsJsonAsync(
-            "/api/conversations/turns",
-            new { fileId = Guid.NewGuid(), message = "Inspect the workbook." });
-
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-        Assert.Null(factory.AgentClient.Request);
         Assert.Equal(0, factory.AgentClient.CallCount);
     }
 
-    [Fact]
-    public async Task PostTurn_WithBlankMessageReturnsBadRequest()
+    private async Task<HttpResponseMessage> PostTurnAsync(
+        Guid conversationId,
+        object requestBody)
     {
-        factory.FileAsset = null;
-        factory.FileAssetRepository.Reset();
-        factory.AgentClient.Reset();
-
-        using HttpResponseMessage response = await httpClient.PostAsJsonAsync(
-            "/api/conversations/turns",
-            new { message = "  " });
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Equal(0, factory.AgentClient.CallCount);
+        return await httpClient.PostAsJsonAsync(
+            $"/api/conversations/{conversationId}/turns",
+            requestBody);
     }
+
+    private static Conversation CreateConversation(Guid userId) =>
+        Conversation.Create(
+            userId,
+            Conversation.DefaultTitle,
+            new DateTime(2026, 8, 25, 12, 0, 0, DateTimeKind.Utc));
 
     private static FileAsset CreateFileAsset(Guid userId)
     {
@@ -121,7 +203,7 @@ public sealed class ConversationTurnEndpointTests : IClassFixture<ConversationTe
     }
 
     private sealed record ConversationResponse(
-        Guid SessionId,
+        Guid ConversationId,
         string? LeafId,
         string Status,
         string Output);
@@ -134,11 +216,16 @@ public sealed class ConversationTestFactory : WebApplicationFactory<Program>
 
     public ConversationTestFactory()
     {
+        ConversationRepository = new TestConversationRepository(this);
         FileAssetRepository = new TestFileAssetRepository(this);
         AgentClient = new TestAgentConversationClient();
     }
 
+    public Conversation? Conversation { get; set; }
+
     public FileAsset? FileAsset { get; set; }
+
+    public TestConversationRepository ConversationRepository { get; }
 
     public TestFileAssetRepository FileAssetRepository { get; }
 
@@ -178,6 +265,8 @@ public sealed class ConversationTestFactory : WebApplicationFactory<Program>
             });
             services.RemoveAll<ICurrentUser>();
             services.AddSingleton<ICurrentUser>(new TestCurrentUser(TestUserId));
+            services.RemoveAll<IConversationRepository>();
+            services.AddSingleton<IConversationRepository>(ConversationRepository);
             services.RemoveAll<IFileAssetRepository>();
             services.AddSingleton<IFileAssetRepository>(FileAssetRepository);
             services.RemoveAll<IAgentConversationClient>();
@@ -186,17 +275,83 @@ public sealed class ConversationTestFactory : WebApplicationFactory<Program>
     }
 }
 
-public sealed class TestFileAssetRepository(ConversationTestFactory factory) : IFileAssetRepository
+public sealed class TestConversationRepository(ConversationTestFactory factory)
+    : IConversationRepository
+{
+    public int GetCallCount { get; private set; }
+
+    public int SaveChangesCallCount { get; private set; }
+
+    public Guid RequestedConversationId { get; private set; }
+
+    public Guid RequestedUserId { get; private set; }
+
+    public Task<Conversation?> GetByIdAndUserIdAsync(
+        Guid conversationId,
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        GetCallCount++;
+        RequestedConversationId = conversationId;
+        RequestedUserId = userId;
+
+        return Task.FromResult(
+            factory.Conversation?.Id == conversationId &&
+                factory.Conversation.UserId == userId
+                ? factory.Conversation
+                : null);
+    }
+
+    public Task AddAsync(
+        Conversation conversation,
+        CancellationToken cancellationToken)
+    {
+        throw new NotSupportedException();
+    }
+
+    public Task<IReadOnlyList<Conversation>> ListByUserIdAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        throw new NotSupportedException();
+    }
+
+    public Task SaveChangesAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        SaveChangesCallCount++;
+        return Task.CompletedTask;
+    }
+
+    public void Reset()
+    {
+        GetCallCount = 0;
+        SaveChangesCallCount = 0;
+        RequestedConversationId = Guid.Empty;
+        RequestedUserId = Guid.Empty;
+    }
+}
+
+public sealed class TestFileAssetRepository(ConversationTestFactory factory)
+    : IFileAssetRepository
 {
     public int CallCount { get; private set; }
+
+    public Guid RequestedUserId { get; private set; }
+
+    public CancellationToken RequestedCancellationToken { get; private set; }
 
     public Task<FileAsset?> GetByIdAndUserIdAsync(
         Guid fileId,
         Guid userId,
         CancellationToken cancellationToken)
     {
-        CallCount++;
         cancellationToken.ThrowIfCancellationRequested();
+        CallCount++;
+        RequestedUserId = userId;
+        RequestedCancellationToken = cancellationToken;
+
         return Task.FromResult(
             factory.FileAsset?.Id == fileId && factory.FileAsset.UserId == userId
                 ? factory.FileAsset
@@ -216,6 +371,8 @@ public sealed class TestFileAssetRepository(ConversationTestFactory factory) : I
     public void Reset()
     {
         CallCount = 0;
+        RequestedUserId = Guid.Empty;
+        RequestedCancellationToken = default;
     }
 }
 
@@ -245,7 +402,7 @@ public sealed class ConversationTestAuthenticationHandler(
 
 public sealed class TestAgentConversationClient : IAgentConversationClient
 {
-    public AgentConversationTurnResult Result { get; } = new(
+    public AgentConversationTurnResult Result { get; set; } = new(
         Guid.Parse("11111111-1111-1111-1111-111111111111"),
         "leaf-1",
         "completed",
@@ -269,5 +426,10 @@ public sealed class TestAgentConversationClient : IAgentConversationClient
     {
         Request = null;
         CallCount = 0;
+        Result = new AgentConversationTurnResult(
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            "leaf-1",
+            "completed",
+            "Workbook inspected.");
     }
 }

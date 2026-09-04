@@ -162,9 +162,13 @@ GET /api/conversations
 普通 Conversation Turn 的最小调用链为：
 
 ```text
-POST /api/conversations/turns
+POST /api/conversations/{conversationId}/turns
   ↓
 RunConversationTurnHandler
+  ↓
+Load Conversation by current user
+  ↓
+Conversation.AgentSessionId
   ↓
 FileId → FileAsset.StoragePath
   ↓
@@ -172,6 +176,9 @@ AgentServiceClient
   ↓
 POST Agent Service /conversations/turns
 ```
+
+客户端只认识 `ConversationId`。`SessionId` 是 Backend 与 Agent Service
+之间的内部实现细节：第一次 Turn 创建并绑定 Session，后续 Turn 复用并确认该 Session。
 
 ---
 
@@ -319,6 +326,7 @@ PostgreSQL
 ```text
 User
 FileAsset
+Conversation
 ```
 
 数据库模型变化通过 EF Core Migration 管理。

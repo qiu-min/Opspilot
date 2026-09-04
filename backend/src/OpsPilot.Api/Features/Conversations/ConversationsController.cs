@@ -53,19 +53,20 @@ public sealed class ConversationsController(
             .ToArray());
     }
 
-    [HttpPost("turns")]
+    [HttpPost("{conversationId:guid}/turns")]
     [ProducesResponseType(typeof(ConversationTurnResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<ConversationTurnResponse>> RunTurn(
+        Guid conversationId,
         ConversationTurnRequest request,
         CancellationToken cancellationToken)
     {
         RunConversationTurnResult result = await runConversationTurnHandler.HandleAsync(
-            new RunConversationTurnCommand(request.SessionId, request.FileId, request.Message),
+            new RunConversationTurnCommand(conversationId, request.FileId, request.Message),
             cancellationToken);
 
         return Ok(new ConversationTurnResponse(
-            result.SessionId,
+            result.ConversationId,
             result.LeafId,
             result.Status,
             result.Output));
