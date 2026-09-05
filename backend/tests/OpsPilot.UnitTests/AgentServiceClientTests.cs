@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using OpsPilot.Application.Abstractions.AgentService;
 using OpsPilot.Infrastructure.AgentService;
@@ -202,11 +203,318 @@ public sealed class AgentServiceClientTests
                 cancellationSource.Token));
     }
 
+    [Fact]
+    public async Task StreamTurnAsync_PostsStreamingRequestAndMapsProtocolEventsInOrder()
+    {
+        string? requestPath = null;
+        string? requestMethod = null;
+        string? requestBody = null;
+        const string sessionId = "11111111-1111-1111-1111-111111111111";
+
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            requestMethod = request.Method.Method;
+            requestPath = request.RequestUri?.PathAndQuery;
+            requestBody = await request.Content!.ReadAsStringAsync(cancellationToken);
+            return SseResponse(
+                """
+                event: session_ready
+                data: {"type":"session_ready","sessionId":"11111111-1111-1111-1111-111111111111","created":
+                data: true}
+
+                event: agent_start
+                data: {"type":"agent_start"}
+
+                event: turn_start
+                data: {"type":"turn_start"}
+
+                event: message_start
+                data: {"type":"message_start","message":{"role":"assistant"}}
+
+                event: message_update
+                data: {"type":"message_update","event":{"type":"thinking.delta","contentIndex":0,"delta":"plan"},"message":{}}
+
+                event: message_update
+                data: {"type":"message_update","event":{"type":"text.delta","contentIndex":0,"delta":"hello"},"message":{}}
+
+                event: message_update
+                data: {"type":"message_update","event":{"type":"tool-call.delta","contentIndex":1,"callId":"call-1","delta":"{\\\"query\\\":"},"message":{}}
+
+                event: message_update
+                data: {"type":"message_update","event":{"type":"tool-call.completed","contentIndex":1,"toolCall":{"callId":"call-1","name":"lookup","arguments":{"query":"hello"}}},"message":{}}
+
+                event: message_update
+                data: {"type":"message_update","event":{"type":"usage","usage":{"inputTokens":10,"outputTokens":4,"totalTokens":14}},"message":{}}
+
+                event: message_end
+                data: {"type":"message_end","message":{"role":"assistant"}}
+
+                event: tool_execution_start
+                data: {"type":"tool_execution_start","toolCall":{"callId":"call-1","name":"lookup","arguments":{"query":"hello"}}}
+
+                event: tool_execution_end
+                data: {"type":"tool_execution_end","toolCall":{"callId":"call-1","name":"lookup","arguments":{"query":"hello"}},"result":{"role":"tool","callId":"call-1","name":"lookup","content":[{"type":"text","text":"world"}],"details":{"durationMs":4},"isError":false}}
+
+                event: turn_end
+                data: {"type":"turn_end"}
+
+                event: agent_end
+                data: {"type":"agent_end"}
+
+                event: compaction_start
+                data: {"type":"compaction_start","reason":"threshold"}
+
+                event: compaction_end
+                data: {"type":"compaction_end","reason":"threshold","aborted":false,"willRetry":false,"errorMessage":null}
+
+                event: session_settled
+                data: {"type":"session_settled"}
+
+                event: done
+                data: {"sessionId":"11111111-1111-1111-1111-111111111111","leafId":"leaf-1","status":"completed"}
+
+                """);
+        });
+        using var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://agent-service.test/"),
+        };
+        var client = new AgentServiceClient(httpClient);
+
+        List<AgentServiceStreamEvent> events = await CollectAsync(
+            client,
+            new AgentConversationTurnRequest(null, "Hello.", null),
+            CancellationToken.None);
+
+        Assert.Equal("POST", requestMethod);
+        Assert.Equal("/conversations/turns/stream", requestPath);
+        using (JsonDocument requestDocument = JsonDocument.Parse(requestBody!))
+        {
+            Assert.False(requestDocument.RootElement.TryGetProperty("sessionId", out _));
+            Assert.Equal("Hello.", requestDocument.RootElement.GetProperty("message").GetString());
+        }
+
+        Assert.Collection(
+            events,
+            item => Assert.Equal(new AgentServiceStreamEvent.SessionReady(
+                Guid.Parse(sessionId),
+                true), item),
+            item => Assert.IsType<AgentServiceStreamEvent.AgentStarted>(item),
+            item => Assert.IsType<AgentServiceStreamEvent.TurnStarted>(item),
+            item => Assert.Equal(new AgentServiceStreamEvent.MessageStarted("assistant"), item),
+            item => Assert.Equal(new AgentServiceStreamEvent.ThinkingDelta(0, "plan"), item),
+            item => Assert.Equal(new AgentServiceStreamEvent.TextDelta(0, "hello"), item),
+            item => Assert.Equal(new AgentServiceStreamEvent.ToolCallDelta(
+                1,
+                "call-1",
+                "{\\\"query\\\":"), item),
+            item => Assert.Equal(new AgentServiceStreamEvent.ToolCallCompleted(
+                1,
+                new AgentServiceToolCall("call-1", "lookup", "{\"query\":\"hello\"}")), item),
+            item => Assert.Equal(new AgentServiceStreamEvent.Usage(10, 4, 14), item),
+            item => Assert.Equal(new AgentServiceStreamEvent.MessageCompleted("assistant"), item),
+            item => Assert.Equal(new AgentServiceStreamEvent.ToolExecutionStarted(
+                new AgentServiceToolCall("call-1", "lookup", "{\"query\":\"hello\"}")), item),
+            item =>
+            {
+                var completed = Assert.IsType<AgentServiceStreamEvent.ToolExecutionCompleted>(item);
+                Assert.Equal(
+                    new AgentServiceToolCall("call-1", "lookup", "{\"query\":\"hello\"}"),
+                    completed.ToolCall);
+                Assert.Equal("call-1", completed.Result.CallId);
+                Assert.Equal("lookup", completed.Result.Name);
+                Assert.Equal(["world"], completed.Result.TextContent);
+                Assert.False(completed.Result.IsError);
+                Assert.Equal("{\"durationMs\":4}", completed.Result.DetailsJson);
+            },
+            item => Assert.IsType<AgentServiceStreamEvent.TurnEnded>(item),
+            item => Assert.IsType<AgentServiceStreamEvent.AgentEnded>(item),
+            item => Assert.Equal(new AgentServiceStreamEvent.CompactionStarted("threshold"), item),
+            item => Assert.Equal(new AgentServiceStreamEvent.CompactionCompleted(
+                "threshold",
+                false,
+                false,
+                null), item),
+            item => Assert.IsType<AgentServiceStreamEvent.SessionSettled>(item),
+            item => Assert.Equal(new AgentServiceStreamEvent.Done(
+                Guid.Parse(sessionId),
+                "leaf-1",
+                "completed"), item));
+    }
+
+    [Fact]
+    public async Task StreamTurnAsync_MapsErrorAndUnknownEventsWithoutStoppingTheStream()
+    {
+        const string unknownOuterData = "{\"type\":\"retry_start\",\"attempt\":1}";
+        const string unknownNestedData = "{\"type\":\"message_update\",\"event\":{\"type\":\"retry.delta\"},\"message\":{}}";
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(
+            SseResponse(
+                "event: retry_start\ndata: " + unknownOuterData + "\n\n" +
+                "event: message_update\ndata: " + unknownNestedData + "\n\n" +
+                "event: error\ndata: {\"type\":\"error\",\"message\":\"transport failed\"}\n\n" +
+                "event: done\ndata: {\"sessionId\":\"11111111-1111-1111-1111-111111111111\",\"leafId\":null,\"status\":\"error\"}\n\n")));
+        using var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://agent-service.test/"),
+        };
+        var client = new AgentServiceClient(httpClient);
+
+        List<AgentServiceStreamEvent> events = await CollectAsync(
+            client,
+            new AgentConversationTurnRequest(null, "Hello.", null),
+            CancellationToken.None);
+
+        Assert.Equal(new AgentServiceStreamEvent.Unknown(
+            "retry_start",
+            null,
+            unknownOuterData), events[0]);
+        Assert.Equal(new AgentServiceStreamEvent.Unknown(
+            "message_update",
+            "retry.delta",
+            unknownNestedData), events[1]);
+        Assert.Equal(new AgentServiceStreamEvent.Error("transport failed"), events[2]);
+        Assert.Equal(new AgentServiceStreamEvent.Done(
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            null,
+            "error"), events[3]);
+    }
+
+    [Fact]
+    public async Task StreamTurnAsync_ThrowsInvalidDataExceptionForMalformedKnownEvent()
+    {
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(
+            SseResponse("""
+                event: session_ready
+                data: {"type":"session_ready","created":true}
+
+                """)));
+        using var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://agent-service.test/"),
+        };
+        var client = new AgentServiceClient(httpClient);
+
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            CollectAsync(
+                client,
+                new AgentConversationTurnRequest(null, "Hello.", null),
+                CancellationToken.None));
+
+        Assert.Contains("sessionId", exception.Message);
+        Assert.Contains("session_ready", exception.Message);
+    }
+
+    [Fact]
+    public async Task StreamTurnAsync_UsesResponseHeadersReadAndDoesNotWaitForEntireBody()
+    {
+        var readStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new GatedStreamContent(
+                    new GatedReadStream(
+                        Encoding.UTF8.GetBytes(
+                            "event: agent_start\ndata: {\"type\":\"agent_start\"}\n\n"),
+                        readStarted,
+                        releaseRead)),
+            }));
+        using var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://agent-service.test/"),
+        };
+        var client = new AgentServiceClient(httpClient);
+        await using IAsyncEnumerator<AgentServiceStreamEvent> enumerator = client
+            .StreamTurnAsync(
+                new AgentConversationTurnRequest(null, "Hello.", null),
+                CancellationToken.None)
+            .GetAsyncEnumerator();
+
+        ValueTask<bool> moveNext = enumerator.MoveNextAsync();
+        await readStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(moveNext.IsCompleted);
+
+        releaseRead.SetResult();
+        Assert.True(await moveNext);
+        Assert.IsType<AgentServiceStreamEvent.AgentStarted>(enumerator.Current);
+    }
+
+    [Fact]
+    public async Task StreamTurnAsync_PropagatesCancellationDuringEnumeration()
+    {
+        using var cancellationSource = new CancellationTokenSource();
+        var handler = new StubHttpMessageHandler((_, cancellationToken) =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(SseResponse(""));
+        });
+        using var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://agent-service.test/"),
+        };
+        var client = new AgentServiceClient(httpClient);
+        cancellationSource.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CollectAsync(
+                client,
+                new AgentConversationTurnRequest(null, "Hello.", null),
+                cancellationSource.Token));
+    }
+
+    [Fact]
+    public async Task StreamTurnAsync_WhenAgentServiceReturnsFailureThrowsWithoutResponseBody()
+    {
+        const string sensitiveResponseBody = "provider secret and model output";
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent(sensitiveResponseBody),
+            }));
+        using var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://agent-service.test/"),
+        };
+        var client = new AgentServiceClient(httpClient);
+
+        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            CollectAsync(
+                client,
+                new AgentConversationTurnRequest(null, "Hello.", null),
+                CancellationToken.None));
+
+        Assert.DoesNotContain(sensitiveResponseBody, exception.Message);
+    }
+
+    private static async Task<List<AgentServiceStreamEvent>> CollectAsync(
+        AgentServiceClient client,
+        AgentConversationTurnRequest request,
+        CancellationToken cancellationToken)
+    {
+        var events = new List<AgentServiceStreamEvent>();
+        await foreach (AgentServiceStreamEvent streamEvent in client.StreamTurnAsync(
+            request,
+            cancellationToken))
+        {
+            events.Add(streamEvent);
+        }
+
+        return events;
+    }
+
     private static HttpResponseMessage JsonResponse<T>(T value)
     {
         return new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = JsonContent.Create(value),
+        };
+    }
+
+    private static HttpResponseMessage SseResponse(string body)
+    {
+        return new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "text/event-stream"),
         };
     }
 
@@ -220,5 +528,80 @@ public sealed class AgentServiceClientTests
         {
             return send(request, cancellationToken);
         }
+    }
+
+    private sealed class GatedStreamContent(Stream stream) : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(
+            Stream target,
+            TransportContext? context)
+        {
+            throw new NotSupportedException();
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = -1;
+            return false;
+        }
+
+        protected override Task<Stream> CreateContentReadStreamAsync() =>
+            Task.FromResult(stream);
+    }
+
+    private sealed class GatedReadStream(
+        byte[] content,
+        TaskCompletionSource readStarted,
+        TaskCompletionSource releaseRead) : Stream
+    {
+        private int position;
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => content.Length;
+
+        public override long Position
+        {
+            get => position;
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush() => throw new NotSupportedException();
+
+        public override int Read(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
+
+        public override long Seek(long offset, SeekOrigin origin) =>
+            throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
+
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            readStarted.TrySetResult();
+            await releaseRead.Task.WaitAsync(cancellationToken);
+            if (position >= content.Length) return 0;
+
+            int count = Math.Min(buffer.Length, content.Length - position);
+            content.AsMemory(position, count).CopyTo(buffer);
+            position += count;
+            return count;
+        }
+
+        public override Task<int> ReadAsync(
+            byte[] buffer,
+            int offset,
+            int count,
+            CancellationToken cancellationToken) =>
+            ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
     }
 }

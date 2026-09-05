@@ -9,4 +9,8 @@ public interface IAgentConversationClient
     Task<AgentConversationTurnResult> RunTurnAsync(
         AgentConversationTurnRequest request,
         CancellationToken cancellationToken);
+
+    IAsyncEnumerable<AgentServiceStreamEvent> StreamTurnAsync(
+        AgentConversationTurnRequest request,
+        CancellationToken cancellationToken);
 }

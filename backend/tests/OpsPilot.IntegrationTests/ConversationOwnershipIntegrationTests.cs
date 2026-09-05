@@ -170,6 +170,16 @@ public sealed class OwnershipTestAgentConversationClient : IAgentConversationCli
             "Workbook inspected."));
     }
 
+    public async IAsyncEnumerable<AgentServiceStreamEvent> StreamTurnAsync(
+        AgentConversationTurnRequest request,
+        [System.Runtime.CompilerServices.EnumeratorCancellation]
+        CancellationToken cancellationToken)
+    {
+        _ = request;
+        cancellationToken.ThrowIfCancellationRequested();
+        yield break;
+    }
+
     public void Reset()
     {
         CallCount = 0;

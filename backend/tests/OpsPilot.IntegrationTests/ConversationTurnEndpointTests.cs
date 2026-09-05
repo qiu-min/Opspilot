@@ -438,6 +438,16 @@ public sealed class TestAgentConversationClient : IAgentConversationClient
         return Task.FromResult(Result);
     }
 
+    public async IAsyncEnumerable<AgentServiceStreamEvent> StreamTurnAsync(
+        AgentConversationTurnRequest request,
+        [System.Runtime.CompilerServices.EnumeratorCancellation]
+        CancellationToken cancellationToken)
+    {
+        _ = request;
+        cancellationToken.ThrowIfCancellationRequested();
+        yield break;
+    }
+
     public void Reset()
     {
         History = new AgentConversationHistory(null, []);

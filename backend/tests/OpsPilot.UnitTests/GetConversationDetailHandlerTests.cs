@@ -184,5 +184,15 @@ public sealed class GetConversationDetailHandlerTests
             AgentConversationTurnRequest request,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public async IAsyncEnumerable<AgentServiceStreamEvent> StreamTurnAsync(
+            AgentConversationTurnRequest request,
+            [System.Runtime.CompilerServices.EnumeratorCancellation]
+            CancellationToken cancellationToken)
+        {
+            _ = request;
+            cancellationToken.ThrowIfCancellationRequested();
+            yield break;
+        }
     }
 }
