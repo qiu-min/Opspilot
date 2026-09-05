@@ -2,6 +2,7 @@ import { Bot, Check, Copy, FileSpreadsheet, ThumbsDown, ThumbsUp, UserRound } fr
 import { useState } from "react";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
+import { AssistantMarkdown } from "./assistant-markdown";
 import type { ChatMessage } from "../types";
 
 type ChatMessageProps = {
@@ -39,7 +40,11 @@ export function ChatMessageView({ message, agentName }: ChatMessageProps) {
           <span className="text-[10px] text-mutedInk">{message.createdAt}</span>
         </div>
         <div className={isAssistant ? "rounded-r-xl rounded-bl-xl border border-line bg-surface px-4 py-3.5 shadow-hairline" : "rounded-l-xl rounded-br-xl bg-ink px-4 py-3.5 text-white"}>
-          <p className={isAssistant ? "text-[14px] leading-7 text-ink" : "text-[14px] leading-7 text-white/95"}>{message.body}</p>
+          {isAssistant ? (
+            <AssistantMarkdown content={message.body} />
+          ) : (
+            <p className="whitespace-pre-wrap text-[14px] leading-7 text-white/95">{message.body}</p>
+          )}
           {message.attachments && message.attachments.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-2">
               {message.attachments.map((attachment) => (

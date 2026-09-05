@@ -20,10 +20,12 @@ const WORKBOOK_GROUNDING_GUIDELINE =
   'When workbook-specific facts are required, inspect the workbook before answering.';
 
 const RESPONSE_STYLE_GUIDELINES = [
+  'Use clear, concise, and professional language.',
   'Prefer plain prose and simple Markdown.',
   'Do not use emojis unless explicitly requested.',
   'Avoid decorative symbols, ornamental separators, and excessive formatting.',
-  'Use headings, lists, tables, and bold text only when they improve readability.',
+  'Use headings, lists, tables, code blocks, and bold text only when they improve readability.',
+  'Keep formatting proportional to the complexity of the answer.',
 ] as const;
 
 export interface BuildOpsPilotSystemPromptOptions {

@@ -30,10 +30,12 @@ describe('buildOpsPilotSystemPrompt', () => {
     expect(prompt).toContain('Never invent worksheet names');
     expect(prompt).toContain('state the limitation clearly');
     expect(prompt).toContain('Response style:');
+    expect(prompt).toContain('- Use clear, concise, and professional language.');
     expect(prompt).toContain('- Prefer plain prose and simple Markdown.');
     expect(prompt).toContain('- Do not use emojis unless explicitly requested.');
     expect(prompt).toContain('- Avoid decorative symbols, ornamental separators, and excessive formatting.');
-    expect(prompt).toContain('- Use headings, lists, tables, and bold text only when they improve readability.');
+    expect(prompt).toContain('- Use headings, lists, tables, code blocks, and bold text only when they improve readability.');
+    expect(prompt).toContain('- Keep formatting proportional to the complexity of the answer.');
   });
 
   it('does not copy tool descriptions or parameter schemas', () => {
