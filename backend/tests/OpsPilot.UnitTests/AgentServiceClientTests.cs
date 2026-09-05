@@ -343,7 +343,7 @@ public sealed class AgentServiceClientTests
     }
 
     [Fact]
-    public async Task StreamTurnAsync_MapsErrorAndUnknownEventsWithoutStoppingTheStream()
+    public async Task StreamTurnAsync_MapsUnknownEventsAndContinuesToDone()
     {
         const string unknownOuterData = "{\"type\":\"retry_start\",\"attempt\":1}";
         const string unknownNestedData = "{\"type\":\"message_update\",\"event\":{\"type\":\"retry.delta\"},\"message\":{}}";
@@ -351,7 +351,6 @@ public sealed class AgentServiceClientTests
             SseResponse(
                 "event: retry_start\ndata: " + unknownOuterData + "\n\n" +
                 "event: message_update\ndata: " + unknownNestedData + "\n\n" +
-                "event: error\ndata: {\"type\":\"error\",\"message\":\"transport failed\"}\n\n" +
                 "event: done\ndata: {\"sessionId\":\"11111111-1111-1111-1111-111111111111\",\"leafId\":null,\"status\":\"error\"}\n\n")));
         using var httpClient = new HttpClient(handler)
         {
@@ -372,11 +371,94 @@ public sealed class AgentServiceClientTests
             "message_update",
             "retry.delta",
             unknownNestedData), events[1]);
-        Assert.Equal(new AgentServiceStreamEvent.Error("transport failed"), events[2]);
         Assert.Equal(new AgentServiceStreamEvent.Done(
             Guid.Parse("11111111-1111-1111-1111-111111111111"),
             null,
-            "error"), events[3]);
+            "error"), events[2]);
+    }
+
+    [Fact]
+    public async Task StreamTurnAsync_MapsTerminalErrorWithoutAppendingDone()
+    {
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(
+            SseResponse("""
+                event: error
+                data: {"type":"error","message":"transport failed"}
+                """)));
+        using var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://agent-service.test/"),
+        };
+        var client = new AgentServiceClient(httpClient);
+
+        List<AgentServiceStreamEvent> events = await CollectAsync(
+            client,
+            new AgentConversationTurnRequest(null, "Hello.", null),
+            CancellationToken.None);
+
+        Assert.Single(events);
+        Assert.Equal(new AgentServiceStreamEvent.Error("transport failed"), events[0]);
+    }
+
+    [Fact]
+    public async Task StreamTurnAsync_PreservesWhitespaceContentStrings()
+    {
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(
+            SseResponse("""
+                event: message_update
+                data: {"type":"message_update","event":{"type":"text.delta","contentIndex":0,"delta":" "},"message":{}}
+
+                event: message_update
+                data: {"type":"message_update","event":{"type":"thinking.delta","contentIndex":0,"delta":"\n"},"message":{}}
+
+                event: message_update
+                data: {"type":"message_update","event":{"type":"tool-call.delta","contentIndex":1,"callId":"call-1","delta":" "},"message":{}}
+
+                event: tool_execution_end
+                data: {"type":"tool_execution_end","toolCall":{"callId":"call-1","name":"lookup","arguments":{}},"result":{"role":"tool","callId":"call-1","name":"lookup","content":[{"type":"text","text":" "},{"type":"text","text":""}],"isError":false}}
+
+                """)));
+        using var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://agent-service.test/"),
+        };
+        var client = new AgentServiceClient(httpClient);
+
+        List<AgentServiceStreamEvent> events = await CollectAsync(
+            client,
+            new AgentConversationTurnRequest(null, "Hello.", null),
+            CancellationToken.None);
+
+        Assert.Equal(new AgentServiceStreamEvent.TextDelta(0, " "), events[0]);
+        Assert.Equal(new AgentServiceStreamEvent.ThinkingDelta(0, "\n"), events[1]);
+        Assert.Equal(new AgentServiceStreamEvent.ToolCallDelta(1, "call-1", " "), events[2]);
+
+        var toolExecution = Assert.IsType<AgentServiceStreamEvent.ToolExecutionCompleted>(events[3]);
+        Assert.Equal([" ", ""], toolExecution.Result.TextContent);
+    }
+
+    [Fact]
+    public async Task StreamTurnAsync_RejectsWhitespaceToolIdentifier()
+    {
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(
+            SseResponse("""
+                event: tool_execution_start
+                data: {"type":"tool_execution_start","toolCall":{"callId":"call-1","name":" ","arguments":{}}}
+
+                """)));
+        using var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://agent-service.test/"),
+        };
+        var client = new AgentServiceClient(httpClient);
+
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            CollectAsync(
+                client,
+                new AgentConversationTurnRequest(null, "Hello.", null),
+                CancellationToken.None));
+
+        Assert.Contains("name", exception.Message);
     }
 
     [Fact]

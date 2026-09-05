@@ -77,7 +77,7 @@ internal static class AgentServiceStreamEventParser
     private static AgentServiceStreamEvent ParseMessageUpdate(JsonElement data, SseFrame frame)
     {
         JsonElement nestedEvent = RequireObjectProperty(data, "event", frame);
-        string nestedEventName = RequireString(nestedEvent, "type", frame);
+        string nestedEventName = RequireNonEmptyString(nestedEvent, "type", frame);
 
         return nestedEventName switch
         {
@@ -89,7 +89,7 @@ internal static class AgentServiceStreamEventParser
                 RequireString(nestedEvent, "delta", frame)),
             "tool-call.delta" => new AgentServiceStreamEvent.ToolCallDelta(
                 RequireInt32(nestedEvent, "contentIndex", frame),
-                RequireString(nestedEvent, "callId", frame),
+                RequireNonEmptyString(nestedEvent, "callId", frame),
                 RequireString(nestedEvent, "delta", frame)),
             "tool-call.completed" => new AgentServiceStreamEvent.ToolCallCompleted(
                 RequireInt32(nestedEvent, "contentIndex", frame),
@@ -148,19 +148,19 @@ internal static class AgentServiceStreamEventParser
     {
         Guid sessionId = RequireGuid(data, "sessionId", frame);
         string? leafId = RequireNullableString(data, "leafId", frame);
-        string status = RequireString(data, "status", frame);
+        string status = RequireNonEmptyString(data, "status", frame);
         return new AgentServiceStreamEvent.Done(sessionId, leafId, status);
     }
 
     private static AgentServiceStreamEvent.Error ParseError(
         JsonElement data,
         SseFrame frame) =>
-        new(RequireString(data, "message", frame));
+        new(RequireNonEmptyString(data, "message", frame));
 
     private static AgentServiceToolCall ParseToolCall(JsonElement value, SseFrame frame)
     {
-        string callId = RequireString(value, "callId", frame);
-        string name = RequireString(value, "name", frame);
+        string callId = RequireNonEmptyString(value, "callId", frame);
+        string name = RequireNonEmptyString(value, "name", frame);
         JsonElement arguments = RequireProperty(value, "arguments", frame);
         if (arguments.ValueKind != JsonValueKind.Object)
         {
@@ -172,14 +172,14 @@ internal static class AgentServiceStreamEventParser
 
     private static AgentServiceToolResult ParseToolResult(JsonElement value, SseFrame frame)
     {
-        string role = RequireString(value, "role", frame);
+        string role = RequireNonEmptyString(value, "role", frame);
         if (!string.Equals(role, "tool", StringComparison.Ordinal))
         {
             throw Malformed(frame, "Property 'result.role' must be 'tool'.");
         }
 
-        string callId = RequireString(value, "callId", frame);
-        string name = RequireString(value, "name", frame);
+        string callId = RequireNonEmptyString(value, "callId", frame);
+        string name = RequireNonEmptyString(value, "name", frame);
         JsonElement content = RequireProperty(value, "content", frame);
         if (content.ValueKind != JsonValueKind.Array || content.GetArrayLength() == 0)
         {
@@ -190,7 +190,7 @@ internal static class AgentServiceStreamEventParser
         foreach (JsonElement item in content.EnumerateArray())
         {
             JsonElement contentItem = RequireObject(item, frame.Event);
-            string type = RequireString(contentItem, "type", frame);
+            string type = RequireNonEmptyString(contentItem, "type", frame);
             if (!string.Equals(type, "text", StringComparison.Ordinal))
             {
                 throw Malformed(frame, "Tool result content items must have type 'text'.");
@@ -211,7 +211,7 @@ internal static class AgentServiceStreamEventParser
 
     private static string RequireCompactionReason(JsonElement data, SseFrame frame)
     {
-        string reason = RequireString(data, "reason", frame);
+        string reason = RequireNonEmptyString(data, "reason", frame);
         if (reason is not ("threshold" or "overflow"))
         {
             throw Malformed(frame, "Property 'reason' must be 'threshold' or 'overflow'.");
@@ -306,13 +306,7 @@ internal static class AgentServiceStreamEventParser
             throw Malformed(frame, $"Property '{propertyName}' must be a string.");
         }
 
-        string? result = value.GetString();
-        if (string.IsNullOrWhiteSpace(result))
-        {
-            throw Malformed(frame, $"Property '{propertyName}' must not be empty.");
-        }
-
-        return result;
+        return value.GetString()!;
     }
 
     private static string? OptionalString(
@@ -346,24 +340,46 @@ internal static class AgentServiceStreamEventParser
             throw Malformed(frame, $"Property '{propertyName}' must be a string or null.");
         }
 
-        string? result = value.GetString();
-        if (string.IsNullOrWhiteSpace(result))
-        {
-            throw Malformed(frame, $"Property '{propertyName}' must not be empty.");
-        }
-
-        return result;
+        return RequireNonEmptyStringValue(value, propertyName, frame);
     }
 
     private static string RequireRole(JsonElement parent, string propertyName, SseFrame frame)
     {
-        string role = RequireString(parent, propertyName, frame);
+        string role = RequireNonEmptyString(parent, propertyName, frame);
         if (role is not ("user" or "assistant" or "tool"))
         {
             throw Malformed(frame, "Message role must be 'user', 'assistant', or 'tool'.");
         }
 
         return role;
+    }
+
+    private static string RequireNonEmptyString(
+        JsonElement parent,
+        string propertyName,
+        SseFrame frame)
+    {
+        JsonElement value = RequireProperty(parent, propertyName, frame);
+        if (value.ValueKind != JsonValueKind.String)
+        {
+            throw Malformed(frame, $"Property '{propertyName}' must be a string.");
+        }
+
+        return RequireNonEmptyStringValue(value, propertyName, frame);
+    }
+
+    private static string RequireNonEmptyStringValue(
+        JsonElement value,
+        string propertyName,
+        SseFrame frame)
+    {
+        string result = value.GetString()!;
+        if (string.IsNullOrWhiteSpace(result))
+        {
+            throw Malformed(frame, $"Property '{propertyName}' must not be empty.");
+        }
+
+        return result;
     }
 
     private static InvalidDataException Malformed(
