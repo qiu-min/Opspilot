@@ -835,9 +835,9 @@ describe('RunConversationTurn', () => {
         'agent_end',
       ]),
     );
+    expect(events.filter((event) => event.type === 'session_settled')).toHaveLength(1);
     expect(events.at(-1)).toEqual({
-      type: 'agent_end',
-      messages: expect.any(Array),
+      type: 'session_settled',
     });
   });
 
@@ -859,7 +859,7 @@ describe('RunConversationTurn', () => {
         { message: userMessage('hello') },
         {
           onEvent: async (event) => {
-            if (event.type !== 'agent_start') return;
+            if (event.type !== 'session_settled') return;
             listenerStarted.resolve(undefined);
             await releaseListener.promise;
           },

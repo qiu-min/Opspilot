@@ -342,6 +342,46 @@ describe('AgentSession composition and persistence', () => {
     session.dispose();
   });
 
+  it('emits one session_settled event after the final Agent event and awaits its listener', async () => {
+    const listenerStarted = createDeferred<void>();
+    const releaseListener = createDeferred<void>();
+    const events: AgentSessionEvent[] = [];
+    const session = createAgentSession({
+      sessionManager: SessionManager.inMemory(),
+      modelGateway: createGateway([assistantStream(assistantMessage('done'))]),
+      model,
+    });
+
+    session.subscribe(async (event) => {
+      events.push(event);
+      if (event.type !== 'session_settled') return;
+      listenerStarted.resolve(undefined);
+      await releaseListener.promise;
+    });
+
+    let promptResolved = false;
+    const promptPromise = session.prompt(userMessage('input')).then((messages) => {
+      promptResolved = true;
+      return messages;
+    });
+
+    await listenerStarted.promise;
+    expect(events.at(-1)).toEqual({ type: 'session_settled' });
+    expect(promptResolved).toBe(false);
+
+    const eventTypes = events.map((event) => event.type);
+    expect(eventTypes.filter((type) => type === 'session_settled')).toHaveLength(1);
+    expect(eventTypes.lastIndexOf('session_settled')).toBeGreaterThan(
+      eventTypes.lastIndexOf('agent_end'),
+    );
+
+    releaseListener.resolve(undefined);
+    await promptPromise;
+    expect(promptResolved).toBe(true);
+    expect(events.at(-1)).toEqual({ type: 'session_settled' });
+    session.dispose();
+  });
+
   it('rejects a second prompt during pre-prompt compaction', async () => {
     const compactingModel = { ...model, contextWindow: 100 };
     const sessionManager = SessionManager.inMemory();
@@ -498,11 +538,16 @@ describe('AgentSession composition and persistence', () => {
       },
       compactionSettings: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 },
     });
+    const firstPromptEvents: AgentSessionEvent[] = [];
     const unsubscribe = session.subscribe((event) => {
+      firstPromptEvents.push(event);
       if (event.type === 'compaction_start') throw new Error('prompt listener failed');
     });
 
     await expect(session.prompt(userMessage('A'))).rejects.toThrow('prompt listener failed');
+    expect(
+      firstPromptEvents.filter((event) => event.type === 'session_settled'),
+    ).toHaveLength(0);
     unsubscribe();
 
     await expect(session.prompt(userMessage('B'))).resolves.toEqual([userMessage('B'), response]);
@@ -618,6 +663,11 @@ describe('AgentSession composition and persistence', () => {
         aborted: false,
       }),
     ]);
+    const eventTypes = events.map((event) => event.type);
+    expect(eventTypes.at(-1)).toBe('session_settled');
+    expect(eventTypes.lastIndexOf('session_settled')).toBeGreaterThan(
+      eventTypes.lastIndexOf('compaction_end'),
+    );
 
     await session.prompt(secondInput);
 
@@ -698,6 +748,11 @@ describe('AgentSession composition and persistence', () => {
     expect(messageEntries(sessionManager)).toContainEqual(overflow);
     expect(messageEntries(sessionManager)).toContainEqual(recovered);
     expect(events.filter((event) => event.type === 'agent_start')).toHaveLength(2);
+    expect(events.filter((event) => event.type === 'session_settled')).toHaveLength(1);
+    const eventTypes = events.map((event) => event.type);
+    expect(eventTypes.lastIndexOf('session_settled')).toBeGreaterThan(
+      eventTypes.lastIndexOf('agent_end'),
+    );
     expect(errorInfoAtCompactionEnd).toBeUndefined();
     expect(messagesAtCompactionEnd).not.toContainEqual(overflow);
     expect(

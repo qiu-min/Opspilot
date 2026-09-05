@@ -236,6 +236,7 @@ describe('Conversation API', () => {
         type: 'tool_execution_start',
         toolCall: { callId: 'call-1', name: 'lookup', arguments: { query: 'hello' } },
       });
+      options?.onEvent?.({ type: 'session_settled' });
       return { ...turnResult, sessionId: sessionReadyId };
     };
     const controller = new ConversationsController(
@@ -257,6 +258,7 @@ describe('Conversation API', () => {
         `event: session_ready\ndata: {"type":"session_ready","sessionId":"${sessionReadyId}","created":true}\n\n`,
         'event: agent_start\ndata: {"type":"agent_start"}\n\n',
         'event: tool_execution_start\ndata: {"type":"tool_execution_start","toolCall":{"callId":"call-1","name":"lookup","arguments":{"query":"hello"}}}\n\n',
+        'event: session_settled\ndata: {"type":"session_settled"}\n\n',
         `event: done\ndata: {"sessionId":"${sessionReadyId}","leafId":"leaf-1","status":"completed"}\n\n`,
       ].join(''),
     );

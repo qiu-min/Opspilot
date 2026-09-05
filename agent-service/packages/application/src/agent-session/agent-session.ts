@@ -37,6 +37,9 @@ export type AgentSessionEvent =
       readonly aborted: boolean;
       readonly willRetry: boolean;
       readonly errorMessage?: string;
+    }
+  | {
+      readonly type: 'session_settled';
     };
 
 export type CompactionReason = 'threshold' | 'overflow';
@@ -68,7 +71,7 @@ export class AgentSession {
     );
   }
 
-  /** 将一条或多条用户消息交给 Agent Runtime 执行；同一 Session 不允许重叠 prompt operation。 */
+  /** 执行完整 prompt lifecycle；所有自动后处理完成并清理状态后发出一次 settled 事件。 */
   public async prompt(
     input: AgentMessage | readonly AgentMessage[],
   ): Promise<readonly AgentMessage[]> {
@@ -79,18 +82,21 @@ export class AgentSession {
 
     this.promptActive = true;
     this.overflowRecoveryAttempted = false;
+    const messages: AgentMessage[] = [];
     try {
       await this.maybeCompactBeforePrompt();
       this.assertNotDisposed();
-      const messages = [...(await this.agent.prompt(input))];
+      messages.push(...(await this.agent.prompt(input)));
       while (await this.handlePostAgentRun()) {
         messages.push(...(await this.agent.continue()));
       }
-      return messages;
     } finally {
       this.overflowRecoveryAttempted = false;
       this.promptActive = false;
     }
+
+    await this.emit({ type: 'session_settled' });
+    return messages;
   }
 
   /** 请求停止当前 Agent Run。 */
