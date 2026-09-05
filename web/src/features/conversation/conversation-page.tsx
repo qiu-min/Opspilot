@@ -75,7 +75,8 @@ export function ConversationPage() {
   const [isExecutionExpanded, setIsExecutionExpanded] = useState(false);
   const [isContextVisible, setIsContextVisible] = useState(false);
   const [isMobileNavVisible, setIsMobileNavVisible] = useState(false);
-  const [statusMessage, setStatusMessage] = useState("Ready");
+  const [pageStatusMessage, setPageStatusMessage] = useState("Ready");
+  const [statusMessagesByConversationId, setStatusMessagesByConversationId] = useState<Record<string, string | undefined>>({});
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
@@ -99,6 +100,23 @@ export function ConversationPage() {
     setHistoryLoadingByConversationId((current) => ({
       ...current,
       [conversationId]: isLoading,
+    }));
+  }, []);
+
+  const clearConversationStreamState = useCallback((conversationId: string) => {
+    setStreamStatesByConversationId((current) => {
+      if (!(conversationId in current)) return current;
+
+      const next = { ...current };
+      delete next[conversationId];
+      return next;
+    });
+  }, []);
+
+  const setConversationStatus = useCallback((conversationId: string, message: string) => {
+    setStatusMessagesByConversationId((current) => ({
+      ...current,
+      [conversationId]: message,
     }));
   }, []);
 
@@ -189,6 +207,7 @@ export function ConversationPage() {
           ...current,
           [conversationId]: items,
         }));
+        clearConversationStreamState(conversationId);
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
@@ -217,7 +236,7 @@ export function ConversationPage() {
         historyAbortControllerRef.current = null;
       }
     };
-  }, [accessToken, activeConversationId, setHistoryLoading]);
+  }, [accessToken, activeConversationId, clearConversationStreamState, setHistoryLoading]);
 
   useEffect(() => {
     return () => {
@@ -237,6 +256,10 @@ export function ConversationPage() {
   const activeStreamState = activeConversationId
     ? streamStatesByConversationId[activeConversationId]
     : undefined;
+  const activeConversationStatus = activeConversationId
+    ? statusMessagesByConversationId[activeConversationId]
+    : undefined;
+  const liveStatusMessage = activeConversationStatus ?? pageStatusMessage;
   const conversationError = activeConversationId ? errorsByConversationId[activeConversationId] : undefined;
   const visibleError = conversationError ?? pageError;
   const accountEmail = session?.email ?? "Signed-in account";
@@ -277,12 +300,12 @@ export function ConversationPage() {
       setIsExecutionExpanded(false);
       setIsMobileNavVisible(false);
       setConversationListError(null);
-      setStatusMessage("New conversation ready");
+      setPageStatusMessage("New conversation ready");
     } catch (error: unknown) {
       if (controller.signal.aborted) return;
 
       setPageError(getConversationErrorMessage(error, "Unable to create a conversation. Try again."));
-      setStatusMessage("Conversation creation failed");
+      setPageStatusMessage("Conversation creation failed");
     } finally {
       if (createAbortControllerRef.current === controller) {
         createAbortControllerRef.current = null;
@@ -301,7 +324,7 @@ export function ConversationPage() {
     setDraft("");
     setIsExecutionExpanded(false);
     setIsMobileNavVisible(false);
-    setStatusMessage(`Selected ${conversation.title}`);
+    setPageStatusMessage(`Selected ${conversation.title}`);
   }
 
   async function handleSubmit({ body, attachments: submittedAttachments }: ComposerSubmitPayload) {
@@ -312,7 +335,7 @@ export function ConversationPage() {
     if (submittedAttachments.length > 0) {
       const message = "File attachments are not connected yet. Remove the attachment before sending.";
       setErrorsByConversationId((current) => ({ ...current, [conversationId]: message }));
-      setStatusMessage("Attachment sending is unavailable");
+      setConversationStatus(conversationId, "Attachment sending is unavailable");
       return;
     }
 
@@ -342,7 +365,7 @@ export function ConversationPage() {
       [conversationId]: [...(current[conversationId] ?? []), { type: "message", id: userMessage.id, message: userMessage }],
     }));
     setDraft("");
-    setStatusMessage("Processing your request");
+    setConversationStatus(conversationId, "Processing your request");
 
     const controller = new AbortController();
     turnAbortControllersRef.current.set(conversationId, controller);
@@ -361,16 +384,6 @@ export function ConversationPage() {
           (item) => item.id !== userMessage.id,
         ),
       }));
-    };
-
-    const clearStreamState = () => {
-      setStreamStatesByConversationId((current) => {
-        if (!(conversationId in current)) return current;
-
-        const next = { ...current };
-        delete next[conversationId];
-        return next;
-      });
     };
 
     const publishStreamState = (nextState: ConversationStreamState) => {
@@ -392,21 +405,22 @@ export function ConversationPage() {
 
         if (event.type === "response_started") {
           responseStarted = true;
-          setStatusMessage("Assistant response started");
+          setConversationStatus(conversationId, "Assistant response started");
         } else if (event.type === "assistant_thinking_started") {
-          setStatusMessage("Assistant is thinking");
+          setConversationStatus(conversationId, "Assistant is thinking");
         } else if (event.type === "assistant_thinking_completed") {
-          setStatusMessage("Assistant is responding");
+          setConversationStatus(conversationId, "Assistant is responding");
         } else if (event.type === "tool_execution_started") {
-          setStatusMessage(`Running ${event.name}`);
+          setConversationStatus(conversationId, `Running ${event.name}`);
         } else if (event.type === "tool_execution_completed") {
-          setStatusMessage(event.isError ? `${event.name} failed` : `${event.name} completed`);
+          setConversationStatus(conversationId, event.isError ? `${event.name} failed` : `${event.name} completed`);
         } else if (event.type === "context_compaction_started") {
-          setStatusMessage("Optimizing context");
+          setConversationStatus(conversationId, "Optimizing context");
         } else if (event.type === "context_compaction_completed") {
-          setStatusMessage("Assistant is responding");
+          setConversationStatus(conversationId, "Assistant is responding");
         } else if (event.type === "response_completed") {
-          setStatusMessage(
+          setConversationStatus(
+            conversationId,
             event.status === "completed"
               ? "Response completed"
               : event.status === "aborted"
@@ -426,7 +440,7 @@ export function ConversationPage() {
               ...current,
               [conversationId]: toConversationItems(response),
             }));
-            clearStreamState();
+            clearConversationStreamState(conversationId);
             setErrorsByConversationId((current) => {
               const next = { ...current };
               if (event.status === "completed") {
@@ -450,7 +464,7 @@ export function ConversationPage() {
               ...current,
               [conversationId]: "Response completed, but conversation history could not be refreshed.",
             }));
-            setStatusMessage("Response completed, but history could not be refreshed");
+            setConversationStatus(conversationId, "Response completed, but history could not be refreshed");
             void refreshConversations(
               false,
               "Response completed, but the conversation list could not be refreshed.",
@@ -462,7 +476,7 @@ export function ConversationPage() {
             ...current,
             [conversationId]: "The response failed. Try again.",
           }));
-          setStatusMessage("Response failed. You can try again.");
+          setConversationStatus(conversationId, "Response failed. You can try again.");
           break;
         }
       }
@@ -470,7 +484,7 @@ export function ConversationPage() {
       if (controller.signal.aborted) {
         if (!responseStarted) {
           removeOptimisticUserMessage();
-          clearStreamState();
+          clearConversationStreamState(conversationId);
         }
         return;
       }
@@ -478,7 +492,7 @@ export function ConversationPage() {
       const message = getConversationStreamErrorMessage(error);
       if (!responseStarted) {
         removeOptimisticUserMessage();
-        clearStreamState();
+        clearConversationStreamState(conversationId);
       } else {
         if (streamState.phase === "streaming") {
           streamState = reduceConversationStreamEvent(streamState, {
@@ -490,7 +504,7 @@ export function ConversationPage() {
       }
 
       setErrorsByConversationId((current) => ({ ...current, [conversationId]: message }));
-      setStatusMessage("Request failed. You can try again.");
+      setConversationStatus(conversationId, "Request failed. You can try again.");
     } finally {
       turnAbortControllersRef.current.delete(conversationId);
       processingConversationIdsRef.current.delete(conversationId);
@@ -522,7 +536,7 @@ export function ConversationPage() {
       delete next[conversationId];
       return next;
     });
-    setStatusMessage(`${nextFiles.length} file${nextFiles.length === 1 ? "" : "s"} attached`);
+    setConversationStatus(conversationId, `${nextFiles.length} file${nextFiles.length === 1 ? "" : "s"} attached`);
   }
 
   function handleRemoveAttachment(id: string) {
@@ -588,7 +602,7 @@ export function ConversationPage() {
         </main>
       </div>
 
-      <div className="sr-only" aria-live="polite" aria-atomic="true">{statusMessage}</div>
+      <div className="sr-only" aria-live="polite" aria-atomic="true">{liveStatusMessage}</div>
 
       {isMobileNavVisible && (
         <div className="fixed inset-0 z-40 bg-navy/30 lg:hidden" onClick={() => setIsMobileNavVisible(false)}>

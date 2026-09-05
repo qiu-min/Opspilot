@@ -2,6 +2,7 @@ import { LoaderCircle } from "lucide-react";
 import { AgentExecutionCard } from "./agent-execution-card";
 import { ChatMessageView } from "./chat-message";
 import type {
+  ConversationStreamPhase,
   ConversationStreamState,
   ConversationStreamToolExecution,
 } from "../conversation-stream-state";
@@ -41,7 +42,7 @@ export function StreamingConversationResponse({
               key={chatMessage.id}
               message={chatMessage}
               agentName={agentName}
-              isStreaming={!message.completed}
+              isStreaming={streamState.phase === "streaming" && !message.completed}
             />
           );
         }
@@ -54,7 +55,7 @@ export function StreamingConversationResponse({
         return (
           <AgentExecutionCard
             key={`stream-${conversationId}-tool-${tool.callId}`}
-            execution={toStreamingToolExecution(tool, conversationId, agentName)}
+            execution={toStreamingToolExecution(tool, conversationId, agentName, streamState.phase)}
             isExpanded={isExecutionExpanded}
             onToggle={onToggleExecution}
           />
@@ -79,15 +80,25 @@ function toStreamingToolExecution(
   tool: ConversationStreamToolExecution,
   conversationId: string,
   agentName: string,
+  streamPhase: ConversationStreamPhase,
 ) {
-  const status: AgentExecutionStatus =
-    tool.status === "running"
-      ? "running"
-      : tool.isError
-        ? "failed"
-        : "complete";
-  const statusLabel =
-    status === "running" ? "Running" : status === "failed" ? "Failed" : "Complete";
+  const isInterrupted = tool.status === "running" && streamPhase !== "streaming";
+  let status: AgentExecutionStatus;
+  if (isInterrupted) {
+    status = "failed";
+  } else if (tool.status === "running") {
+    status = "running";
+  } else {
+    status = tool.isError ? "failed" : "complete";
+  }
+
+  const statusLabel = isInterrupted
+    ? "Interrupted"
+    : status === "running"
+      ? "Running"
+      : status === "failed"
+        ? "Failed"
+        : "Complete";
 
   return {
     id: `stream-${conversationId}-tool-${tool.callId}`,
