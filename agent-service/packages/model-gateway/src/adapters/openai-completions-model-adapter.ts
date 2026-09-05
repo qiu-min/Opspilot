@@ -387,7 +387,7 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
           provider: model.provider,
           model: model.id,
           content: blocks,
-          toolCalls,
+          ...(toolCalls.length === 0 ? {} : { toolCalls }),
           finishReason: toolCalls.length > 0 ? 'tool_calls' : finalReason,
           ...(rawFinishReason === undefined ? {} : { rawFinishReason }),
           ...(finalUsage === undefined ? {} : { usage: finalUsage }),

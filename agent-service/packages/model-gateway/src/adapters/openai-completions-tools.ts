@@ -66,8 +66,8 @@ export function toOpenAiCompletionsMessages(
           block.source.model === model.id,
       );
       const reasoning = thinkingBlocks[0];
-      const toolCalls = message.toolCalls;
-      const hasToolCalls = toolCalls !== undefined && toolCalls.length > 0;
+      const toolCalls = message.toolCalls ?? [];
+      const hasToolCalls = toolCalls.length > 0;
       const reasoningContent = reasoning
         ? thinkingBlocks.map((block) => block.thinking).join('\n')
         : undefined;
@@ -85,15 +85,15 @@ export function toOpenAiCompletionsMessages(
             : reasoning.thinkingSignature === 'reasoning'
               ? { reasoning: reasoningContent }
               : { reasoning_text: reasoningContent }),
-        ...(toolCalls === undefined
-          ? {}
-          : {
+        ...(hasToolCalls
+          ? {
               tool_calls: toolCalls.map((call) => ({
                 id: call.callId,
                 type: 'function',
                 function: { name: call.name, arguments: JSON.stringify(call.arguments) },
               })),
-            }),
+            }
+          : {}),
       };
     }
     return { role: message.role, content };

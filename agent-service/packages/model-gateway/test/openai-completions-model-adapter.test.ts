@@ -84,6 +84,14 @@ const assistantToolCallMessage = {
   provider: model.provider,
   model: model.id,
 };
+const assistantTextMessage = {
+  role: 'assistant' as const,
+  content: [{ type: 'text' as const, text: 'hello' }],
+  finishReason: 'stop' as const,
+  api: model.api,
+  provider: model.provider,
+  model: model.id,
+};
 function stream(...items: unknown[]): AsyncIterable<unknown> {
   return (async function* () {
     yield* items;
@@ -238,6 +246,87 @@ describe('OpenAI Chat Completions adapter', () => {
 
     expect(assistant).toMatchObject({ role: 'assistant', content: '' });
   });
+
+  it('omits tool_calls when assistant history has no toolCalls field', () => {
+    const [assistant] = toOpenAiCompletionsMessages(
+      { messages: [{ ...assistantTextMessage, toolCalls: undefined }] },
+      model,
+    );
+
+    expect(assistant).not.toHaveProperty('tool_calls');
+  });
+
+  it('omits tool_calls when assistant history has an empty toolCalls array', () => {
+    const [assistant] = toOpenAiCompletionsMessages(
+      { messages: [{ ...assistantTextMessage, toolCalls: [] }] },
+      model,
+    );
+
+    expect(assistant).not.toHaveProperty('tool_calls');
+  });
+
+  it('serializes non-empty assistant toolCalls with the OpenAI wire shape', () => {
+    const [assistant] = toOpenAiCompletionsMessages(
+      {
+        messages: [
+          {
+            ...assistantTextMessage,
+            toolCalls: [{ callId: 'call_1', name: 'lookup', arguments: {} }],
+            finishReason: 'tool_calls' as const,
+          },
+        ],
+      },
+      model,
+    );
+
+    expect(assistant).toMatchObject({
+      role: 'assistant',
+      tool_calls: [
+        {
+          id: 'call_1',
+          type: 'function',
+          function: { name: 'lookup', arguments: '{}' },
+        },
+      ],
+    });
+  });
+
+  it('omits empty tool_calls from a multi-turn assistant history message', () => {
+    const messages = toOpenAiCompletionsMessages(
+      {
+        messages: [
+          { role: 'user', content: [{ type: 'text' as const, text: 'first question' }] },
+          { ...assistantTextMessage, toolCalls: [] },
+          { role: 'user', content: [{ type: 'text' as const, text: 'second question' }] },
+        ],
+      },
+      model,
+    );
+
+    expect(messages).toEqual([
+      { role: 'user', content: 'first question' },
+      { role: 'assistant', content: 'hello' },
+      { role: 'user', content: 'second question' },
+    ]);
+    expect(JSON.stringify(messages)).not.toContain('"tool_calls":[]');
+  });
+
+  it('does not persist empty toolCalls for a text-only provider response', async () => {
+    const adapter = new OpenAiCompletionsModelAdapter(() => ({
+      chat: {
+        completions: {
+          async create() {
+            return stream({ choices: [{ delta: { content: 'done' }, finish_reason: 'stop' }] });
+          },
+        },
+      },
+    }));
+
+    const response = await adapter.stream(model, { messages: context.messages }, {}, provider).result();
+
+    expect(response).not.toHaveProperty('toolCalls');
+  });
+
   it('serializes assistant tool calls for a following tool result', async () => {
     let sent: OpenAiCompletionsRequest | undefined;
     const adapter = new OpenAiCompletionsModelAdapter(() => ({
