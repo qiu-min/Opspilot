@@ -48,29 +48,46 @@ public sealed class StreamConversationTurnHandler(
             command.Message,
             excelResource);
         Guid? resolvedSessionId = conversation.AgentSessionId;
+        bool sessionReadyObserved = false;
+        bool terminalEventObserved = false;
         bool thinkingActive = false;
         bool assistantMessageVisible = false;
-
-        yield return new ConversationStreamEvent.ResponseStarted();
 
         await foreach (AgentServiceStreamEvent agentEvent in agentConversationClient.StreamTurnAsync(
             request,
             cancellationToken))
         {
+            if (!sessionReadyObserved && agentEvent is not AgentServiceStreamEvent.SessionReady)
+            {
+                throw new InvalidOperationException(
+                    "Agent Service stream must begin with a session-ready event.");
+            }
+
             switch (agentEvent)
             {
                 case AgentServiceStreamEvent.SessionReady sessionReady:
+                    if (sessionReadyObserved)
+                    {
+                        throw new InvalidOperationException(
+                            "Agent Service returned more than one session-ready event.");
+                    }
+
                     if (resolvedSessionId is Guid existingSessionId)
                     {
                         EnsureSessionMatches(existingSessionId, sessionReady.SessionId);
-                        break;
                     }
 
-                    conversation.BindAgentSession(
-                        sessionReady.SessionId,
-                        timeProvider.GetUtcNow().UtcDateTime);
-                    await conversationRepository.SaveChangesAsync(cancellationToken);
-                    resolvedSessionId = sessionReady.SessionId;
+                    else
+                    {
+                        conversation.BindAgentSession(
+                            sessionReady.SessionId,
+                            timeProvider.GetUtcNow().UtcDateTime);
+                        await conversationRepository.SaveChangesAsync(cancellationToken);
+                        resolvedSessionId = sessionReady.SessionId;
+                    }
+
+                    sessionReadyObserved = true;
+                    yield return new ConversationStreamEvent.ResponseStarted();
                     break;
 
                 case AgentServiceStreamEvent.MessageStarted messageStarted
@@ -153,11 +170,18 @@ public sealed class StreamConversationTurnHandler(
                     break;
 
                 case AgentServiceStreamEvent.Done done:
+                    if (!sessionReadyObserved)
+                    {
+                        throw new InvalidOperationException(
+                            "Agent Service completed the stream before session-ready.");
+                    }
+
                     EnsureResolvedSessionMatches(resolvedSessionId, done.SessionId);
                     conversation.BindAgentSession(
                         done.SessionId,
                         timeProvider.GetUtcNow().UtcDateTime);
                     await conversationRepository.SaveChangesAsync(cancellationToken);
+                    terminalEventObserved = true;
                     yield return new ConversationStreamEvent.ResponseCompleted(
                         command.ConversationId,
                         done.LeafId,
@@ -165,9 +189,22 @@ public sealed class StreamConversationTurnHandler(
                     yield break;
 
                 case AgentServiceStreamEvent.Error error:
+                    if (!sessionReadyObserved)
+                    {
+                        throw new InvalidOperationException(
+                            "Agent Service returned an error before session-ready.");
+                    }
+
+                    terminalEventObserved = true;
                     yield return new ConversationStreamEvent.Error(error.Message);
                     yield break;
             }
+        }
+
+        if (!terminalEventObserved)
+        {
+            throw new InvalidOperationException(
+                "Agent Service stream ended without a terminal event.");
         }
     }
 

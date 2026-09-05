@@ -82,6 +82,7 @@ public sealed class StreamConversationTurnHandlerTests
         {
             Events =
             [
+                new AgentServiceStreamEvent.SessionReady(FirstSessionId, false),
                 new AgentServiceStreamEvent.Done(FirstSessionId, "leaf-1", "completed"),
             ],
         };
@@ -115,7 +116,7 @@ public sealed class StreamConversationTurnHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_EmitsResponseStartedOnceBeforeAgentEvents()
+    public async Task HandleAsync_EmitsResponseStartedOnceAfterSessionReady()
     {
         Conversation conversation = CreateConversation(CurrentUserId);
         var repository = new FakeConversationRepository { Conversation = conversation };
@@ -145,6 +146,152 @@ public sealed class StreamConversationTurnHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_WhenAgentStartedIsFirstEventThrowsProtocolViolation()
+    {
+        Conversation conversation = CreateConversation(CurrentUserId);
+        var repository = new FakeConversationRepository { Conversation = conversation };
+        var agentClient = new FakeAgentConversationClient
+        {
+            Events = [new AgentServiceStreamEvent.AgentStarted()],
+        };
+        StreamConversationTurnHandler handler = CreateHandler(
+            repository,
+            new FakeFileAssetRepository(null),
+            agentClient);
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => CollectAsync(
+                handler,
+                new StreamConversationTurnCommand(conversation.Id, null, "Hello."),
+                CancellationToken.None));
+
+        Assert.Equal(
+            "Agent Service stream must begin with a session-ready event.",
+            exception.Message);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenTextDeltaIsFirstEventThrowsProtocolViolation()
+    {
+        Conversation conversation = CreateConversation(CurrentUserId);
+        var repository = new FakeConversationRepository { Conversation = conversation };
+        var agentClient = new FakeAgentConversationClient
+        {
+            Events = [new AgentServiceStreamEvent.TextDelta(0, "answer")],
+        };
+        StreamConversationTurnHandler handler = CreateHandler(
+            repository,
+            new FakeFileAssetRepository(null),
+            agentClient);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(
+            handler,
+            new StreamConversationTurnCommand(conversation.Id, null, "Hello."),
+            CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenDoneIsFirstEventFailsEvenForExistingSession()
+    {
+        Conversation conversation = CreateConversation(CurrentUserId);
+        conversation.BindAgentSession(FirstSessionId, CreatedAtUtc);
+        var repository = new FakeConversationRepository { Conversation = conversation };
+        var agentClient = new FakeAgentConversationClient
+        {
+            Events = [new AgentServiceStreamEvent.Done(FirstSessionId, null, "completed")],
+        };
+        StreamConversationTurnHandler handler = CreateHandler(
+            repository,
+            new FakeFileAssetRepository(null),
+            agentClient);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(
+            handler,
+            new StreamConversationTurnCommand(conversation.Id, null, "Hello."),
+            CancellationToken.None));
+
+        Assert.Equal(0, repository.SaveChangesCallCount);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenSessionReadyIsDuplicatedThrowsProtocolViolation()
+    {
+        Conversation conversation = CreateConversation(CurrentUserId);
+        var repository = new FakeConversationRepository { Conversation = conversation };
+        var agentClient = new FakeAgentConversationClient
+        {
+            Events =
+            [
+                new AgentServiceStreamEvent.SessionReady(FirstSessionId, false),
+                new AgentServiceStreamEvent.SessionReady(FirstSessionId, false),
+            ],
+        };
+        StreamConversationTurnHandler handler = CreateHandler(
+            repository,
+            new FakeFileAssetRepository(null),
+            agentClient);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(
+            handler,
+            new StreamConversationTurnCommand(conversation.Id, null, "Hello."),
+            CancellationToken.None));
+
+        Assert.Equal(FirstSessionId, conversation.AgentSessionId);
+        Assert.Equal(1, repository.SaveChangesCallCount);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenStreamEndsAfterSessionReadyThrowsWithoutTerminalEvent()
+    {
+        Conversation conversation = CreateConversation(CurrentUserId);
+        var repository = new FakeConversationRepository { Conversation = conversation };
+        var agentClient = new FakeAgentConversationClient
+        {
+            Events = [new AgentServiceStreamEvent.SessionReady(FirstSessionId, false)],
+        };
+        StreamConversationTurnHandler handler = CreateHandler(
+            repository,
+            new FakeFileAssetRepository(null),
+            agentClient);
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => CollectAsync(
+                handler,
+                new StreamConversationTurnCommand(conversation.Id, null, "Hello."),
+                CancellationToken.None));
+
+        Assert.Equal(
+            "Agent Service stream ended without a terminal event.",
+            exception.Message);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenStreamEndsAfterAssistantEventsThrowsWithoutTerminalEvent()
+    {
+        Conversation conversation = CreateConversation(CurrentUserId);
+        var repository = new FakeConversationRepository { Conversation = conversation };
+        var agentClient = new FakeAgentConversationClient
+        {
+            Events =
+            [
+                new AgentServiceStreamEvent.SessionReady(FirstSessionId, false),
+                new AgentServiceStreamEvent.MessageStarted("assistant"),
+                new AgentServiceStreamEvent.TextDelta(0, "answer"),
+                new AgentServiceStreamEvent.MessageCompleted("assistant"),
+            ],
+        };
+        StreamConversationTurnHandler handler = CreateHandler(
+            repository,
+            new FakeFileAssetRepository(null),
+            agentClient);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(
+            handler,
+            new StreamConversationTurnCommand(conversation.Id, null, "Hello."),
+            CancellationToken.None));
+    }
+
+    [Fact]
     public async Task HandleAsync_SessionReadyBindsAndSavesBeforeReadingNextAgentEvent()
     {
         Conversation conversation = CreateConversation(CurrentUserId);
@@ -171,10 +318,18 @@ public sealed class StreamConversationTurnHandlerTests
             new FakeFileAssetRepository(null),
             agentClient);
 
-        List<ConversationStreamEvent> events = await CollectAsync(
-            handler,
+        await using IAsyncEnumerator<ConversationStreamEvent> enumerator = handler.HandleAsync(
             new StreamConversationTurnCommand(conversation.Id, null, "Hello."),
-            CancellationToken.None);
+            CancellationToken.None)
+            .GetAsyncEnumerator(CancellationToken.None);
+
+        Assert.True(await enumerator.MoveNextAsync());
+        Assert.IsType<ConversationStreamEvent.ResponseStarted>(enumerator.Current);
+        Assert.Equal(1, repository.SaveChangesCallCount);
+
+        while (await enumerator.MoveNextAsync())
+        {
+        }
 
         Assert.Equal(FirstSessionId, conversation.AgentSessionId);
         Assert.Equal(StreamUpdatedAtUtc, conversation.UpdatedAtUtc);
@@ -244,7 +399,11 @@ public sealed class StreamConversationTurnHandlerTests
         var repository = new FakeConversationRepository { Conversation = conversation };
         var agentClient = new FakeAgentConversationClient
         {
-            Events = [new AgentServiceStreamEvent.Done(SecondSessionId, "leaf-1", "completed")],
+            Events =
+            [
+                new AgentServiceStreamEvent.SessionReady(FirstSessionId, true),
+                new AgentServiceStreamEvent.Done(SecondSessionId, "leaf-1", "completed"),
+            ],
         };
         StreamConversationTurnHandler handler = CreateHandler(
             repository,
@@ -362,10 +521,12 @@ public sealed class StreamConversationTurnHandlerTests
         {
             Events =
             [
+                new AgentServiceStreamEvent.SessionReady(FirstSessionId, true),
                 new AgentServiceStreamEvent.MessageStarted("assistant"),
                 new AgentServiceStreamEvent.TextDelta(0, "hello"),
                 new AgentServiceStreamEvent.TextDelta(0, " "),
                 new AgentServiceStreamEvent.MessageCompleted("assistant"),
+                new AgentServiceStreamEvent.Done(FirstSessionId, null, "completed"),
             ],
         };
         StreamConversationTurnHandler handler = CreateHandler(
@@ -384,7 +545,8 @@ public sealed class StreamConversationTurnHandlerTests
             item => Assert.IsType<ConversationStreamEvent.AssistantMessageStarted>(item),
             item => Assert.Equal(new ConversationStreamEvent.AssistantTextDelta("hello"), item),
             item => Assert.Equal(new ConversationStreamEvent.AssistantTextDelta(" "), item),
-            item => Assert.IsType<ConversationStreamEvent.AssistantMessageCompleted>(item));
+            item => Assert.IsType<ConversationStreamEvent.AssistantMessageCompleted>(item),
+            item => Assert.IsType<ConversationStreamEvent.ResponseCompleted>(item));
     }
 
     [Fact]
@@ -396,13 +558,13 @@ public sealed class StreamConversationTurnHandlerTests
         {
             Events =
             [
+                new AgentServiceStreamEvent.SessionReady(FirstSessionId, true),
                 new AgentServiceStreamEvent.MessageStarted("assistant"),
                 new AgentServiceStreamEvent.ToolCallDelta(0, "call-1", "{"),
                 new AgentServiceStreamEvent.ToolCallCompleted(
                     0,
                     new AgentServiceToolCall("call-1", "lookup", "{}")),
                 new AgentServiceStreamEvent.MessageCompleted("assistant"),
-                new AgentServiceStreamEvent.SessionReady(FirstSessionId, true),
                 new AgentServiceStreamEvent.Done(FirstSessionId, null, "completed"),
             ],
         };
@@ -430,10 +592,12 @@ public sealed class StreamConversationTurnHandlerTests
         {
             Events =
             [
+                new AgentServiceStreamEvent.SessionReady(FirstSessionId, true),
                 new AgentServiceStreamEvent.MessageStarted("assistant"),
                 new AgentServiceStreamEvent.ThinkingDelta(0, "private"),
                 new AgentServiceStreamEvent.TextDelta(0, "answer"),
                 new AgentServiceStreamEvent.MessageCompleted("assistant"),
+                new AgentServiceStreamEvent.Done(FirstSessionId, null, "completed"),
             ],
         };
         StreamConversationTurnHandler handler = CreateHandler(
@@ -453,7 +617,8 @@ public sealed class StreamConversationTurnHandlerTests
             item => Assert.IsType<ConversationStreamEvent.AssistantThinkingCompleted>(item),
             item => Assert.IsType<ConversationStreamEvent.AssistantMessageStarted>(item),
             item => Assert.Equal(new ConversationStreamEvent.AssistantTextDelta("answer"), item),
-            item => Assert.IsType<ConversationStreamEvent.AssistantMessageCompleted>(item));
+            item => Assert.IsType<ConversationStreamEvent.AssistantMessageCompleted>(item),
+            item => Assert.IsType<ConversationStreamEvent.ResponseCompleted>(item));
     }
 
     [Fact]
@@ -465,9 +630,11 @@ public sealed class StreamConversationTurnHandlerTests
         {
             Events =
             [
+                new AgentServiceStreamEvent.SessionReady(FirstSessionId, true),
                 new AgentServiceStreamEvent.MessageStarted("assistant"),
                 new AgentServiceStreamEvent.ThinkingDelta(0, "private"),
                 new AgentServiceStreamEvent.MessageCompleted("assistant"),
+                new AgentServiceStreamEvent.Done(FirstSessionId, null, "completed"),
             ],
         };
         StreamConversationTurnHandler handler = CreateHandler(
@@ -484,7 +651,8 @@ public sealed class StreamConversationTurnHandlerTests
             events,
             item => Assert.IsType<ConversationStreamEvent.ResponseStarted>(item),
             item => Assert.IsType<ConversationStreamEvent.AssistantThinkingStarted>(item),
-            item => Assert.IsType<ConversationStreamEvent.AssistantThinkingCompleted>(item));
+            item => Assert.IsType<ConversationStreamEvent.AssistantThinkingCompleted>(item),
+            item => Assert.IsType<ConversationStreamEvent.ResponseCompleted>(item));
     }
 
     [Fact]
@@ -496,11 +664,13 @@ public sealed class StreamConversationTurnHandlerTests
         {
             Events =
             [
+                new AgentServiceStreamEvent.SessionReady(FirstSessionId, true),
                 new AgentServiceStreamEvent.ToolExecutionStarted(
                     new AgentServiceToolCall("call-1", "lookup", "{\"query\":\"hello\"}")),
                 new AgentServiceStreamEvent.ToolExecutionCompleted(
                     new AgentServiceToolCall("call-1", "lookup", "{\"query\":\"hello\"}"),
                     new AgentServiceToolResult("call-1", "lookup", ["secret result"], true, "{\"trace\":1}")),
+                new AgentServiceStreamEvent.Done(FirstSessionId, null, "completed"),
             ],
         };
         StreamConversationTurnHandler handler = CreateHandler(
@@ -522,7 +692,8 @@ public sealed class StreamConversationTurnHandlerTests
             item => Assert.Equal(new ConversationStreamEvent.ToolExecutionCompleted(
                 "call-1",
                 "lookup",
-                true), item));
+                true), item),
+            item => Assert.IsType<ConversationStreamEvent.ResponseCompleted>(item));
     }
 
     [Fact]
@@ -534,9 +705,11 @@ public sealed class StreamConversationTurnHandlerTests
         {
             Events =
             [
+                new AgentServiceStreamEvent.SessionReady(FirstSessionId, true),
                 new AgentServiceStreamEvent.Usage(10, 4, 14),
                 new AgentServiceStreamEvent.CompactionStarted("overflow"),
                 new AgentServiceStreamEvent.CompactionCompleted("overflow", false, true, "secret"),
+                new AgentServiceStreamEvent.Done(FirstSessionId, null, "completed"),
             ],
         };
         StreamConversationTurnHandler handler = CreateHandler(
@@ -558,7 +731,8 @@ public sealed class StreamConversationTurnHandlerTests
                 "overflow",
                 false,
                 true,
-                true), item));
+                true), item),
+            item => Assert.IsType<ConversationStreamEvent.ResponseCompleted>(item));
     }
 
     [Fact]
@@ -570,6 +744,7 @@ public sealed class StreamConversationTurnHandlerTests
         {
             Events =
             [
+                new AgentServiceStreamEvent.SessionReady(FirstSessionId, true),
                 new AgentServiceStreamEvent.AgentStarted(),
                 new AgentServiceStreamEvent.AgentEnded(),
                 new AgentServiceStreamEvent.TurnStarted(),
@@ -580,7 +755,6 @@ public sealed class StreamConversationTurnHandlerTests
                     new AgentServiceToolCall("call-1", "lookup", "{}")),
                 new AgentServiceStreamEvent.SessionSettled(),
                 new AgentServiceStreamEvent.Unknown("retry_start", null, "{}"),
-                new AgentServiceStreamEvent.SessionReady(FirstSessionId, true),
                 new AgentServiceStreamEvent.Done(FirstSessionId, null, "completed"),
             ],
         };
