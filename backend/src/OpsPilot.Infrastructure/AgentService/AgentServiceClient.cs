@@ -13,6 +13,29 @@ public sealed class AgentServiceClient(HttpClient httpClient) : IAgentConversati
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
+    public async Task<AgentConversationHistory> GetHistoryAsync(
+        Guid sessionId,
+        CancellationToken cancellationToken)
+    {
+        using HttpResponseMessage response = await httpClient.GetAsync(
+            $"sessions/{sessionId:D}/history",
+            cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException(
+                $"Agent Service returned HTTP {(int)response.StatusCode}.");
+        }
+
+        AgentConversationHistory? result = await response.Content.ReadFromJsonAsync<
+            AgentConversationHistory>(
+            JsonSerializerOptions,
+            cancellationToken);
+
+        return result
+            ?? throw new HttpRequestException("Agent Service returned an empty history response.");
+    }
+
     public async Task<AgentConversationTurnResult> RunTurnAsync(
         AgentConversationTurnRequest request,
         CancellationToken cancellationToken)

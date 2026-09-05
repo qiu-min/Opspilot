@@ -9,6 +9,69 @@ namespace OpsPilot.UnitTests;
 public sealed class AgentServiceClientTests
 {
     [Fact]
+    public async Task GetHistoryAsync_GetsSessionHistoryAndMapsResponse()
+    {
+        string? requestPath = null;
+        string? requestMethod = null;
+        var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            requestMethod = request.Method.Method;
+            requestPath = request.RequestUri?.PathAndQuery;
+            return Task.FromResult(JsonResponse(new
+            {
+                leafId = "entry-2",
+                items = new[]
+                {
+                    new
+                    {
+                        type = "message",
+                        id = "entry-1",
+                        role = "user",
+                        text = "hello",
+                        createdAt = "2026-09-05T08:00:00.000Z",
+                    },
+                    new
+                    {
+                        type = "message",
+                        id = "entry-2",
+                        role = "assistant",
+                        text = "Hi.",
+                        createdAt = "2026-09-05T08:00:01.000Z",
+                    },
+                },
+            }));
+        });
+        using var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://agent-service.test/"),
+        };
+        var client = new AgentServiceClient(httpClient);
+        Guid sessionId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+        AgentConversationHistory result = await client.GetHistoryAsync(
+            sessionId,
+            CancellationToken.None);
+
+        Assert.Equal("GET", requestMethod);
+        Assert.Equal($"/sessions/{sessionId:D}/history", requestPath);
+        Assert.Equal("entry-2", result.LeafId);
+        Assert.Collection(
+            result.Items,
+            item =>
+            {
+                Assert.Equal("entry-1", item.Id);
+                Assert.Equal("user", item.Role);
+                Assert.Equal("hello", item.Text);
+            },
+            item =>
+            {
+                Assert.Equal("entry-2", item.Id);
+                Assert.Equal("assistant", item.Role);
+                Assert.Equal("Hi.", item.Text);
+            });
+    }
+
+    [Fact]
     public async Task RunTurnAsync_PostsExpectedRequestAndMapsResponse()
     {
         string? requestPath = null;

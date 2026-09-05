@@ -408,6 +408,10 @@ public sealed class RunConversationTurnHandlerTests
 
     private sealed class FakeAgentConversationClient : IAgentConversationClient
     {
+        public AgentConversationHistory History { get; init; } = new(null, []);
+
+        public int HistoryCallCount { get; private set; }
+
         public AgentConversationTurnResult Result { get; init; } =
             new(FirstSessionId, "leaf-1", "completed", "Workbook inspected.");
 
@@ -418,6 +422,16 @@ public sealed class RunConversationTurnHandlerTests
         public CancellationToken RequestedCancellationToken { get; private set; }
 
         public int CallCount { get; private set; }
+
+        public Task<AgentConversationHistory> GetHistoryAsync(
+            Guid sessionId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _ = sessionId;
+            HistoryCallCount++;
+            return Task.FromResult(History);
+        }
 
         public Task<AgentConversationTurnResult> RunTurnAsync(
             AgentConversationTurnRequest request,

@@ -55,10 +55,12 @@ Session 负责生命周期和会话树语义。消息树不使用 PostgreSQL 保
 
 - `POST /conversations/turns`：执行一次普通 JSON Conversation Turn。
 - `POST /conversations/turns/stream`：以 SSE 透传 AgentEvent，并发送最终 `done` 事件。
+- `GET /sessions/{sessionId}/history`：供 Backend 读取当前 active branch 的 UI-safe 历史 projection。
 
 普通 Conversation 请求可以携带相对共享存储根目录的 Excel `storagePath`。`api-runtime` 将其安全解析为 Application 使用的绝对 `filePath`；SSE 和普通入口使用同一请求契约。
 
 Session 使用 filesystem JSONL 持久化；API 通过 Application 的 `RunConversationTurn` 访问，不直接操作 SessionManager 或 Model Gateway。
+历史恢复使用独立的 `buildConversationHistoryProjection()`，基于 `SessionManager.getBranch()` 读取完整原始消息；它不复用会受 Compaction 影响的 `buildSessionContext()`，也不改变 JSONL persistence format。
 
 ## Development
 

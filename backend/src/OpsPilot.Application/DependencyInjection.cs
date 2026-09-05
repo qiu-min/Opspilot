@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using OpsPilot.Application.Conversations.Create;
+using OpsPilot.Application.Conversations.GetDetail;
 using OpsPilot.Application.Conversations.List;
 using OpsPilot.Application.Conversations.RunTurn;
 using OpsPilot.Application.Files.GetById;
@@ -15,6 +16,7 @@ public static class DependencyInjection
     {
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<CreateConversationHandler>();
+        services.AddScoped<GetConversationDetailHandler>();
         services.AddScoped<GetFileAssetHandler>();
         services.AddScoped<ListConversationsHandler>();
         services.AddScoped<RunConversationTurnHandler>();

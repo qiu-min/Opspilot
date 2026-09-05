@@ -123,6 +123,7 @@ backend/AGENTS.md
 * 通过 `FileAsset.UserId` 隔离用户文件归属
 * `POST /api/conversations` 创建当前用户的 Conversation
 * `GET /api/conversations` 列出当前用户的 Conversation
+* `GET /api/conversations/{conversationId}` 读取当前用户 Conversation metadata 与 Agent Session UI history
 * 通过 Agent Service 执行普通 Conversation Turn
 
 用户注册的最小调用链为：
@@ -176,6 +177,22 @@ AgentServiceClient
   ↓
 POST Agent Service /conversations/turns
 ```
+
+Conversation detail 的历史恢复链路为：
+
+```text
+GET /api/conversations/{conversationId}
+  ↓
+ownership check
+  ↓
+Conversation.AgentSessionId
+  ↓
+AgentServiceClient
+  ↓
+GET Agent Service /sessions/{sessionId}/history
+```
+
+Agent Service Session JSONL 仍是消息历史的 source of truth；Backend 不复制消息到 PostgreSQL。
 
 客户端只认识 `ConversationId`。`SessionId` 是 Backend 与 Agent Service
 之间的内部实现细节：第一次 Turn 创建并绑定 Session，后续 Turn 复用并确认该 Session。

@@ -402,6 +402,12 @@ public sealed class ConversationTestAuthenticationHandler(
 
 public sealed class TestAgentConversationClient : IAgentConversationClient
 {
+    public AgentConversationHistory History { get; set; } = new(null, []);
+
+    public Guid? RequestedHistorySessionId { get; private set; }
+
+    public int HistoryCallCount { get; private set; }
+
     public AgentConversationTurnResult Result { get; set; } = new(
         Guid.Parse("11111111-1111-1111-1111-111111111111"),
         "leaf-1",
@@ -411,6 +417,16 @@ public sealed class TestAgentConversationClient : IAgentConversationClient
     public AgentConversationTurnRequest? Request { get; private set; }
 
     public int CallCount { get; private set; }
+
+    public Task<AgentConversationHistory> GetHistoryAsync(
+        Guid sessionId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        RequestedHistorySessionId = sessionId;
+        HistoryCallCount++;
+        return Task.FromResult(History);
+    }
 
     public Task<AgentConversationTurnResult> RunTurnAsync(
         AgentConversationTurnRequest request,
@@ -424,6 +440,9 @@ public sealed class TestAgentConversationClient : IAgentConversationClient
 
     public void Reset()
     {
+        History = new AgentConversationHistory(null, []);
+        RequestedHistorySessionId = null;
+        HistoryCallCount = 0;
         Request = null;
         CallCount = 0;
         Result = new AgentConversationTurnResult(

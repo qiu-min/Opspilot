@@ -1,10 +1,26 @@
 import { apiRequest } from "../client";
 import type {
+  ConversationDetailResponse,
   ConversationSummaryResponse,
   CreateConversationResponse,
   RunConversationTurnRequest,
   RunConversationTurnResponse,
 } from "./conversation-contracts";
+
+export function getConversation(
+  conversationId: string,
+  accessToken: string,
+  signal?: AbortSignal,
+): Promise<ConversationDetailResponse> {
+  return apiRequest<ConversationDetailResponse>(
+    `/api/conversations/${encodeURIComponent(conversationId)}`,
+    {
+      method: "GET",
+      accessToken,
+      signal,
+    },
+  );
+}
 
 export function listConversations(
   accessToken: string,

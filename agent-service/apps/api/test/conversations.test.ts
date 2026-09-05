@@ -1,7 +1,7 @@
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import { EventEmitter } from 'node:events';
 
-import { RunConversationTurn } from '@opspilot/application';
+import { GetConversationHistory, RunConversationTurn } from '@opspilot/application';
 import type { RunConversationTurnInput, RunConversationTurnResult } from '@opspilot/application';
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
@@ -393,9 +393,13 @@ async function startServer(
       ApiModule.register({
         providers: [
           { provide: RunConversationTurn, useValue: { execute } },
+          {
+            provide: GetConversationHistory,
+            useValue: { execute: () => ({ leafId: null, items: [] }) },
+          },
           { provide: EXCEL_RESOURCE_PATH_RESOLVER, useValue: excelResourcePathResolver },
         ],
-        exports: [RunConversationTurn, EXCEL_RESOURCE_PATH_RESOLVER],
+        exports: [RunConversationTurn, GetConversationHistory, EXCEL_RESOURCE_PATH_RESOLVER],
       }),
     ],
   }).compile();

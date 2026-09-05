@@ -52,6 +52,27 @@ public sealed class ConversationOwnershipIntegrationTests
         Assert.Equal(0, factory.AgentClient.CallCount);
     }
 
+    [Fact]
+    public async Task GetDetail_WhenAnotherUserReferencesConversationReturnsNotFoundWithoutCallingAgent()
+    {
+        LoginResponse owner = await RegisterAndLoginAsync("detail-owner");
+        LoginResponse otherUser = await RegisterAndLoginAsync("detail-other");
+        Guid conversationId = await CreateConversationAsync(owner.AccessToken);
+
+        factory.AgentClient.Reset();
+        using HttpRequestMessage request = new(
+            HttpMethod.Get,
+            $"/api/conversations/{conversationId}");
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            otherUser.AccessToken);
+
+        using HttpResponseMessage response = await httpClient.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(0, factory.AgentClient.HistoryCallCount);
+    }
+
     private async Task<LoginResponse> RegisterAndLoginAsync(string label)
     {
         string email = $"ownership-{label}-{Guid.NewGuid():N}@example.com";
@@ -124,6 +145,18 @@ public sealed class OwnershipTestAgentConversationClient : IAgentConversationCli
 {
     public int CallCount { get; private set; }
 
+    public int HistoryCallCount { get; private set; }
+
+    public Task<AgentConversationHistory> GetHistoryAsync(
+        Guid sessionId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _ = sessionId;
+        HistoryCallCount++;
+        return Task.FromResult(new AgentConversationHistory(null, []));
+    }
+
     public Task<AgentConversationTurnResult> RunTurnAsync(
         AgentConversationTurnRequest request,
         CancellationToken cancellationToken)
@@ -140,5 +173,6 @@ public sealed class OwnershipTestAgentConversationClient : IAgentConversationCli
     public void Reset()
     {
         CallCount = 0;
+        HistoryCallCount = 0;
     }
 }

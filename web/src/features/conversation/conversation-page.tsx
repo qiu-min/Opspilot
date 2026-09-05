@@ -1,10 +1,10 @@
 import { AlertCircle, Menu, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "../../api/client";
-import { createConversation, listConversations, runConversationTurn } from "../../api/conversations/conversations-api";
+import { createConversation, getConversation, listConversations, runConversationTurn } from "../../api/conversations/conversations-api";
 import { getFileKind, getFileSize } from "../../lib/files";
 import { demoAgentName, demoConnectedTools, demoContextFiles, demoContextStatus, demoEnvironmentLabel, demoRecentOutputs } from "./demo";
-import { toConversationSummary } from "./conversation-mappers";
+import { formatMessageCreatedAt, toConversationItems, toConversationSummary } from "./conversation-mappers";
 import type { Attachment, ChatMessage, ConversationItem, ConversationSummary } from "./types";
 import { useAuth } from "../auth/auth-provider";
 import { Composer, type ComposerSubmitPayload } from "./components/composer";
@@ -29,10 +29,6 @@ function formatConversationUpdatedAt(updatedAt: string) {
   if (Number.isNaN(date.getTime())) return "Recently updated";
 
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
-}
-
-function formatMessageCreatedAt() {
-  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date());
 }
 
 function getConversationErrorMessage(error: unknown, fallback: string) {
@@ -64,10 +60,12 @@ export function ConversationPage() {
   const [pageError, setPageError] = useState<string | null>(null);
   const [conversationListError, setConversationListError] = useState<string | null>(null);
   const [errorsByConversationId, setErrorsByConversationId] = useState<Record<string, string | undefined>>({});
+  const [historyLoadingByConversationId, setHistoryLoadingByConversationId] = useState<Record<string, boolean>>({});
   const [processingConversationIds, setProcessingConversationIds] = useState<Set<string>>(new Set());
 
   const listAbortControllerRef = useRef<AbortController | null>(null);
   const createAbortControllerRef = useRef<AbortController | null>(null);
+  const historyAbortControllerRef = useRef<AbortController | null>(null);
   const turnAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const processingConversationIdsRef = useRef<Set<string>>(new Set());
 
@@ -130,9 +128,74 @@ export function ConversationPage() {
   }, [accessToken, refreshConversations]);
 
   useEffect(() => {
+    historyAbortControllerRef.current?.abort();
+
+    if (!accessToken || !activeConversationId) {
+      return;
+    }
+
+    const conversationId = activeConversationId;
+    const controller = new AbortController();
+    historyAbortControllerRef.current = controller;
+    setHistoryLoadingByConversationId((current) => ({ ...current, [conversationId]: true }));
+    setErrorsByConversationId((current) => {
+      if (!(conversationId in current)) return current;
+
+      const next = { ...current };
+      delete next[conversationId];
+      return next;
+    });
+
+    void getConversation(conversationId, accessToken, controller.signal)
+      .then((response) => {
+        if (controller.signal.aborted) return;
+        if (processingConversationIdsRef.current.has(conversationId)) return;
+
+        const items = toConversationItems(response);
+        setTimelinesByConversationId((current) => ({
+          ...current,
+          [conversationId]: items,
+        }));
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+
+        setErrorsByConversationId((current) => ({
+          ...current,
+          [conversationId]: getConversationErrorMessage(
+            error,
+            "Unable to load this conversation. Try selecting it again.",
+          ),
+        }));
+      })
+      .finally(() => {
+        if (historyAbortControllerRef.current !== controller) return;
+
+        historyAbortControllerRef.current = null;
+        setHistoryLoadingByConversationId((current) => ({
+          ...current,
+          [conversationId]: false,
+        }));
+      });
+
+    return () => {
+      controller.abort();
+      setHistoryLoadingByConversationId((current) => {
+        if (current[conversationId] !== true) return current;
+
+        return { ...current, [conversationId]: false };
+      });
+      if (historyAbortControllerRef.current === controller) {
+        historyAbortControllerRef.current = null;
+      }
+    };
+  }, [accessToken, activeConversationId]);
+
+  useEffect(() => {
     return () => {
       listAbortControllerRef.current?.abort();
       createAbortControllerRef.current?.abort();
+      historyAbortControllerRef.current?.abort();
       for (const controller of turnAbortControllersRef.current.values()) {
         controller.abort();
       }
@@ -147,6 +210,7 @@ export function ConversationPage() {
   const visibleError = conversationError ?? pageError;
   const accountEmail = session?.email ?? "Signed-in account";
   const statusLabel = isProcessing ? "Processing" : "Ready";
+  const isLoadingHistory = activeConversationId !== null && historyLoadingByConversationId[activeConversationId] === true;
 
   async function handleNewConversation() {
     if (!accessToken || isCreatingConversation) return;
@@ -336,7 +400,7 @@ export function ConversationPage() {
 
           <ConversationHeader
             title={activeConversation?.title ?? "New conversation"}
-            subtitle={activeConversation ? (isProcessing ? "Processing request" : "Ready") : "Create a conversation to begin"}
+            subtitle={activeConversation ? (isProcessing ? "Processing request" : isLoadingHistory ? "Loading history" : "Ready") : "Create a conversation to begin"}
             agentName={demoAgentName}
             statusLabel={statusLabel}
             onToggleContext={() => setIsContextVisible((visible) => !visible)}

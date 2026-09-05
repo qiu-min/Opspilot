@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using OpsPilot.Api.Features.Conversations.Contracts.Requests;
 using OpsPilot.Api.Features.Conversations.Contracts.Responses;
 using OpsPilot.Application.Conversations.Create;
+using OpsPilot.Application.Conversations.GetDetail;
 using OpsPilot.Application.Conversations.List;
 using OpsPilot.Application.Conversations.RunTurn;
 
@@ -15,6 +16,7 @@ namespace OpsPilot.Api.Features.Conversations;
 public sealed class ConversationsController(
     CreateConversationHandler createConversationHandler,
     ListConversationsHandler listConversationsHandler,
+    GetConversationDetailHandler getConversationDetailHandler,
     RunConversationTurnHandler runConversationTurnHandler) : ControllerBase
 {
     [HttpPost]
@@ -35,6 +37,32 @@ public sealed class ConversationsController(
                 result.UpdatedAtUtc));
     }
 
+    [HttpGet("{conversationId:guid}")]
+    [ProducesResponseType(typeof(ConversationDetailResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ConversationDetailResponse>> GetDetail(
+        Guid conversationId,
+        CancellationToken cancellationToken)
+    {
+        GetConversationDetailResult result = await getConversationDetailHandler.HandleAsync(
+            new GetConversationDetailQuery(conversationId),
+            cancellationToken);
+
+        return Ok(new ConversationDetailResponse(
+            result.Id,
+            result.Title,
+            result.CreatedAtUtc,
+            result.UpdatedAtUtc,
+            result.Items
+                .Select(item => new ConversationHistoryItemResponse(
+                    item.Type,
+                    item.Id,
+                    item.Role,
+                    item.Text,
+                    item.CreatedAtUtc))
+                .ToArray()));
+    }
+
     [HttpGet]
     [ProducesResponseType(typeof(IReadOnlyList<ConversationSummaryResponse>), StatusCodes.Status200OK)]
     public async Task<ActionResult<IReadOnlyList<ConversationSummaryResponse>>> List(
@@ -52,6 +80,9 @@ public sealed class ConversationsController(
                 result.UpdatedAtUtc))
             .ToArray());
     }
+
+    [HttpPost("turns")]
+    public IActionResult RejectTurnWithoutConversationId() => NotFound();
 
     [HttpPost("{conversationId:guid}/turns")]
     [ProducesResponseType(typeof(ConversationTurnResponse), StatusCodes.Status200OK)]

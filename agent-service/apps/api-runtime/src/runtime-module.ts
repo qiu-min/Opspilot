@@ -3,6 +3,7 @@ import {
   createGetSheetProfileTool,
   createGetWorkbookInfoTool,
   FileSystemSessionStore,
+  GetConversationHistory,
   RunConversationTurn,
   type ToolDefinition,
 } from '@opspilot/application';
@@ -44,12 +45,14 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     defaultModel,
     toolDefinitions: createExcelDiscoveryToolDefinitions(),
   });
+  const getConversationHistory = new GetConversationHistory(sessionStore);
 
   return ApiModule.register({
     providers: [
       { provide: RunConversationTurn, useValue: runConversationTurn },
+      { provide: GetConversationHistory, useValue: getConversationHistory },
       { provide: EXCEL_RESOURCE_PATH_RESOLVER, useValue: excelResourcePathResolver },
     ],
-    exports: [RunConversationTurn, EXCEL_RESOURCE_PATH_RESOLVER],
+    exports: [RunConversationTurn, GetConversationHistory, EXCEL_RESOURCE_PATH_RESOLVER],
   });
 }

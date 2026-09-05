@@ -117,6 +117,15 @@ public sealed class ConversationEndpointTests : IClassFixture<FilesTestFactory>
         Assert.Equal(HttpStatusCode.Unauthorized, getResponse.StatusCode);
     }
 
+    [Fact]
+    public async Task GetConversationDetail_WithoutAuthenticationReturnsUnauthorized()
+    {
+        using HttpResponseMessage response = await httpClient.GetAsync(
+            $"/api/conversations/{Guid.NewGuid()}");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
     private async Task<Guid> CreateConversationAsync(string accessToken)
     {
         using HttpRequestMessage request = CreateAuthenticatedRequest(
