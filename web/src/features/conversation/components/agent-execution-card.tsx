@@ -60,9 +60,9 @@ export function AgentExecutionCard({ execution, isExpanded, onToggle }: AgentExe
             <div className="min-w-0 flex-1 pt-0.5">
               <div className="flex items-center justify-between gap-3">
                 <p className={cn("text-xs font-semibold", step.status === "queued" ? "text-mutedInk" : step.status === "failed" ? "text-danger" : "text-ink")}>{step.title}</p>
-                <span className="shrink-0 text-[10px] tabular-nums text-mutedInk">{step.duration}</span>
+                {step.duration && <span className="shrink-0 text-[10px] tabular-nums text-mutedInk">{step.duration}</span>}
               </div>
-              <p className="mt-1 text-[11px] leading-5 text-mutedInk">{step.detail}</p>
+              {step.detail && <p className="mt-1 text-[11px] leading-5 text-mutedInk">{step.detail}</p>}
               {step.status === "running" && step.progress !== undefined && <Progress value={step.progress} className="mt-2" />}
             </div>
           </div>

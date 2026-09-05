@@ -28,8 +28,8 @@ export type AgentExecutionStatus = "queued" | "running" | "complete" | "failed";
 export type AgentExecutionStep = {
   id: string;
   title: string;
-  detail: string;
-  duration: string;
+  detail?: string;
+  duration?: string;
   status: AgentExecutionStatus;
   progress?: number;
 };

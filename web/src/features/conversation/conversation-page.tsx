@@ -1,10 +1,22 @@
 import { AlertCircle, Menu, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "../../api/client";
-import { createConversation, getConversation, listConversations, runConversationTurn } from "../../api/conversations/conversations-api";
+import {
+  createConversation,
+  getConversation,
+  listConversations,
+  streamConversationTurn,
+} from "../../api/conversations/conversations-api";
+import { ConversationStreamProtocolError } from "../../api/conversations/conversation-stream-contracts";
 import { getFileKind, getFileSize } from "../../lib/files";
 import { demoAgentName, demoConnectedTools, demoContextFiles, demoContextStatus, demoEnvironmentLabel, demoRecentOutputs } from "./demo";
 import { formatMessageCreatedAt, toConversationItems, toConversationSummary } from "./conversation-mappers";
+import {
+  ConversationStreamStateError,
+  createInitialConversationStreamState,
+  reduceConversationStreamEvent,
+  type ConversationStreamState,
+} from "./conversation-stream-state";
 import type { Attachment, ChatMessage, ConversationItem, ConversationSummary } from "./types";
 import { useAuth } from "../auth/auth-provider";
 import { Composer, type ComposerSubmitPayload } from "./components/composer";
@@ -43,12 +55,21 @@ function getConversationErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
+function getConversationStreamErrorMessage(error: unknown) {
+  if (error instanceof ConversationStreamProtocolError || error instanceof ConversationStreamStateError) {
+    return "The response stream ended unexpectedly. Try again.";
+  }
+
+  return getConversationErrorMessage(error, "The request failed. Try sending it again.");
+}
+
 export function ConversationPage() {
   const { session } = useAuth();
   const accessToken = session?.accessToken;
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [timelinesByConversationId, setTimelinesByConversationId] = useState<Record<string, ConversationItem[]>>({});
+  const [streamStatesByConversationId, setStreamStatesByConversationId] = useState<Record<string, ConversationStreamState | undefined>>({});
   const [attachmentsByConversationId, setAttachmentsByConversationId] = useState<Record<string, Attachment[]>>({});
   const [draft, setDraft] = useState("");
   const [isExecutionExpanded, setIsExecutionExpanded] = useState(false);
@@ -213,11 +234,25 @@ export function ConversationPage() {
   const timeline = activeConversation ? timelinesByConversationId[activeConversation.id] ?? [] : [];
   const attachments = activeConversation ? attachmentsByConversationId[activeConversation.id] ?? [] : [];
   const isProcessing = activeConversationId !== null && processingConversationIds.has(activeConversationId);
+  const activeStreamState = activeConversationId
+    ? streamStatesByConversationId[activeConversationId]
+    : undefined;
   const conversationError = activeConversationId ? errorsByConversationId[activeConversationId] : undefined;
   const visibleError = conversationError ?? pageError;
   const accountEmail = session?.email ?? "Signed-in account";
   const statusLabel = isProcessing ? "Processing" : "Ready";
   const isLoadingHistory = activeConversationId !== null && historyLoadingByConversationId[activeConversationId] === true;
+  const conversationSubtitle = activeConversation
+    ? isProcessing
+      ? activeStreamState?.compaction.status === "running"
+        ? "Optimizing context"
+        : activeStreamState?.isThinking
+          ? "Thinking"
+          : "Processing request"
+      : isLoadingHistory
+        ? "Loading history"
+        : "Ready"
+    : "Create a conversation to begin";
 
   async function handleNewConversation() {
     if (!accessToken || isCreatingConversation) return;
@@ -311,33 +346,149 @@ export function ConversationPage() {
 
     const controller = new AbortController();
     turnAbortControllersRef.current.set(conversationId, controller);
+    let streamState = createInitialConversationStreamState();
+    let responseStarted = false;
+
+    setStreamStatesByConversationId((current) => ({
+      ...current,
+      [conversationId]: streamState,
+    }));
+
+    const removeOptimisticUserMessage = () => {
+      setTimelinesByConversationId((current) => ({
+        ...current,
+        [conversationId]: (current[conversationId] ?? []).filter(
+          (item) => item.id !== userMessage.id,
+        ),
+      }));
+    };
+
+    const clearStreamState = () => {
+      setStreamStatesByConversationId((current) => {
+        if (!(conversationId in current)) return current;
+
+        const next = { ...current };
+        delete next[conversationId];
+        return next;
+      });
+    };
+
+    const publishStreamState = (nextState: ConversationStreamState) => {
+      setStreamStatesByConversationId((current) => ({
+        ...current,
+        [conversationId]: nextState,
+      }));
+    };
 
     try {
-      const response = await runConversationTurn(
+      for await (const event of streamConversationTurn(
         conversationId,
         { message: body, fileId: null },
         token,
         controller.signal,
-      );
-      if (controller.signal.aborted) return;
+      )) {
+        streamState = reduceConversationStreamEvent(streamState, event);
+        publishStreamState(streamState);
 
-      const assistantMessage: ChatMessage = {
-        id: createTemporaryMessageId(),
-        role: "assistant",
-        body: response.output,
-        createdAt: formatMessageCreatedAt(),
-      };
+        if (event.type === "response_started") {
+          responseStarted = true;
+          setStatusMessage("Assistant response started");
+        } else if (event.type === "assistant_thinking_started") {
+          setStatusMessage("Assistant is thinking");
+        } else if (event.type === "assistant_thinking_completed") {
+          setStatusMessage("Assistant is responding");
+        } else if (event.type === "tool_execution_started") {
+          setStatusMessage(`Running ${event.name}`);
+        } else if (event.type === "tool_execution_completed") {
+          setStatusMessage(event.isError ? `${event.name} failed` : `${event.name} completed`);
+        } else if (event.type === "context_compaction_started") {
+          setStatusMessage("Optimizing context");
+        } else if (event.type === "context_compaction_completed") {
+          setStatusMessage("Assistant is responding");
+        } else if (event.type === "response_completed") {
+          setStatusMessage(
+            event.status === "completed"
+              ? "Response completed"
+              : event.status === "aborted"
+                ? "Response stopped"
+                : "Response failed",
+          );
 
-      setTimelinesByConversationId((current) => ({
-        ...current,
-        [conversationId]: [...(current[conversationId] ?? []), { type: "message", id: assistantMessage.id, message: assistantMessage }],
-      }));
-      setStatusMessage("Assistant response received");
-      void refreshConversations(false, "Response received, but the conversation list could not be refreshed.");
+          try {
+            const response = await getConversation(
+              conversationId,
+              token,
+              controller.signal,
+            );
+            if (controller.signal.aborted) return;
+
+            setTimelinesByConversationId((current) => ({
+              ...current,
+              [conversationId]: toConversationItems(response),
+            }));
+            clearStreamState();
+            setErrorsByConversationId((current) => {
+              const next = { ...current };
+              if (event.status === "completed") {
+                delete next[conversationId];
+              } else {
+                next[conversationId] =
+                  event.status === "aborted"
+                    ? "Response stopped."
+                    : "The response failed. Try again.";
+              }
+              return next;
+            });
+            void refreshConversations(
+              false,
+              "Response completed, but the conversation list could not be refreshed.",
+            );
+          } catch (historyError: unknown) {
+            if (controller.signal.aborted) return;
+
+            setErrorsByConversationId((current) => ({
+              ...current,
+              [conversationId]: "Response completed, but conversation history could not be refreshed.",
+            }));
+            setStatusMessage("Response completed, but history could not be refreshed");
+            void refreshConversations(
+              false,
+              "Response completed, but the conversation list could not be refreshed.",
+            );
+          }
+          break;
+        } else if (event.type === "error") {
+          setErrorsByConversationId((current) => ({
+            ...current,
+            [conversationId]: "The response failed. Try again.",
+          }));
+          setStatusMessage("Response failed. You can try again.");
+          break;
+        }
+      }
     } catch (error: unknown) {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) {
+        if (!responseStarted) {
+          removeOptimisticUserMessage();
+          clearStreamState();
+        }
+        return;
+      }
 
-      const message = getConversationErrorMessage(error, "The request failed. Try sending it again.");
+      const message = getConversationStreamErrorMessage(error);
+      if (!responseStarted) {
+        removeOptimisticUserMessage();
+        clearStreamState();
+      } else {
+        if (streamState.phase === "streaming") {
+          streamState = reduceConversationStreamEvent(streamState, {
+            type: "error",
+            message,
+          });
+          publishStreamState(streamState);
+        }
+      }
+
       setErrorsByConversationId((current) => ({ ...current, [conversationId]: message }));
       setStatusMessage("Request failed. You can try again.");
     } finally {
@@ -407,7 +558,7 @@ export function ConversationPage() {
 
           <ConversationHeader
             title={activeConversation?.title ?? "New conversation"}
-            subtitle={activeConversation ? (isProcessing ? "Processing request" : isLoadingHistory ? "Loading history" : "Ready") : "Create a conversation to begin"}
+            subtitle={conversationSubtitle}
             agentName={demoAgentName}
             statusLabel={statusLabel}
             onToggleContext={() => setIsContextVisible((visible) => !visible)}
@@ -420,7 +571,14 @@ export function ConversationPage() {
                 <div className="mx-auto w-full max-w-[920px] px-4 pb-8 pt-6 sm:px-8 sm:pt-8">
                   <div className="mb-7 flex items-center justify-between gap-4"><div><p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-mutedInk">Conversation</p><p className="mt-1 text-xs text-mutedInk">{activeConversation ? formatConversationUpdatedAt(activeConversation.updatedAt) : "No active conversation"}</p></div></div>
                   {visibleError && <div role="alert" className="mb-6 flex items-start gap-2.5 rounded-lg border border-danger/25 bg-danger/[0.06] px-3.5 py-3 text-sm text-danger"><AlertCircle size={17} className="mt-0.5 shrink-0" aria-hidden="true" /><p>{visibleError}</p></div>}
-                  <ConversationThread items={timeline} agentName={demoAgentName} isExecutionExpanded={isExecutionExpanded} onToggleExecution={() => setIsExecutionExpanded((expanded) => !expanded)} />
+                  <ConversationThread
+                    conversationId={activeConversation?.id ?? "new"}
+                    items={timeline}
+                    agentName={demoAgentName}
+                    isExecutionExpanded={isExecutionExpanded}
+                    onToggleExecution={() => setIsExecutionExpanded((expanded) => !expanded)}
+                    streamState={activeStreamState}
+                  />
                 </div>
               </div>
               <Composer disabled={!activeConversationId || isLoadingHistory} draft={draft} attachments={attachments} isProcessing={isProcessing} agentName={demoAgentName} onDraftChange={setDraft} onSubmit={handleSubmit} onAttach={handleAttach} onRemoveAttachment={handleRemoveAttachment} />

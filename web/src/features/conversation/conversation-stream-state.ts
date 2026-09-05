@@ -7,6 +7,16 @@ export type ConversationStreamAssistantMessage = {
   completed: boolean;
 };
 
+export type ConversationStreamActivity =
+  | {
+      type: "assistant-message";
+      messageIndex: number;
+    }
+  | {
+      type: "tool-execution";
+      callId: string;
+    };
+
 export type ConversationStreamToolExecution =
   | {
       callId: string;
@@ -44,6 +54,7 @@ export type ConversationStreamState = {
   phase: ConversationStreamPhase;
   isThinking: boolean;
   assistantMessages: ConversationStreamAssistantMessage[];
+  activity: ConversationStreamActivity[];
   toolExecutions: ConversationStreamToolExecution[];
   usageEvents: ConversationStreamUsage[];
   compaction: ConversationStreamCompaction;
@@ -63,6 +74,7 @@ export function createInitialConversationStreamState(): ConversationStreamState 
     phase: "idle",
     isThinking: false,
     assistantMessages: [],
+    activity: [],
     toolExecutions: [],
     usageEvents: [],
     compaction: {
@@ -117,6 +129,13 @@ export function reduceConversationStreamEvent(
           ...state.assistantMessages,
           { text: "", completed: false },
         ],
+        activity: [
+          ...state.activity,
+          {
+            type: "assistant-message",
+            messageIndex: state.assistantMessages.length,
+          },
+        ],
       };
 
     case "assistant_text_delta": {
@@ -163,6 +182,10 @@ export function reduceConversationStreamEvent(
         toolExecutions: [
           ...state.toolExecutions,
           { callId: event.callId, name: event.name, status: "running" },
+        ],
+        activity: [
+          ...state.activity,
+          { type: "tool-execution", callId: event.callId },
         ],
       };
 

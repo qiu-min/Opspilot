@@ -8,9 +8,10 @@ import type { ChatMessage } from "../types";
 type ChatMessageProps = {
   message: ChatMessage;
   agentName: string;
+  isStreaming?: boolean;
 };
 
-export function ChatMessageView({ message, agentName }: ChatMessageProps) {
+export function ChatMessageView({ message, agentName, isStreaming = false }: ChatMessageProps) {
   const isAssistant = message.role === "assistant";
   const [hasCopied, setHasCopied] = useState(false);
   const [copyError, setCopyError] = useState<string | null>(null);
@@ -57,7 +58,7 @@ export function ChatMessageView({ message, agentName }: ChatMessageProps) {
             </div>
           )}
         </div>
-        {isAssistant && (
+        {isAssistant && !isStreaming && (
           <div className="mt-1.5 flex items-center gap-0.5">
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleCopy} aria-label={hasCopied ? "Copied message" : "Copy message"} title={hasCopied ? "Copied" : "Copy"}>
               {hasCopied ? <Check size={14} className="text-teal" aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
