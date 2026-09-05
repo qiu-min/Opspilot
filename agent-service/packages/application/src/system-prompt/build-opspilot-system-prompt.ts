@@ -19,6 +19,13 @@ const BASE_GUIDELINES = [
 const WORKBOOK_GROUNDING_GUIDELINE =
   'When workbook-specific facts are required, inspect the workbook before answering.';
 
+const RESPONSE_STYLE_GUIDELINES = [
+  'Prefer plain prose and simple Markdown.',
+  'Do not use emojis unless explicitly requested.',
+  'Avoid decorative symbols, ornamental separators, and excessive formatting.',
+  'Use headings, lists, tables, and bold text only when they improve readability.',
+] as const;
+
 export interface BuildOpsPilotSystemPromptOptions {
   readonly tools: readonly ToolDefinition[];
   readonly additionalGuidelines?: readonly string[];
@@ -58,6 +65,9 @@ export function buildOpsPilotSystemPrompt(
     '',
     'Guidelines:',
     guidelines.map((guideline) => `- ${guideline}`).join('\n'),
+    '',
+    'Response style:',
+    RESPONSE_STYLE_GUIDELINES.map((guideline) => `- ${guideline}`).join('\n'),
   ];
   const appendSystemPrompt = options.appendSystemPrompt?.trim();
   if (appendSystemPrompt !== undefined && appendSystemPrompt.length > 0) {
