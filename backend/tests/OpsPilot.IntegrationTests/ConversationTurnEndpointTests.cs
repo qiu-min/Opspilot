@@ -404,6 +404,8 @@ public sealed class TestAgentConversationClient : IAgentConversationClient
 {
     public AgentConversationHistory History { get; set; } = new(null, []);
 
+    public IReadOnlyList<AgentServiceStreamEvent> StreamEvents { get; set; } = [];
+
     public Guid? RequestedHistorySessionId { get; private set; }
 
     public int HistoryCallCount { get; private set; }
@@ -416,7 +418,13 @@ public sealed class TestAgentConversationClient : IAgentConversationClient
 
     public AgentConversationTurnRequest? Request { get; private set; }
 
+    public AgentConversationTurnRequest? StreamRequest { get; private set; }
+
     public int CallCount { get; private set; }
+
+    public int StreamCallCount { get; private set; }
+
+    public CancellationToken RequestedStreamCancellationToken { get; private set; }
 
     public Task<AgentConversationHistory> GetHistoryAsync(
         Guid sessionId,
@@ -443,18 +451,29 @@ public sealed class TestAgentConversationClient : IAgentConversationClient
         [System.Runtime.CompilerServices.EnumeratorCancellation]
         CancellationToken cancellationToken)
     {
-        _ = request;
         cancellationToken.ThrowIfCancellationRequested();
-        yield break;
+        StreamRequest = request;
+        RequestedStreamCancellationToken = cancellationToken;
+        StreamCallCount++;
+
+        foreach (AgentServiceStreamEvent streamEvent in StreamEvents)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return streamEvent;
+        }
     }
 
     public void Reset()
     {
         History = new AgentConversationHistory(null, []);
+        StreamEvents = [];
         RequestedHistorySessionId = null;
         HistoryCallCount = 0;
         Request = null;
+        StreamRequest = null;
         CallCount = 0;
+        StreamCallCount = 0;
+        RequestedStreamCancellationToken = default;
         Result = new AgentConversationTurnResult(
             Guid.Parse("11111111-1111-1111-1111-111111111111"),
             "leaf-1",
