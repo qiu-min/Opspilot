@@ -26,12 +26,11 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiRequest<TResponse>(
+export async function apiFetch(
   path: string,
   options: ApiRequestOptions = {},
-): Promise<TResponse> {
+): Promise<Response> {
   const headers = new Headers(options.headers);
-  headers.set("Accept", "application/json");
 
   const requestInit: RequestInit = {
     method: options.method,
@@ -56,6 +55,17 @@ export async function apiRequest<TResponse>(
     throw await createApiError(response);
   }
 
+  return response;
+}
+
+export async function apiRequest<TResponse>(
+  path: string,
+  options: ApiRequestOptions = {},
+): Promise<TResponse> {
+  const headers = new Headers(options.headers);
+  headers.set("Accept", "application/json");
+
+  const response = await apiFetch(path, { ...options, headers });
   return parseJsonResponse<TResponse>(response);
 }
 
