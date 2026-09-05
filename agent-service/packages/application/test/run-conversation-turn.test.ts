@@ -200,6 +200,22 @@ function messageEntries(sessionManager: SessionManager): AgentMessage[] {
 }
 
 describe('RunConversationTurn', () => {
+  it('propagates the configured system prompt to the model context', async () => {
+    const { store } = createStore();
+    const gateway = createGateway([assistantStream(assistantMessage('world'), model)]);
+    const runner = new RunConversationTurn({
+      sessionStore: store,
+      modelGateway: gateway,
+      toolDefinitions: [],
+      defaultModel: model,
+      systemPrompt: 'SENTINEL_SYSTEM_PROMPT',
+    });
+
+    await runner.execute({ message: userMessage('hello') });
+
+    expect(gateway.requestedContexts[0]?.systemPrompt).toBe('SENTINEL_SYSTEM_PROMPT');
+  });
+
   it('keeps the original behavior when onEvent is omitted', async () => {
     const { directory, store } = createStore();
     const inputMessage = userMessage('hello');

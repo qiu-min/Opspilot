@@ -2,6 +2,7 @@ import { DynamicModule } from '@nestjs/common';
 import {
   createGetSheetProfileTool,
   createGetWorkbookInfoTool,
+  buildOpsPilotSystemPrompt,
   FileSystemSessionStore,
   GetConversationHistory,
   RunConversationTurn,
@@ -35,6 +36,10 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     );
   }
 
+  const toolDefinitions = createExcelDiscoveryToolDefinitions();
+  const systemPrompt = buildOpsPilotSystemPrompt({
+    tools: toolDefinitions,
+  });
   const sessionStore = new FileSystemSessionStore(config.sessionDirectory);
   const excelResourcePathResolver = new FileSystemExcelResourcePathResolver(
     config.sharedStorageRoot,
@@ -43,7 +48,8 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     sessionStore,
     modelGateway,
     defaultModel,
-    toolDefinitions: createExcelDiscoveryToolDefinitions(),
+    toolDefinitions,
+    systemPrompt,
   });
   const getConversationHistory = new GetConversationHistory(sessionStore);
 

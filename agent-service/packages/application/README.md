@@ -34,7 +34,7 @@ Phase 1 的默认 `DefaultContextManager` 不裁剪消息，只返回输入消�
 
 Context Accounting 是独立的纯计算边界：它优先使用最近有效 AssistantMessage 的 `Usage`，再估算其后的新增消息，并通过 `shouldCompact()` 返回是否达到预留 token 阈值。
 
-Phase 3 支持正常 Agent Run 完成后的自动 Compaction：生成摘要并追加 `CompactionEntry`，但不删除原始消息。Compaction 失败时保持本轮结果和原始 Session 可恢复。Memory、RAG、PromptBuilder、工具输出治理和 overflow recovery 不属于当前实现范围。
+Phase 3 支持正常 Agent Run 完成后的自动 Compaction：生成摘要并追加 `CompactionEntry`，但不删除原始消息。Compaction 失败时保持本轮结果和原始 Session 可恢复。当前 System Prompt 由 Application 层的 `buildOpsPilotSystemPrompt()` 纯函数构建，并由 runtime composition 注入；Memory、RAG、动态 Prompt 资源加载、工具输出治理和 overflow recovery 不属于当前实现范围。
 
 核心关系：
 
