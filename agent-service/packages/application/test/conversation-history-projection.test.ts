@@ -82,6 +82,37 @@ describe('buildConversationHistoryProjection', () => {
     expect(projection.items.map((item) => item.text)).toEqual(['user']);
   });
 
+  it('skips assistant tool-call-only messages and their tool results', () => {
+    const session = SessionManager.inMemory();
+    const user = session.appendMessage(userMessage('question'));
+    const toolCallOnly = session.appendMessage({
+      role: 'assistant',
+      api: 'test-api',
+      provider: 'test-provider',
+      model: 'test-model',
+      content: [],
+      toolCalls: [{ callId: 'call-1', name: 'lookup', arguments: {} }],
+      finishReason: 'tool_calls',
+    });
+    session.appendMessage({
+      role: 'tool',
+      callId: 'call-1',
+      name: 'lookup',
+      content: [{ type: 'text', text: 'private tool output' }],
+      isError: false,
+    });
+    const finalAssistant = session.appendMessage(assistantMessage('final answer'));
+
+    const projection = buildConversationHistoryProjection(session.getBranch());
+
+    expect(projection.items.map((item) => [item.role, item.text])).toEqual([
+      ['user', 'question'],
+      ['assistant', 'final answer'],
+    ]);
+    expect(projection.items.map((item) => item.id)).toEqual([user.id, finalAssistant.id]);
+    expect(projection.items.map((item) => item.id)).not.toContain(toolCallOnly.id);
+  });
+
   it('exposes assistant text while excluding thinking content', () => {
     const session = SessionManager.inMemory();
     session.appendMessage({

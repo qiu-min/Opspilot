@@ -36,13 +36,15 @@ export function buildConversationHistoryProjection(
 
     const message = getVisibleMessage(entry.message);
     if (message === undefined) return [];
+    const text = extractVisibleText(message);
+    if (text.length === 0) return [];
 
     return [
       {
         type: 'message' as const,
         id: entry.id,
         role: message.role,
-        text: extractVisibleText(message),
+        text,
         createdAt: entry.timestamp,
       },
     ];

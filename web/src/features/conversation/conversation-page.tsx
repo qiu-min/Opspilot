@@ -68,6 +68,18 @@ export function ConversationPage() {
   const historyAbortControllerRef = useRef<AbortController | null>(null);
   const turnAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const processingConversationIdsRef = useRef<Set<string>>(new Set());
+  const historyLoadingByConversationIdRef = useRef<Record<string, boolean>>({});
+
+  const setHistoryLoading = useCallback((conversationId: string, isLoading: boolean) => {
+    historyLoadingByConversationIdRef.current = {
+      ...historyLoadingByConversationIdRef.current,
+      [conversationId]: isLoading,
+    };
+    setHistoryLoadingByConversationId((current) => ({
+      ...current,
+      [conversationId]: isLoading,
+    }));
+  }, []);
 
   const refreshConversations = useCallback(async (showLoading: boolean, failureMessage = "Unable to load conversations. Try again.") => {
     if (!accessToken) return false;
@@ -137,7 +149,7 @@ export function ConversationPage() {
     const conversationId = activeConversationId;
     const controller = new AbortController();
     historyAbortControllerRef.current = controller;
-    setHistoryLoadingByConversationId((current) => ({ ...current, [conversationId]: true }));
+    setHistoryLoading(conversationId, true);
     setErrorsByConversationId((current) => {
       if (!(conversationId in current)) return current;
 
@@ -172,24 +184,19 @@ export function ConversationPage() {
         if (historyAbortControllerRef.current !== controller) return;
 
         historyAbortControllerRef.current = null;
-        setHistoryLoadingByConversationId((current) => ({
-          ...current,
-          [conversationId]: false,
-        }));
+        setHistoryLoading(conversationId, false);
       });
 
     return () => {
       controller.abort();
-      setHistoryLoadingByConversationId((current) => {
-        if (current[conversationId] !== true) return current;
-
-        return { ...current, [conversationId]: false };
-      });
+      if (historyLoadingByConversationIdRef.current[conversationId] === true) {
+        setHistoryLoading(conversationId, false);
+      }
       if (historyAbortControllerRef.current === controller) {
         historyAbortControllerRef.current = null;
       }
     };
-  }, [accessToken, activeConversationId]);
+  }, [accessToken, activeConversationId, setHistoryLoading]);
 
   useEffect(() => {
     return () => {
@@ -265,7 +272,7 @@ export function ConversationPage() {
   async function handleSubmit({ body, attachments: submittedAttachments }: ComposerSubmitPayload) {
     const conversationId = activeConversationId;
     const token = accessToken;
-    if (!conversationId || !token) return;
+    if (!conversationId || !token || historyLoadingByConversationIdRef.current[conversationId] === true) return;
 
     if (submittedAttachments.length > 0) {
       const message = "File attachments are not connected yet. Remove the attachment before sending.";
@@ -416,7 +423,7 @@ export function ConversationPage() {
                   <ConversationThread items={timeline} agentName={demoAgentName} isExecutionExpanded={isExecutionExpanded} onToggleExecution={() => setIsExecutionExpanded((expanded) => !expanded)} />
                 </div>
               </div>
-              <Composer disabled={!activeConversationId} draft={draft} attachments={attachments} isProcessing={isProcessing} agentName={demoAgentName} onDraftChange={setDraft} onSubmit={handleSubmit} onAttach={handleAttach} onRemoveAttachment={handleRemoveAttachment} />
+              <Composer disabled={!activeConversationId || isLoadingHistory} draft={draft} attachments={attachments} isProcessing={isProcessing} agentName={demoAgentName} onDraftChange={setDraft} onSubmit={handleSubmit} onAttach={handleAttach} onRemoveAttachment={handleRemoveAttachment} />
             </section>
             <ContextPanel status={demoContextStatus} files={demoContextFiles} tools={demoConnectedTools} outputs={demoRecentOutputs} />
           </div>
