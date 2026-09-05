@@ -52,9 +52,9 @@ export function toOpenAiCompletionsMessages(
         ...context.messages,
       ]
     : context.messages;
-  return messages.map((message) => {
+  return messages.flatMap((message): readonly unknown[] => {
     const content = textFromContent(message.content);
-    if (message.role === 'tool') return { role: 'tool', tool_call_id: message.callId, content };
+    if (message.role === 'tool') return [{ role: 'tool', tool_call_id: message.callId, content }];
     if (message.role === 'assistant') {
       const thinkingBlocks = message.content.filter(
         (block): block is Extract<(typeof message.content)[number], { type: 'thinking' }> =>
@@ -71,32 +71,36 @@ export function toOpenAiCompletionsMessages(
       const reasoningContent = reasoning
         ? thinkingBlocks.map((block) => block.thinking).join('\n')
         : undefined;
+      const hasReplayableContent = content.length > 0 || reasoningContent !== undefined || hasToolCalls;
+      if (!hasReplayableContent) return [];
       const assistantContent =
         content || (compat.requiresAssistantContentForToolCalls && hasToolCalls ? '' : null);
-      return {
-        role: 'assistant',
-        content: assistantContent,
-        ...(reasoningContent === undefined
-          ? compat.requiresReasoningContentOnAssistantMessages && hasToolCalls
-            ? { reasoning_content: '' }
-            : {}
-          : reasoning.thinkingSignature === 'reasoning_content'
-            ? { reasoning_content: reasoningContent }
-            : reasoning.thinkingSignature === 'reasoning'
-              ? { reasoning: reasoningContent }
-              : { reasoning_text: reasoningContent }),
-        ...(hasToolCalls
-          ? {
-              tool_calls: toolCalls.map((call) => ({
-                id: call.callId,
-                type: 'function',
-                function: { name: call.name, arguments: JSON.stringify(call.arguments) },
-              })),
-            }
-          : {}),
-      };
+      return [
+        {
+          role: 'assistant',
+          content: assistantContent,
+          ...(reasoningContent === undefined
+            ? compat.requiresReasoningContentOnAssistantMessages && hasToolCalls
+              ? { reasoning_content: '' }
+              : {}
+            : reasoning.thinkingSignature === 'reasoning_content'
+              ? { reasoning_content: reasoningContent }
+              : reasoning.thinkingSignature === 'reasoning'
+                ? { reasoning: reasoningContent }
+                : { reasoning_text: reasoningContent }),
+          ...(hasToolCalls
+            ? {
+                tool_calls: toolCalls.map((call) => ({
+                  id: call.callId,
+                  type: 'function',
+                  function: { name: call.name, arguments: JSON.stringify(call.arguments) },
+                })),
+              }
+            : {}),
+        },
+      ];
     }
-    return { role: message.role, content };
+    return [{ role: message.role, content }];
   });
 }
 export function parseOpenAiCompletionsToolCall(

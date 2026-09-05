@@ -327,6 +327,102 @@ describe('OpenAI Chat Completions adapter', () => {
     expect(response).not.toHaveProperty('toolCalls');
   });
 
+  it('skips an empty assistant history message during provider replay', () => {
+    const messages = toOpenAiCompletionsMessages(
+      {
+        messages: [
+          { role: 'user', content: [{ type: 'text' as const, text: 'first' }] },
+          { ...assistantTextMessage, content: [], toolCalls: [] },
+          { role: 'user', content: [{ type: 'text' as const, text: 'second' }] },
+        ],
+      },
+      model,
+    );
+
+    expect(messages).toEqual([
+      { role: 'user', content: 'first' },
+      { role: 'user', content: 'second' },
+    ]);
+  });
+
+  it('skips an empty error assistant history message without tool calls', () => {
+    const messages = toOpenAiCompletionsMessages(
+      {
+        messages: [
+          { role: 'user', content: [{ type: 'text' as const, text: 'first' }] },
+          {
+            ...assistantTextMessage,
+            content: [],
+            toolCalls: undefined,
+            finishReason: 'error' as const,
+            errorMessage: 'provider failed',
+          },
+        ],
+      },
+      model,
+    );
+
+    expect(messages).toEqual([{ role: 'user', content: 'first' }]);
+  });
+
+  it('keeps reasoning-only assistant history when the provider requires reasoning replay', () => {
+    const messages = toOpenAiCompletionsMessages(
+      {
+        messages: [
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'thinking',
+                thinking: 'private reasoning',
+                thinkingSignature: 'reasoning_content',
+                source: {
+                  api: deepSeekV4FlashModel.api,
+                  provider: deepSeekV4FlashModel.provider,
+                  model: deepSeekV4FlashModel.id,
+                },
+              },
+            ],
+            finishReason: 'stop',
+            api: deepSeekV4FlashModel.api,
+            provider: deepSeekV4FlashModel.provider,
+            model: deepSeekV4FlashModel.id,
+          },
+        ],
+      },
+      deepSeekV4FlashModel,
+    );
+
+    expect(messages).toEqual([
+      { role: 'assistant', content: null, reasoning_content: 'private reasoning' },
+    ]);
+  });
+
+  it('skips legacy empty error assistants without emitting a null content replay', () => {
+    const messages = toOpenAiCompletionsMessages(
+      {
+        messages: [
+          { role: 'user', content: [{ type: 'text' as const, text: 'first' }] },
+          {
+            ...assistantTextMessage,
+            content: [],
+            toolCalls: [],
+            finishReason: 'error' as const,
+            errorMessage: '400 invalid assistant message',
+          },
+          { role: 'user', content: [{ type: 'text' as const, text: 'retry' }] },
+        ],
+      },
+      model,
+    );
+
+    expect(messages).toEqual([
+      { role: 'user', content: 'first' },
+      { role: 'user', content: 'retry' },
+    ]);
+    expect(JSON.stringify(messages)).not.toContain('"content":null');
+  });
+
   it('serializes assistant tool calls for a following tool result', async () => {
     let sent: OpenAiCompletionsRequest | undefined;
     const adapter = new OpenAiCompletionsModelAdapter(() => ({
