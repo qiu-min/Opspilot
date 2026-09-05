@@ -3,6 +3,7 @@ using OpsPilot.Application.Conversations.Create;
 using OpsPilot.Application.Conversations.GetDetail;
 using OpsPilot.Application.Conversations.List;
 using OpsPilot.Application.Conversations.RunTurn;
+using OpsPilot.Application.Conversations.StreamTurn;
 using OpsPilot.Application.Files.GetById;
 using OpsPilot.Application.Files.Upload;
 using OpsPilot.Application.Users.Login;
@@ -20,6 +21,7 @@ public static class DependencyInjection
         services.AddScoped<GetFileAssetHandler>();
         services.AddScoped<ListConversationsHandler>();
         services.AddScoped<RunConversationTurnHandler>();
+        services.AddScoped<StreamConversationTurnHandler>();
         services.AddScoped<UploadFileHandler>();
         services.AddScoped<LoginUserHandler>();
         services.AddScoped<RegisterUserHandler>();
