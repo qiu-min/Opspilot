@@ -19,7 +19,7 @@ import {
   createGetWorkbookInfoTool,
   FileSystemSessionStore,
   RunConversationTurn,
-  type AgentSessionEvent,
+  type RunConversationTurnEvent,
 } from '../src/index.js';
 
 const providerId = 'moonshot';
@@ -79,7 +79,7 @@ async function main(): Promise<void> {
   }
 }
 
-function recordToolEvent(event: AgentSessionEvent, toolEvents: string[]): void {
+function recordToolEvent(event: RunConversationTurnEvent, toolEvents: string[]): void {
   if (event.type !== 'tool_execution_start' && event.type !== 'tool_execution_end') return;
   toolEvents.push(`${event.type}:${event.toolCall.name}`);
   console.info(`[agent-event] ${event.type} tool=${event.toolCall.name}`);

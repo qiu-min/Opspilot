@@ -23,7 +23,7 @@ import {
   createGetWorkbookInfoTool,
   FileSystemSessionStore,
   RunConversationTurn,
-  type AgentSessionEvent,
+  type RunConversationTurnEvent,
 } from '../src/index.js';
 
 const model: Model = {
@@ -66,7 +66,7 @@ describe('Application Excel discovery conversation integration', () => {
       defaultModel: model,
       toolDefinitions: [createGetWorkbookInfoTool(new ExcelJsDiscoveryAdapter())],
     });
-    const events: AgentSessionEvent[] = [];
+    const events: RunConversationTurnEvent[] = [];
 
     const result = await runner.execute(
       {
@@ -126,7 +126,7 @@ describe('Application Excel discovery conversation integration', () => {
       defaultModel: model,
       toolDefinitions: [createGetSheetProfileTool(new ExcelJsDiscoveryAdapter())],
     });
-    const events: AgentSessionEvent[] = [];
+    const events: RunConversationTurnEvent[] = [];
 
     const result = await runner.execute(
       {
@@ -329,7 +329,9 @@ function lastAssistantText(messages: readonly AgentMessage[]): string {
     .join('');
 }
 
-function eventTypes(events: readonly AgentSessionEvent[]): readonly AgentSessionEvent['type'][] {
+function eventTypes(
+  events: readonly RunConversationTurnEvent[],
+): readonly RunConversationTurnEvent['type'][] {
   return events.map((event) => event.type);
 }
 

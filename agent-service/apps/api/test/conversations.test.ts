@@ -44,6 +44,7 @@ class FakeResponse extends EventEmitter {
 }
 
 const turnResult = createTurnResult('stop');
+const sessionReadyId = '00000000-0000-4000-8000-000000000001';
 const defaultExcelResourcePathResolver: ExcelResourcePathResolver = {
   resolve(resource) {
     return { id: resource.id, filePath: resource.storagePath };
@@ -225,12 +226,17 @@ describe('Conversation API', () => {
 
   it('writes AgentEvents in order, forwards tool events, and sends done', async () => {
     const execute: RunConversationTurn['execute'] = async (_input, options) => {
+      options?.onEvent?.({
+        type: 'session_ready',
+        sessionId: sessionReadyId,
+        created: true,
+      });
       options?.onEvent?.({ type: 'agent_start' });
       options?.onEvent?.({
         type: 'tool_execution_start',
         toolCall: { callId: 'call-1', name: 'lookup', arguments: { query: 'hello' } },
       });
-      return turnResult;
+      return { ...turnResult, sessionId: sessionReadyId };
     };
     const controller = new ConversationsController(
       { execute } as RunConversationTurn,
@@ -248,9 +254,10 @@ describe('Conversation API', () => {
     });
     expect(response.chunks.join('')).toBe(
       [
+        `event: session_ready\ndata: {"type":"session_ready","sessionId":"${sessionReadyId}","created":true}\n\n`,
         'event: agent_start\ndata: {"type":"agent_start"}\n\n',
         'event: tool_execution_start\ndata: {"type":"tool_execution_start","toolCall":{"callId":"call-1","name":"lookup","arguments":{"query":"hello"}}}\n\n',
-        'event: done\ndata: {"sessionId":"session-1","leafId":"leaf-1","status":"completed"}\n\n',
+        `event: done\ndata: {"sessionId":"${sessionReadyId}","leafId":"leaf-1","status":"completed"}\n\n`,
       ].join(''),
     );
     expect(response.writableEnded).toBe(true);
@@ -260,8 +267,13 @@ describe('Conversation API', () => {
 
   it('serves the stream endpoint with SSE events and headers', async () => {
     const execute: RunConversationTurn['execute'] = async (_input, options) => {
+      options?.onEvent?.({
+        type: 'session_ready',
+        sessionId: sessionReadyId,
+        created: true,
+      });
       options?.onEvent?.({ type: 'agent_start' });
-      return turnResult;
+      return { ...turnResult, sessionId: sessionReadyId };
     };
     const server = await startServer(execute);
     app = server.app;
@@ -274,8 +286,9 @@ describe('Conversation API', () => {
     expect(response.headers['content-type']).toBe('text/event-stream');
     expect(response.body).toBe(
       [
+        `event: session_ready\ndata: {"type":"session_ready","sessionId":"${sessionReadyId}","created":true}\n\n`,
         'event: agent_start\ndata: {"type":"agent_start"}\n\n',
-        'event: done\ndata: {"sessionId":"session-1","leafId":"leaf-1","status":"completed"}\n\n',
+        `event: done\ndata: {"sessionId":"${sessionReadyId}","leafId":"leaf-1","status":"completed"}\n\n`,
       ].join(''),
     );
   });

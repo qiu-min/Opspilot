@@ -1,4 +1,6 @@
 export type {
+  RunConversationTurnEvent,
+  RunConversationTurnEventListener,
   RunConversationTurnExecutionOptions,
   RunConversationTurnInput,
   RunConversationTurnResult,

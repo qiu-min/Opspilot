@@ -15,7 +15,7 @@ import {
 import {
   FileSystemSessionStore,
   RunConversationTurn,
-  type AgentSessionEvent,
+  type RunConversationTurnEvent,
   type RunConversationTurnResult,
   SessionManager,
 } from '../src/index.js';
@@ -88,7 +88,7 @@ function summarizeMessage(message: AgentMessage | undefined): string {
 /** Records each Application event while keeping high-frequency updates compact. */
 function recordApplicationEvent(
   turn: TurnLabel,
-  event: AgentSessionEvent,
+  event: RunConversationTurnEvent,
   events: string[],
   setLastEvent: (value: string) => void,
 ): void {
@@ -110,6 +110,10 @@ function recordApplicationEvent(
   }
   if (event.type === 'compaction_start' || event.type === 'compaction_end') {
     console.info(`[agent-event] ${observed} reason=${event.reason}`);
+    return;
+  }
+  if (event.type === 'session_ready') {
+    console.info(`[agent-event] ${observed} sessionId=${event.sessionId} created=${event.created}`);
     return;
   }
   console.info(`[agent-event] ${observed}`);

@@ -72,11 +72,13 @@ export class RunConversationTurn {
     input: RunConversationTurnInput,
     options?: RunConversationTurnExecutionOptions,
   ): Promise<RunConversationTurnResult> {
-    const sessionManager =
-      input.sessionId === undefined
-        ? this.sessionStore.create()
-        : this.sessionStore.load(input.sessionId);
+    const created = input.sessionId === undefined;
+    const sessionManager = created
+      ? this.sessionStore.create()
+      : this.sessionStore.load(input.sessionId);
     const sessionId = sessionManager.getHeader().id;
+    await options?.onEvent?.({ type: 'session_ready', sessionId, created });
+
     const tools = wrapToolDefinitions(this.toolDefinitions, {
       sessionId,
       ...(input.excelResource === undefined ? {} : { excelResource: input.excelResource }),
@@ -96,7 +98,9 @@ export class RunConversationTurn {
     let unsubscribe: (() => void) | undefined;
     try {
       if (options?.onEvent !== undefined) {
-        unsubscribe = agentSession.subscribe(options.onEvent);
+        unsubscribe = agentSession.subscribe(async (event) => {
+          await options.onEvent?.(event);
+        });
       }
 
       const messages = await agentSession.prompt(input.message);

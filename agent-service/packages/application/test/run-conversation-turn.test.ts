@@ -16,11 +16,11 @@ import { createModelEventStream } from '@opspilot/model-gateway';
 
 import {
   AgentSession,
-  type AgentSessionEvent,
   createCompactionSummaryMessage,
   type ContextManager,
   FileSystemSessionStore,
   RunConversationTurn,
+  type RunConversationTurnEvent,
   SessionManager,
   type SessionStore,
   type ToolContext,
@@ -240,6 +240,92 @@ describe('RunConversationTurn', () => {
     );
   });
 
+  it('awaits session_ready listeners before creating AgentSession', async () => {
+    const { store } = createStore();
+    const gateway = createGateway([assistantStream(assistantMessage('done'), model)]);
+    const runner = new RunConversationTurn({
+      sessionStore: store,
+      modelGateway: gateway,
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+    const listenerStarted = createDeferred<void>();
+    const releaseListener = createDeferred<void>();
+
+    const execution = runner.execute(
+      { message: userMessage('hello') },
+      {
+        onEvent: async (event) => {
+          if (event.type !== 'session_ready') return;
+          listenerStarted.resolve(undefined);
+          await releaseListener.promise;
+        },
+      },
+    );
+
+    await listenerStarted.promise;
+    expect(gateway.stream).not.toHaveBeenCalled();
+
+    releaseListener.resolve(undefined);
+    await execution;
+    expect(gateway.stream).toHaveBeenCalledOnce();
+  });
+
+  it('does not emit session_ready when session creation fails', async () => {
+    const events: RunConversationTurnEvent[] = [];
+    const creationError = new Error('session creation failed');
+    const sessionStore: SessionStore = {
+      create: () => {
+        throw creationError;
+      },
+      load: () => {
+        throw new Error('load should not be called');
+      },
+    };
+    const runner = new RunConversationTurn({
+      sessionStore,
+      modelGateway: createGateway([]),
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+
+    await expect(
+      runner.execute(
+        { message: userMessage('hello') },
+        {
+          onEvent: (event) => {
+            events.push(event);
+          },
+        },
+      ),
+    ).rejects.toThrow('session creation failed');
+    expect(events).toEqual([]);
+  });
+
+  it('propagates session_ready listener failures before starting AgentSession', async () => {
+    const { store } = createStore();
+    const gateway = createGateway([]);
+    const runner = new RunConversationTurn({
+      sessionStore: store,
+      modelGateway: gateway,
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+    const listenerError = new Error('session_ready listener failed');
+
+    await expect(
+      runner.execute(
+        { message: userMessage('hello') },
+        {
+          onEvent: (event) => {
+            if (event.type === 'session_ready') throw listenerError;
+          },
+        },
+      ),
+    ).rejects.toThrow('session_ready listener failed');
+    expect(gateway.stream).not.toHaveBeenCalled();
+  });
+
   it('loads an existing session, restores history, and appends the next turn once', async () => {
     const { store } = createStore();
     const firstInput = userMessage('first');
@@ -261,13 +347,26 @@ describe('RunConversationTurn', () => {
       toolDefinitions: [],
       defaultModel: model,
     });
+    const events: RunConversationTurnEvent[] = [];
 
-    const secondResult = await secondRunner.execute({
-      sessionId: firstResult.sessionId,
-      message: secondInput,
-    });
+    const secondResult = await secondRunner.execute(
+      {
+        sessionId: firstResult.sessionId,
+        message: secondInput,
+      },
+      {
+        onEvent: (event) => {
+          events.push(event);
+        },
+      },
+    );
     const loaded = store.load(firstResult.sessionId);
 
+    expect(events[0]).toEqual({
+      type: 'session_ready',
+      sessionId: firstResult.sessionId,
+      created: false,
+    });
     expect(secondResult.messages).toEqual([secondInput, secondResponse]);
     expect(messageEntries(loaded)).toEqual([
       firstInput,
@@ -576,7 +675,7 @@ describe('RunConversationTurn', () => {
       toolDefinitions: [definition],
       defaultModel: model,
     });
-    const events: AgentSessionEvent[] = [];
+    const events: RunConversationTurnEvent[] = [];
 
     const result = await runner.execute(
       {
@@ -606,7 +705,7 @@ describe('RunConversationTurn', () => {
     expect(
       events
         .filter(
-          (event): event is Extract<AgentSessionEvent, { type: 'tool_execution_start' }> =>
+          (event): event is Extract<RunConversationTurnEvent, { type: 'tool_execution_start' }> =>
             event.type === 'tool_execution_start',
         )
         .map((event) => event.toolCall.callId),
@@ -614,7 +713,7 @@ describe('RunConversationTurn', () => {
     expect(
       events
         .filter(
-          (event): event is Extract<AgentSessionEvent, { type: 'tool_execution_end' }> =>
+          (event): event is Extract<RunConversationTurnEvent, { type: 'tool_execution_end' }> =>
             event.type === 'tool_execution_end',
         )
         .map((event) => event.toolCall.callId),
@@ -699,7 +798,7 @@ describe('RunConversationTurn', () => {
     ]);
   });
 
-  it('forwards AgentSession events to the execution listener', async () => {
+  it('emits session_ready before forwarding AgentSession events', async () => {
     const { store } = createStore();
     const gateway = createGateway([assistantStream(assistantMessage('done'), model)]);
     const runner = new RunConversationTurn({
@@ -708,9 +807,9 @@ describe('RunConversationTurn', () => {
       toolDefinitions: [],
       defaultModel: model,
     });
-    const events: AgentSessionEvent[] = [];
+    const events: RunConversationTurnEvent[] = [];
 
-    await runner.execute(
+    const result = await runner.execute(
       { message: userMessage('hello') },
       {
         onEvent: (event) => {
@@ -719,7 +818,14 @@ describe('RunConversationTurn', () => {
       },
     );
 
-    expect(events[0]).toEqual({ type: 'agent_start' });
+    expect(events[0]).toEqual({
+      type: 'session_ready',
+      sessionId: result.sessionId,
+      created: true,
+    });
+    expect(events.findIndex((event) => event.type === 'session_ready')).toBeLessThan(
+      events.findIndex((event) => event.type === 'agent_start'),
+    );
     expect(events.map((event) => event.type)).toEqual(
       expect.arrayContaining([
         'turn_start',
@@ -927,8 +1033,8 @@ describe('RunConversationTurn', () => {
       runner.execute(
         { message: userMessage('hello') },
         {
-          onEvent: () => {
-            throw new Error('event listener failed');
+          onEvent: (event) => {
+            if (event.type === 'agent_start') throw new Error('event listener failed');
           },
         },
       ),
