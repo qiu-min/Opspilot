@@ -50,14 +50,12 @@ public sealed class GetConversationDetailHandlerTests
             History = new AgentConversationHistory(
                 "entry-2",
                 [
-                    new AgentConversationHistoryItem(
-                        "message",
+                    new AgentConversationHistoryMessageItem(
                         "entry-1",
                         "user",
                         "hello",
                         new DateTimeOffset(CreatedAtUtc.AddMinutes(2))),
-                    new AgentConversationHistoryItem(
-                        "message",
+                    new AgentConversationHistoryMessageItem(
                         "entry-2",
                         "assistant",
                         "Hi.",
@@ -76,15 +74,17 @@ public sealed class GetConversationDetailHandlerTests
             result.Items,
             item =>
             {
-                Assert.Equal("entry-1", item.Id);
-                Assert.Equal("user", item.Role);
-                Assert.Equal("hello", item.Text);
+                var message = Assert.IsType<ConversationHistoryMessageItemResult>(item);
+                Assert.Equal("entry-1", message.Id);
+                Assert.Equal("user", message.Role);
+                Assert.Equal("hello", message.Text);
             },
             item =>
             {
-                Assert.Equal("entry-2", item.Id);
-                Assert.Equal("assistant", item.Role);
-                Assert.Equal("Hi.", item.Text);
+                var message = Assert.IsType<ConversationHistoryMessageItemResult>(item);
+                Assert.Equal("entry-2", message.Id);
+                Assert.Equal("assistant", message.Role);
+                Assert.Equal("Hi.", message.Text);
             });
     }
 

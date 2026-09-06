@@ -12,13 +12,22 @@ export type ConversationDetailResponse = {
   items: ConversationHistoryItemResponse[];
 };
 
-export type ConversationHistoryItemResponse = {
-  type: "message";
-  id: string;
-  role: "user" | "assistant";
-  text: string;
-  createdAtUtc: string;
-};
+export type ConversationHistoryItemResponse =
+  | {
+      type: "message";
+      id: string;
+      role: "user" | "assistant";
+      text: string;
+      createdAtUtc: string;
+    }
+  | {
+      type: "tool_execution";
+      id: string;
+      callId: string;
+      name: string;
+      status: "completed" | "failed";
+      createdAtUtc: string;
+    };
 
 export type CreateConversationResponse = {
   id: string;

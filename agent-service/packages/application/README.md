@@ -28,7 +28,7 @@ OpsPilot Agent Service 的应用层。
 `SessionManager` 保存完整会话事实；`ContextManager` 只决定本次模型调用使用哪些 `AgentMessage`，不依赖或修改 `SessionManager`。`createAgentSession` 将 ContextManager 接入 Agent Runtime 的 `transformContext` hook，因此经过 ContextManager 的消息只影响当前模型调用，不影响后续 Session 持久化。
 
 Web 历史恢复使用独立的 `buildConversationHistoryProjection()`：它读取
-`SessionManager.getBranch()` 的完整 active branch，保留原始 message entry id，并只输出 user / assistant 的可见 text。它不复用会受 Compaction 影响的 `buildSessionContext()`，也不会把 AgentMessage 的 thinking、provider 或 model metadata 暴露到 UI。
+`SessionManager.getBranch()` 的完整 active branch，保留原始 entry 顺序和 id，并输出 UI-safe 的 user / assistant 可见 text 以及 tool execution 的 callId、name、status。它不复用会受 Compaction 影响的 `buildSessionContext()`，也不会把 AgentMessage 的 thinking、provider、model metadata 或 tool raw output 暴露到 UI。
 
 Phase 1 的默认 `DefaultContextManager` 不裁剪消息，只返回输入消息的副本。Context Accounting 仅负责测量上下文用量与判断阈值。
 

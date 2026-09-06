@@ -58,12 +58,7 @@ public sealed class ConversationsController(
             result.CreatedAtUtc,
             result.UpdatedAtUtc,
             result.Items
-                .Select(item => new ConversationHistoryItemResponse(
-                    item.Type,
-                    item.Id,
-                    item.Role,
-                    item.Text,
-                    item.CreatedAtUtc))
+                .Select(MapHistoryItem)
                 .ToArray()));
     }
 
@@ -211,6 +206,27 @@ public sealed class ConversationsController(
         HttpContext.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpResponseBodyFeature>()
             ?.DisableBuffering();
     }
+
+    private static ConversationHistoryItemResponse MapHistoryItem(
+        ConversationHistoryItemResult item) =>
+        item switch
+        {
+            ConversationHistoryMessageItemResult message =>
+                new ConversationHistoryMessageItemResponse(
+                    message.Id,
+                    message.Role,
+                    message.Text,
+                    message.CreatedAtUtc),
+            ConversationHistoryToolExecutionItemResult toolExecution =>
+                new ConversationHistoryToolExecutionItemResponse(
+                    toolExecution.Id,
+                    toolExecution.CallId,
+                    toolExecution.Name,
+                    toolExecution.Status,
+                    toolExecution.CreatedAtUtc),
+            _ => throw new InvalidOperationException(
+                $"Unsupported conversation history item type: {item.GetType().Name}."),
+        };
 
     private async Task TryWriteGenericErrorAsync(CancellationToken cancellationToken)
     {

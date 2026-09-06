@@ -20,8 +20,8 @@ public sealed class AgentServiceClientTests
             requestPath = request.RequestUri?.PathAndQuery;
             return Task.FromResult(JsonResponse(new
             {
-                leafId = "entry-2",
-                items = new[]
+                leafId = "entry-3",
+                items = new object[]
                 {
                     new
                     {
@@ -39,6 +39,15 @@ public sealed class AgentServiceClientTests
                         text = "Hi.",
                         createdAt = "2026-09-05T08:00:01.000Z",
                     },
+                    new
+                    {
+                        type = "tool_execution",
+                        id = "entry-3",
+                        callId = "call-1",
+                        name = "get_workbook_info",
+                        status = "completed",
+                        createdAt = "2026-09-05T08:00:02.000Z",
+                    },
                 },
             }));
         });
@@ -55,20 +64,30 @@ public sealed class AgentServiceClientTests
 
         Assert.Equal("GET", requestMethod);
         Assert.Equal($"/sessions/{sessionId:D}/history", requestPath);
-        Assert.Equal("entry-2", result.LeafId);
+        Assert.Equal("entry-3", result.LeafId);
         Assert.Collection(
             result.Items,
             item =>
             {
-                Assert.Equal("entry-1", item.Id);
-                Assert.Equal("user", item.Role);
-                Assert.Equal("hello", item.Text);
+                var message = Assert.IsType<AgentConversationHistoryMessageItem>(item);
+                Assert.Equal("entry-1", message.Id);
+                Assert.Equal("user", message.Role);
+                Assert.Equal("hello", message.Text);
             },
             item =>
             {
-                Assert.Equal("entry-2", item.Id);
-                Assert.Equal("assistant", item.Role);
-                Assert.Equal("Hi.", item.Text);
+                var message = Assert.IsType<AgentConversationHistoryMessageItem>(item);
+                Assert.Equal("entry-2", message.Id);
+                Assert.Equal("assistant", message.Role);
+                Assert.Equal("Hi.", message.Text);
+            },
+            item =>
+            {
+                var tool = Assert.IsType<AgentConversationHistoryToolExecutionItem>(item);
+                Assert.Equal("entry-3", tool.Id);
+                Assert.Equal("call-1", tool.CallId);
+                Assert.Equal("get_workbook_info", tool.Name);
+                Assert.Equal("completed", tool.Status);
             });
     }
 

@@ -30,24 +30,38 @@ export type ConversationSummary = {
 
 export type AgentExecutionStatus = "queued" | "running" | "complete" | "failed";
 
-export type AgentExecutionStep = {
+export type ConversationResponseStatus = "streaming" | "completed" | "failed" | "aborted";
+
+export type ConversationResponseBlockStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "interrupted";
+
+export type AssistantTextBlock = {
+  type: "assistant_text";
   id: string;
-  title: string;
-  detail?: string;
-  duration?: string;
-  status: AgentExecutionStatus;
-  progress?: number;
+  text: string;
+  completed: boolean;
+  createdAt: string;
 };
 
-export type AgentExecution = {
+export type ToolExecutionBlock = {
+  type: "tool_execution";
   id: string;
-  title: string;
-  agentName: string;
-  toolchainLabel: string;
-  status: AgentExecutionStatus;
-  statusLabel: string;
-  steps: AgentExecutionStep[];
-  latestOutput?: string;
+  callId: string;
+  name: string;
+  status: ConversationResponseBlockStatus;
+  createdAt: string;
+};
+
+export type ConversationResponseBlock = AssistantTextBlock | ToolExecutionBlock;
+
+export type ConversationResponseItem = {
+  type: "response";
+  id: string;
+  status: ConversationResponseStatus;
+  blocks: ConversationResponseBlock[];
 };
 
 export type GeneratedArtifact = {
@@ -65,11 +79,7 @@ export type ConversationItem =
       id: string;
       message: ChatMessage;
     }
-  | {
-      type: "agent-execution";
-      id: string;
-      execution: AgentExecution;
-    }
+  | ConversationResponseItem
   | {
       type: "artifact";
       id: string;

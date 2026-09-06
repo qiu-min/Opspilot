@@ -85,7 +85,16 @@ describe('Session history API', () => {
     expect(response.statusCode).toBe(200);
     const body = JSON.parse(response.body) as {
       leafId: string | null;
-      items: Array<{ id: string; role: string; text: string; createdAt: string }>;
+      items: Array<{
+        type: string;
+        id: string;
+        role?: string;
+        text?: string;
+        callId?: string;
+        name?: string;
+        status?: string;
+        createdAt: string;
+      }>;
     };
     expect(loadCalls).toEqual([sessionId]);
     expect(body.leafId).toBe(activeBranchReply.id);
@@ -94,9 +103,63 @@ describe('Session history API', () => {
       assistant.id,
       activeBranchReply.id,
     ]);
+    expect(body.items.map((item) => item.type)).toEqual(['message', 'message', 'message']);
     expect(body.items.map((item) => item.text)).toEqual(['hello', 'hello back', 'active reply']);
     expect(response.body).not.toContain('private thinking');
     expect(response.body).not.toContain(hiddenBranch.id);
+  });
+
+  it('projects tool messages without exposing their output or details', async () => {
+    const sessionId = '22222222-2222-4222-8222-222222222222';
+    const session = SessionManager.inMemory({ id: sessionId });
+    session.appendMessage({
+      role: 'user',
+      content: [{ type: 'text', text: 'inspect' }],
+    });
+    session.appendMessage({
+      role: 'assistant',
+      api: 'test-api',
+      provider: 'test-provider',
+      model: 'test-model',
+      content: [{ type: 'text', text: 'I will inspect it.' }],
+      finishReason: 'tool_calls',
+    });
+    const tool = session.appendMessage({
+      role: 'tool',
+      callId: 'call-1',
+      name: 'get_workbook_info',
+      content: [{ type: 'text', text: 'private tool output' }],
+      details: { secret: 'private details' },
+      isError: true,
+    });
+
+    const store: SessionStore = {
+      create: () => {
+        throw new Error('history endpoint must not create sessions');
+      },
+      load: (requestedSessionId) => {
+        if (requestedSessionId !== sessionId) throw new Error('missing session');
+        return session;
+      },
+    };
+    app = await startServer(new GetConversationHistory(store));
+
+    const response = await getJson(app, `/sessions/${sessionId}/history`);
+    const body = JSON.parse(response.body) as {
+      items: Array<Record<string, string>>;
+    };
+    const toolItem = body.items.find((item) => item.type === 'tool_execution');
+
+    expect(toolItem).toEqual({
+      type: 'tool_execution',
+      id: tool.id,
+      callId: 'call-1',
+      name: 'get_workbook_info',
+      status: 'failed',
+      createdAt: expect.any(String),
+    });
+    expect(response.body).not.toContain('private tool output');
+    expect(response.body).not.toContain('private details');
   });
 });
 

@@ -18,6 +18,12 @@ function assistantMessage(text: string): AgentMessage {
   };
 }
 
+function visibleMessages(items: ReturnType<typeof buildConversationHistoryProjection>['items']) {
+  return items.filter(
+    (item): item is Extract<(typeof items)[number], { type: 'message' }> => item.type === 'message',
+  );
+}
+
 describe('buildConversationHistoryProjection', () => {
   it('returns an empty projection for an empty session branch', () => {
     const session = SessionManager.inMemory();
@@ -37,7 +43,7 @@ describe('buildConversationHistoryProjection', () => {
 
     const projection = buildConversationHistoryProjection(session.getBranch(), session.getLeafId());
 
-    expect(projection.items.map((item) => [item.role, item.text])).toEqual([
+    expect(visibleMessages(projection.items).map((item) => [item.role, item.text])).toEqual([
       ['user', 'user 1'],
       ['assistant', 'assistant 1'],
       ['user', 'user 2'],
@@ -63,13 +69,13 @@ describe('buildConversationHistoryProjection', () => {
 
     const projection = buildConversationHistoryProjection(session.getBranch());
 
-    expect(projection.items.map((item) => item.text)).toEqual(['visible']);
+    expect(visibleMessages(projection.items).map((item) => item.text)).toEqual(['visible']);
   });
 
-  it('ignores tool messages instead of mapping them as assistant messages', () => {
+  it('projects tool messages as UI-safe tool execution items', () => {
     const session = SessionManager.inMemory();
     session.appendMessage(userMessage('user'));
-    session.appendMessage({
+    const tool = session.appendMessage({
       role: 'tool',
       callId: 'call-1',
       name: 'lookup',
@@ -79,13 +85,23 @@ describe('buildConversationHistoryProjection', () => {
 
     const projection = buildConversationHistoryProjection(session.getBranch());
 
-    expect(projection.items.map((item) => item.text)).toEqual(['user']);
+    expect(projection.items).toEqual([
+      expect.objectContaining({ type: 'message', role: 'user', text: 'user' }),
+      {
+        type: 'tool_execution',
+        id: tool.id,
+        callId: 'call-1',
+        name: 'lookup',
+        status: 'completed',
+        createdAt: expect.any(String),
+      },
+    ]);
   });
 
-  it('skips assistant tool-call-only messages and their tool results', () => {
+  it('keeps assistant and tool entries in their original order', () => {
     const session = SessionManager.inMemory();
-    const user = session.appendMessage(userMessage('question'));
-    const toolCallOnly = session.appendMessage({
+    session.appendMessage(userMessage('question'));
+    session.appendMessage({
       role: 'assistant',
       api: 'test-api',
       provider: 'test-provider',
@@ -94,7 +110,7 @@ describe('buildConversationHistoryProjection', () => {
       toolCalls: [{ callId: 'call-1', name: 'lookup', arguments: {} }],
       finishReason: 'tool_calls',
     });
-    session.appendMessage({
+    const tool = session.appendMessage({
       role: 'tool',
       callId: 'call-1',
       name: 'lookup',
@@ -105,12 +121,23 @@ describe('buildConversationHistoryProjection', () => {
 
     const projection = buildConversationHistoryProjection(session.getBranch());
 
-    expect(projection.items.map((item) => [item.role, item.text])).toEqual([
-      ['user', 'question'],
-      ['assistant', 'final answer'],
+    expect(projection.items.map((item) => item.type)).toEqual([
+      'message',
+      'tool_execution',
+      'message',
     ]);
-    expect(projection.items.map((item) => item.id)).toEqual([user.id, finalAssistant.id]);
-    expect(projection.items.map((item) => item.id)).not.toContain(toolCallOnly.id);
+    expect(projection.items[1]).toMatchObject({
+      type: 'tool_execution',
+      id: tool.id,
+      callId: 'call-1',
+      name: 'lookup',
+      status: 'completed',
+    });
+    expect(projection.items[2]).toMatchObject({
+      type: 'message',
+      role: 'assistant',
+      text: 'final answer',
+    });
   });
 
   it('exposes assistant text while excluding thinking content', () => {
@@ -134,7 +161,7 @@ describe('buildConversationHistoryProjection', () => {
 
     const projection = buildConversationHistoryProjection(session.getBranch());
 
-    expect(projection.items[0]?.text).toBe('public answer');
+    expect(visibleMessages(projection.items)[0]?.text).toBe('public answer');
     expect(JSON.stringify(projection)).not.toContain('private reasoning');
   });
 
@@ -154,7 +181,7 @@ describe('buildConversationHistoryProjection', () => {
       newUser.id,
       newAssistant.id,
     ]);
-    expect(projection.items.map((item) => item.text)).toEqual([
+    expect(visibleMessages(projection.items).map((item) => item.text)).toEqual([
       'old user',
       'old assistant',
       'new user',
@@ -172,7 +199,7 @@ describe('buildConversationHistoryProjection', () => {
 
     const projection = buildConversationHistoryProjection(session.getBranch());
 
-    expect(projection.items.map((item) => item.text)).toEqual(['A', 'B', 'D']);
+    expect(visibleMessages(projection.items).map((item) => item.text)).toEqual(['A', 'B', 'D']);
     expect(projection.leafId).toBe(d.id);
     expect(projection.items.map((item) => item.id)).not.toContain(c.id);
   });

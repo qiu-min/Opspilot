@@ -10,6 +10,7 @@ export {
   extractVisibleText,
   type ConversationHistoryItem,
   type ConversationHistoryMessageItem,
+  type ConversationHistoryToolExecutionItem,
   type ConversationHistoryProjection,
 } from './conversation-history-projection.js';
 export { GetConversationHistory } from './get-conversation-history.js';

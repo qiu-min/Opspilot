@@ -1,22 +1,16 @@
 import { Plus } from "lucide-react";
 import { ChatMessageView } from "./chat-message";
-import { AgentExecutionCard } from "./agent-execution-card";
+import { ConversationResponseView } from "./conversation-response-view";
 import { GeneratedArtifactCard } from "./generated-artifact";
 import type { ConversationItem } from "../types";
-import { StreamingConversationResponse } from "./streaming-conversation-response";
-import type { ConversationStreamState } from "../conversation-stream-state";
 
 type ConversationThreadProps = {
-  conversationId: string;
   items: ConversationItem[];
   agentName: string;
-  isExecutionExpanded: boolean;
-  onToggleExecution: () => void;
-  streamState?: ConversationStreamState;
 };
 
-export function ConversationThread({ conversationId, items, agentName, isExecutionExpanded, onToggleExecution, streamState }: ConversationThreadProps) {
-  if (items.length === 0 && streamState === undefined) {
+export function ConversationThread({ items, agentName }: ConversationThreadProps) {
+  if (items.length === 0) {
     return (
       <div className="flex min-h-[360px] flex-col items-center justify-center text-center">
         <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand/10 text-brand" aria-hidden="true"><Plus size={22} /></div>
@@ -30,18 +24,9 @@ export function ConversationThread({ conversationId, items, agentName, isExecuti
     <div className="space-y-7" aria-label="Conversation timeline">
       {items.map((item) => {
         if (item.type === "message") return <ChatMessageView key={item.id} message={item.message} agentName={agentName} />;
-        if (item.type === "agent-execution") return <AgentExecutionCard key={item.id} execution={item.execution} isExpanded={isExecutionExpanded} onToggle={onToggleExecution} />;
+        if (item.type === "response") return <ConversationResponseView key={item.id} response={item} agentName={agentName} />;
         return <GeneratedArtifactCard key={item.id} artifact={item.artifact} />;
       })}
-      {streamState && (
-        <StreamingConversationResponse
-          conversationId={conversationId}
-          streamState={streamState}
-          agentName={agentName}
-          isExecutionExpanded={isExecutionExpanded}
-          onToggleExecution={onToggleExecution}
-        />
-      )}
     </div>
   );
 }

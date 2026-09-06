@@ -32,12 +32,7 @@ public sealed class GetConversationDetailHandler(
                 cancellationToken);
 
             items = history.Items
-                .Select(item => new ConversationHistoryItemResult(
-                    item.Type,
-                    item.Id,
-                    item.Role,
-                    item.Text,
-                    item.CreatedAt))
+                .Select(MapHistoryItem)
                 .ToArray();
         }
 
@@ -48,4 +43,25 @@ public sealed class GetConversationDetailHandler(
             conversation.UpdatedAtUtc,
             items);
     }
+
+    private static ConversationHistoryItemResult MapHistoryItem(
+        AgentConversationHistoryItem item) =>
+        item switch
+        {
+            AgentConversationHistoryMessageItem message =>
+                new ConversationHistoryMessageItemResult(
+                    message.Id,
+                    message.Role,
+                    message.Text,
+                    message.CreatedAt),
+            AgentConversationHistoryToolExecutionItem toolExecution =>
+                new ConversationHistoryToolExecutionItemResult(
+                    toolExecution.Id,
+                    toolExecution.CallId,
+                    toolExecution.Name,
+                    toolExecution.Status,
+                    toolExecution.CreatedAt),
+            _ => throw new InvalidOperationException(
+                $"Unsupported conversation history item type: {item.GetType().Name}."),
+        };
 }

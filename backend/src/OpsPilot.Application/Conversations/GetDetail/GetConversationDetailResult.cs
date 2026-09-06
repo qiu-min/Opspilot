@@ -6,10 +6,3 @@ public sealed record GetConversationDetailResult(
     DateTime CreatedAtUtc,
     DateTime UpdatedAtUtc,
     IReadOnlyList<ConversationHistoryItemResult> Items);
-
-public sealed record ConversationHistoryItemResult(
-    string Type,
-    string Id,
-    string Role,
-    string Text,
-    DateTimeOffset CreatedAtUtc);

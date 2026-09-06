@@ -2,7 +2,7 @@ import type { AgentMessage } from '@opspilot/agent-runtime';
 
 import type { SessionEntry } from '../session/session-types.js';
 
-/** A UI-safe history item projected from one persisted session message entry. */
+/** A UI-safe message item projected from one persisted session message entry. */
 export interface ConversationHistoryMessageItem {
   readonly type: 'message';
   readonly id: string;
@@ -11,8 +11,19 @@ export interface ConversationHistoryMessageItem {
   readonly createdAt: string;
 }
 
+/** A UI-safe tool execution item projected from one persisted tool result entry. */
+export interface ConversationHistoryToolExecutionItem {
+  readonly type: 'tool_execution';
+  readonly id: string;
+  readonly callId: string;
+  readonly name: string;
+  readonly status: 'completed' | 'failed';
+  readonly createdAt: string;
+}
+
 /** The extensible item union returned to the conversation history boundary. */
-export type ConversationHistoryItem = ConversationHistoryMessageItem;
+export type ConversationHistoryItem =
+  ConversationHistoryMessageItem | ConversationHistoryToolExecutionItem;
 
 /** The durable history projection for the active branch of a session. */
 export interface ConversationHistoryProjection {
@@ -31,24 +42,33 @@ export function buildConversationHistoryProjection(
   branch: readonly SessionEntry[],
   leafId: string | null = branch.at(-1)?.id ?? null,
 ): ConversationHistoryProjection {
-  const items = branch.flatMap((entry) => {
-    if (entry.type !== 'message') return [];
+  const items: ConversationHistoryItem[] = [];
+  for (const entry of branch) {
+    if (entry.type !== 'message') continue;
 
-    const message = getVisibleMessage(entry.message);
-    if (message === undefined) return [];
-    const text = extractVisibleText(message);
-    if (text.length === 0) return [];
-
-    return [
-      {
-        type: 'message' as const,
+    if (entry.message.role === 'tool') {
+      items.push({
+        type: 'tool_execution',
         id: entry.id,
-        role: message.role,
-        text,
+        callId: entry.message.callId,
+        name: entry.message.name,
+        status: entry.message.isError ? 'failed' : 'completed',
         createdAt: entry.timestamp,
-      },
-    ];
-  });
+      });
+      continue;
+    }
+
+    const text = extractVisibleText(entry.message);
+    if (text.length === 0) continue;
+
+    items.push({
+      type: 'message',
+      id: entry.id,
+      role: entry.message.role,
+      text,
+      createdAt: entry.timestamp,
+    });
+  }
 
   return { leafId, items };
 }
@@ -60,10 +80,4 @@ export function extractVisibleText(
   return message.content
     .flatMap((content) => (content.type === 'text' ? [content.text] : []))
     .join('');
-}
-
-function getVisibleMessage(
-  message: AgentMessage,
-): Extract<AgentMessage, { readonly role: 'user' | 'assistant' }> | undefined {
-  return message.role === 'user' || message.role === 'assistant' ? message : undefined;
 }

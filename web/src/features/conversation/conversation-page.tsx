@@ -16,7 +16,13 @@ import {
   uploadPendingAttachment,
 } from "./conversation-attachments";
 import { demoAgentName, demoConnectedTools, demoContextFiles, demoContextStatus, demoEnvironmentLabel, demoRecentOutputs } from "./demo";
-import { formatMessageCreatedAt, toConversationItems, toConversationSummary } from "./conversation-mappers";
+import {
+  formatMessageCreatedAt,
+  reconcileConversationItems,
+  toConversationItems,
+  toConversationSummary,
+} from "./conversation-mappers";
+import { projectConversationStream } from "./conversation-stream-projection";
 import {
   ConversationStreamStateError,
   createInitialConversationStreamState,
@@ -78,7 +84,6 @@ export function ConversationPage() {
   const [streamStatesByConversationId, setStreamStatesByConversationId] = useState<Record<string, ConversationStreamState | undefined>>({});
   const [attachmentsByConversationId, setAttachmentsByConversationId] = useState<Record<string, PendingAttachment[]>>({});
   const [draft, setDraft] = useState("");
-  const [isExecutionExpanded, setIsExecutionExpanded] = useState(false);
   const [isContextVisible, setIsContextVisible] = useState(false);
   const [isMobileNavVisible, setIsMobileNavVisible] = useState(false);
   const [pageStatusMessage, setPageStatusMessage] = useState("Ready");
@@ -303,7 +308,6 @@ export function ConversationPage() {
       setTimelinesByConversationId((current) => ({ ...current, [newConversation.id]: [] }));
       setAttachmentsByConversationId((current) => ({ ...current, [newConversation.id]: [] }));
       setDraft("");
-      setIsExecutionExpanded(false);
       setIsMobileNavVisible(false);
       setConversationListError(null);
       setPageStatusMessage("New conversation ready");
@@ -328,7 +332,6 @@ export function ConversationPage() {
 
     setActiveConversationId(conversationId);
     setDraft("");
-    setIsExecutionExpanded(false);
     setIsMobileNavVisible(false);
     setPageStatusMessage(`Selected ${conversation.title}`);
   }
@@ -368,6 +371,7 @@ export function ConversationPage() {
     let responseStarted = false;
     let uploadCompleted = submittedAttachments.length === 0;
     let userMessage: ChatMessage | null = null;
+    let responseId: string | null = null;
 
     const removeOptimisticUserMessage = () => {
       if (userMessage === null) return;
@@ -386,6 +390,22 @@ export function ConversationPage() {
         ...current,
         [conversationId]: nextState,
       }));
+
+      if (responseId === null) return;
+      const responseItem = projectConversationStream(nextState, responseId);
+      if (responseItem === undefined) return;
+
+      setTimelinesByConversationId((current) => {
+        const timeline = current[conversationId] ?? [];
+        const responseIndex = timeline.findIndex(
+          (item) => item.type === "response" && item.id === responseId,
+        );
+        const nextTimeline = [...timeline];
+        if (responseIndex === -1) nextTimeline.push(responseItem);
+        else nextTimeline[responseIndex] = responseItem;
+
+        return { ...current, [conversationId]: nextTimeline };
+      });
     };
 
     try {
@@ -414,6 +434,7 @@ export function ConversationPage() {
           : { attachments: [uploadedAttachment.attachment] }),
       };
       userMessage = optimisticUserMessage;
+      responseId = `response-${optimisticUserMessage.id}`;
 
       setTimelinesByConversationId((current) => ({
         ...current,
@@ -498,9 +519,16 @@ export function ConversationPage() {
               }
             }
 
+            const currentResponseId = responseId;
             setTimelinesByConversationId((current) => ({
               ...current,
-              [conversationId]: historyItems,
+              [conversationId]: currentResponseId === null
+                ? historyItems
+                : reconcileConversationItems(
+                    current[conversationId] ?? [],
+                    historyItems,
+                    currentResponseId,
+                  ),
             }));
             clearConversationStreamState(conversationId);
             setErrorsByConversationId((current) => {
@@ -547,6 +575,14 @@ export function ConversationPage() {
         if (!responseStarted) {
           removeOptimisticUserMessage();
           clearConversationStreamState(conversationId);
+        } else if (streamState.phase === "streaming") {
+          streamState = reduceConversationStreamEvent(streamState, {
+            type: "response_completed",
+            conversationId,
+            leafId: null,
+            status: "aborted",
+          });
+          publishStreamState(streamState);
         }
         return;
       }
@@ -657,12 +693,8 @@ export function ConversationPage() {
                   <div className="mb-7 flex items-center justify-between gap-4"><div><p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-mutedInk">Conversation</p><p className="mt-1 text-xs text-mutedInk">{activeConversation ? formatConversationUpdatedAt(activeConversation.updatedAt) : "No active conversation"}</p></div></div>
                   {visibleError && <div role="alert" className="mb-6 flex items-start gap-2.5 rounded-lg border border-danger/25 bg-danger/[0.06] px-3.5 py-3 text-sm text-danger"><AlertCircle size={17} className="mt-0.5 shrink-0" aria-hidden="true" /><p>{visibleError}</p></div>}
                   <ConversationThread
-                    conversationId={activeConversation?.id ?? "new"}
                     items={timeline}
                     agentName={demoAgentName}
-                    isExecutionExpanded={isExecutionExpanded}
-                    onToggleExecution={() => setIsExecutionExpanded((expanded) => !expanded)}
-                    streamState={activeStreamState}
                   />
                 </div>
               </div>
