@@ -33,6 +33,9 @@ public sealed class ConversationStreamEndpointTests : IClassFixture<Conversation
             new AgentServiceStreamEvent.SessionReady(FirstSessionId, true),
             new AgentServiceStreamEvent.ThinkingDelta(0, "private thinking secret"),
             new AgentServiceStreamEvent.TextDelta(0, "hello"),
+            new AgentServiceStreamEvent.ToolCallCompleted(
+                0,
+                new AgentServiceToolCall("call-1", "lookup", "{\"query\":\"tool argument secret\"}")),
             new AgentServiceStreamEvent.MessageCompleted("assistant"),
             new AgentServiceStreamEvent.ToolExecutionStarted(
                 new AgentServiceToolCall("call-1", "lookup", "{\"query\":\"tool argument secret\"}")),
@@ -72,6 +75,7 @@ public sealed class ConversationStreamEndpointTests : IClassFixture<Conversation
                 "assistant_thinking_completed",
                 "assistant_message_started",
                 "assistant_text_delta",
+                "tool_execution_queued",
                 "assistant_message_completed",
                 "tool_execution_started",
                 "tool_execution_completed",
@@ -84,13 +88,16 @@ public sealed class ConversationStreamEndpointTests : IClassFixture<Conversation
 
         Assert.Equal("{}", frames[0].Data);
         Assert.Equal("hello", GetData(frames[4]).GetProperty("delta").GetString());
-        Assert.Equal("call-1", GetData(frames[6]).GetProperty("callId").GetString());
-        Assert.Equal("lookup", GetData(frames[6]).GetProperty("name").GetString());
-        Assert.False(GetData(frames[7]).GetProperty("isError").GetBoolean());
-        Assert.Equal(10, GetData(frames[8]).GetProperty("inputTokens").GetInt32());
-        Assert.Equal(4, GetData(frames[8]).GetProperty("outputTokens").GetInt32());
-        Assert.Equal(14, GetData(frames[8]).GetProperty("totalTokens").GetInt32());
-        Assert.Equal("overflow", GetData(frames[9]).GetProperty("reason").GetString());
+        Assert.Equal("tool-batch-call-1", GetData(frames[5]).GetProperty("batchId").GetString());
+        Assert.Equal("call-1", GetData(frames[5]).GetProperty("callId").GetString());
+        Assert.Equal("lookup", GetData(frames[5]).GetProperty("name").GetString());
+        Assert.Equal("call-1", GetData(frames[7]).GetProperty("callId").GetString());
+        Assert.Equal("lookup", GetData(frames[7]).GetProperty("name").GetString());
+        Assert.False(GetData(frames[8]).GetProperty("isError").GetBoolean());
+        Assert.Equal(10, GetData(frames[9]).GetProperty("inputTokens").GetInt32());
+        Assert.Equal(4, GetData(frames[9]).GetProperty("outputTokens").GetInt32());
+        Assert.Equal(14, GetData(frames[9]).GetProperty("totalTokens").GetInt32());
+        Assert.Equal("overflow", GetData(frames[10]).GetProperty("reason").GetString());
 
         JsonElement completed = GetData(frames[^1]);
         Assert.Equal(conversation.Id, completed.GetProperty("conversationId").GetGuid());

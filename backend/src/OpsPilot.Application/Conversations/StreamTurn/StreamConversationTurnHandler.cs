@@ -52,6 +52,7 @@ public sealed class StreamConversationTurnHandler(
         bool terminalEventObserved = false;
         bool thinkingActive = false;
         bool assistantMessageVisible = false;
+        string? currentAssistantToolBatchId = null;
 
         await foreach (AgentServiceStreamEvent agentEvent in agentConversationClient.StreamTurnAsync(
             request,
@@ -93,6 +94,7 @@ public sealed class StreamConversationTurnHandler(
                 case AgentServiceStreamEvent.MessageStarted messageStarted
                     when messageStarted.Role == "assistant":
                     assistantMessageVisible = false;
+                    currentAssistantToolBatchId = null;
                     break;
 
                 case AgentServiceStreamEvent.ThinkingDelta:
@@ -134,6 +136,16 @@ public sealed class StreamConversationTurnHandler(
                         yield return new ConversationStreamEvent.AssistantMessageCompleted();
                     }
 
+                    currentAssistantToolBatchId = null;
+                    break;
+
+                case AgentServiceStreamEvent.ToolCallCompleted toolCallCompleted:
+                    currentAssistantToolBatchId ??=
+                        $"tool-batch-{toolCallCompleted.ToolCall.CallId}";
+                    yield return new ConversationStreamEvent.ToolExecutionQueued(
+                        currentAssistantToolBatchId,
+                        toolCallCompleted.ToolCall.CallId,
+                        toolCallCompleted.ToolCall.Name);
                     break;
 
                 case AgentServiceStreamEvent.ToolExecutionStarted toolStarted:

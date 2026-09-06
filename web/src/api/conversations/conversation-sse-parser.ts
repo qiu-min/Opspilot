@@ -154,6 +154,15 @@ function parseConversationSseMessage(
     }
     case "assistant_message_completed":
       return parseEmptyEvent(message, "assistant_message_completed");
+    case "tool_execution_queued": {
+      const payload = parsePayload(message);
+      return {
+        type: "tool_execution_queued",
+        batchId: requireNonEmptyString(payload, "batchId", message.eventName),
+        callId: requireNonEmptyString(payload, "callId", message.eventName),
+        name: requireNonEmptyString(payload, "name", message.eventName),
+      };
+    }
     case "tool_execution_started": {
       const payload = parsePayload(message);
       return {
@@ -261,6 +270,19 @@ function requireString(
   const value = payload[field];
   if (typeof value !== "string") {
     throw protocolError(eventName, `${field} must be a string`);
+  }
+
+  return value;
+}
+
+function requireNonEmptyString(
+  payload: Record<string, unknown>,
+  field: string,
+  eventName: string,
+): string {
+  const value = requireString(payload, field, eventName);
+  if (value.trim().length === 0) {
+    throw protocolError(eventName, `${field} must not be empty`);
   }
 
   return value;

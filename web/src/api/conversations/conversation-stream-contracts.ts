@@ -5,6 +5,12 @@ export type ConversationStreamEvent =
   | { type: "assistant_message_started" }
   | { type: "assistant_text_delta"; delta: string }
   | { type: "assistant_message_completed" }
+  | {
+      type: "tool_execution_queued";
+      batchId: string;
+      callId: string;
+      name: string;
+    }
   | { type: "tool_execution_started"; callId: string; name: string }
   | {
       type: "tool_execution_completed";

@@ -697,6 +697,99 @@ public sealed class StreamConversationTurnHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_QueuesToolCallsInOneAssistantMessageWithOneBatchId()
+    {
+        Conversation conversation = CreateConversation(CurrentUserId);
+        var repository = new FakeConversationRepository { Conversation = conversation };
+        var agentClient = new FakeAgentConversationClient
+        {
+            Events =
+            [
+                new AgentServiceStreamEvent.SessionReady(FirstSessionId, true),
+                new AgentServiceStreamEvent.MessageStarted("assistant"),
+                new AgentServiceStreamEvent.ToolCallCompleted(
+                    0,
+                    new AgentServiceToolCall("call-a", "read_workbook", "{\"path\":\"secret\"}")),
+                new AgentServiceStreamEvent.ToolCallCompleted(
+                    1,
+                    new AgentServiceToolCall("call-b", "inspect_worksheets", "{}")),
+                new AgentServiceStreamEvent.ToolCallCompleted(
+                    2,
+                    new AgentServiceToolCall("call-c", "write_workbook", "{}")),
+                new AgentServiceStreamEvent.MessageCompleted("assistant"),
+                new AgentServiceStreamEvent.Done(FirstSessionId, null, "completed"),
+            ],
+        };
+        StreamConversationTurnHandler handler = CreateHandler(
+            repository,
+            new FakeFileAssetRepository(null),
+            agentClient);
+
+        List<ConversationStreamEvent> events = await CollectAsync(
+            handler,
+            new StreamConversationTurnCommand(conversation.Id, null, "Inspect the workbook."),
+            CancellationToken.None);
+
+        ConversationStreamEvent.ToolExecutionQueued[] queued = events
+            .OfType<ConversationStreamEvent.ToolExecutionQueued>()
+            .ToArray();
+
+        Assert.Equal(
+            ["call-a", "call-b", "call-c"],
+            queued.Select(item => item.CallId).ToArray());
+        Assert.All(queued, item => Assert.Equal("tool-batch-call-a", item.BatchId));
+        Assert.Equal(
+            ["read_workbook", "inspect_worksheets", "write_workbook"],
+            queued.Select(item => item.Name).ToArray());
+    }
+
+    [Fact]
+    public async Task HandleAsync_UsesDifferentBatchIdsForSeparateAssistantMessages()
+    {
+        Conversation conversation = CreateConversation(CurrentUserId);
+        var repository = new FakeConversationRepository { Conversation = conversation };
+        var agentClient = new FakeAgentConversationClient
+        {
+            Events =
+            [
+                new AgentServiceStreamEvent.SessionReady(FirstSessionId, true),
+                new AgentServiceStreamEvent.MessageStarted("assistant"),
+                new AgentServiceStreamEvent.ToolCallCompleted(
+                    0,
+                    new AgentServiceToolCall("call-a", "read_workbook", "{}")),
+                new AgentServiceStreamEvent.ToolCallCompleted(
+                    1,
+                    new AgentServiceToolCall("call-b", "inspect_worksheets", "{}")),
+                new AgentServiceStreamEvent.MessageCompleted("assistant"),
+                new AgentServiceStreamEvent.MessageStarted("assistant"),
+                new AgentServiceStreamEvent.ToolCallCompleted(
+                    2,
+                    new AgentServiceToolCall("call-c", "write_workbook", "{}")),
+                new AgentServiceStreamEvent.MessageCompleted("assistant"),
+                new AgentServiceStreamEvent.Done(FirstSessionId, null, "completed"),
+            ],
+        };
+        StreamConversationTurnHandler handler = CreateHandler(
+            repository,
+            new FakeFileAssetRepository(null),
+            agentClient);
+
+        List<ConversationStreamEvent> events = await CollectAsync(
+            handler,
+            new StreamConversationTurnCommand(conversation.Id, null, "Inspect the workbook."),
+            CancellationToken.None);
+
+        ConversationStreamEvent.ToolExecutionQueued[] queued = events
+            .OfType<ConversationStreamEvent.ToolExecutionQueued>()
+            .ToArray();
+
+        Assert.Equal("tool-batch-call-a", queued[0].BatchId);
+        Assert.Equal("tool-batch-call-a", queued[1].BatchId);
+        Assert.Equal("tool-batch-call-c", queued[2].BatchId);
+        Assert.NotEqual(queued[0].BatchId, queued[2].BatchId);
+    }
+
+    [Fact]
     public async Task HandleAsync_MapsUsageAndCompactionFailureWithoutErrorDetails()
     {
         Conversation conversation = CreateConversation(CurrentUserId);
@@ -750,9 +843,6 @@ public sealed class StreamConversationTurnHandlerTests
                 new AgentServiceStreamEvent.TurnStarted(),
                 new AgentServiceStreamEvent.TurnEnded(),
                 new AgentServiceStreamEvent.ToolCallDelta(0, "call-1", "{}"),
-                new AgentServiceStreamEvent.ToolCallCompleted(
-                    0,
-                    new AgentServiceToolCall("call-1", "lookup", "{}")),
                 new AgentServiceStreamEvent.SessionSettled(),
                 new AgentServiceStreamEvent.Unknown("retry_start", null, "{}"),
                 new AgentServiceStreamEvent.Done(FirstSessionId, null, "completed"),

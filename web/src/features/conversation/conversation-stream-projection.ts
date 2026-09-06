@@ -5,12 +5,12 @@ import type {
   ConversationStreamToolExecution,
 } from "./conversation-stream-state";
 import type {
+  AgentExecutionBlock,
   AssistantTextBlock,
   ConversationResponseBlock,
   ConversationResponseBlockStatus,
   ConversationResponseItem,
   ConversationResponseStatus,
-  ToolExecutionBlock,
 } from "./types";
 
 export type ToolPresentation = {
@@ -56,8 +56,7 @@ export function projectConversationStream(
       return projectAssistantBlock(state, activity, responseId);
     }
 
-    const tool = findToolExecution(state, activity.callId);
-    return tool === undefined ? [] : [projectToolBlock(tool, state.phase)];
+    return projectAgentExecutionBlock(state, activity, responseId);
   });
 
   return {
@@ -82,41 +81,41 @@ function projectAssistantBlock(
       id: `${responseId}-assistant-${activity.messageIndex}`,
       text: message.text,
       completed: message.completed,
-      createdAt: "Now",
     },
   ];
 }
 
-function projectToolBlock(
-  tool: ConversationStreamToolExecution,
-  streamPhase: ConversationStreamPhase,
-): ToolExecutionBlock {
-  return {
-    type: "tool_execution",
-    id: tool.callId,
-    callId: tool.callId,
-    name: tool.name,
-    status: projectToolStatus(tool, streamPhase),
-    createdAt: "Now",
-  };
-}
-
-function findToolExecution(
+function projectAgentExecutionBlock(
   state: ConversationStreamState,
-  callId: string,
-): ConversationStreamToolExecution | undefined {
-  return state.toolExecutions.find((tool) => tool.callId === callId);
+  activity: Extract<ConversationStreamActivity, { type: "agent-execution" }>,
+  responseId: string,
+): AgentExecutionBlock[] {
+  const tools = state.toolExecutions.filter(
+    (tool) => tool.batchId === activity.batchId,
+  );
+  if (tools.length === 0) return [];
+
+  return [
+    {
+      type: "agent_execution",
+      id: `${responseId}-execution-${activity.batchId}`,
+      batchId: activity.batchId,
+      steps: tools.map((tool) => ({
+        id: tool.callId,
+        callId: tool.callId,
+        name: tool.name,
+        status: projectToolStatus(tool, state.phase),
+      })),
+    },
+  ];
 }
 
 function projectToolStatus(
   tool: ConversationStreamToolExecution,
   streamPhase: ConversationStreamPhase,
 ): ConversationResponseBlockStatus {
-  if (tool.status === "completed") {
-    return tool.isError ? "failed" : "completed";
-  }
-
-  return streamPhase === "streaming" ? "running" : "interrupted";
+  if (tool.status === "completed" || tool.status === "failed") return tool.status;
+  return streamPhase === "streaming" ? tool.status : "interrupted";
 }
 
 function projectResponseStatus(state: ConversationStreamState): ConversationResponseStatus {

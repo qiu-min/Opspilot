@@ -18,6 +18,7 @@ import {
 import { demoAgentName, demoConnectedTools, demoContextFiles, demoContextStatus, demoEnvironmentLabel, demoRecentOutputs } from "./demo";
 import {
   formatMessageCreatedAt,
+  mergeLiveConversationResponse,
   reconcileConversationItems,
   toConversationItems,
   toConversationSummary,
@@ -82,6 +83,7 @@ export function ConversationPage() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [timelinesByConversationId, setTimelinesByConversationId] = useState<Record<string, ConversationItem[]>>({});
   const [streamStatesByConversationId, setStreamStatesByConversationId] = useState<Record<string, ConversationStreamState | undefined>>({});
+  const [liveResponseIdsByConversationId, setLiveResponseIdsByConversationId] = useState<Record<string, string | undefined>>({});
   const [attachmentsByConversationId, setAttachmentsByConversationId] = useState<Record<string, PendingAttachment[]>>({});
   const [draft, setDraft] = useState("");
   const [isContextVisible, setIsContextVisible] = useState(false);
@@ -116,6 +118,16 @@ export function ConversationPage() {
 
   const clearConversationStreamState = useCallback((conversationId: string) => {
     setStreamStatesByConversationId((current) => {
+      if (!(conversationId in current)) return current;
+
+      const next = { ...current };
+      delete next[conversationId];
+      return next;
+    });
+  }, []);
+
+  const clearLiveResponseId = useCallback((conversationId: string) => {
+    setLiveResponseIdsByConversationId((current) => {
       if (!(conversationId in current)) return current;
 
       const next = { ...current };
@@ -219,6 +231,7 @@ export function ConversationPage() {
           [conversationId]: items,
         }));
         clearConversationStreamState(conversationId);
+        clearLiveResponseId(conversationId);
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
@@ -247,7 +260,7 @@ export function ConversationPage() {
         historyAbortControllerRef.current = null;
       }
     };
-  }, [accessToken, activeConversationId, clearConversationStreamState, setHistoryLoading]);
+  }, [accessToken, activeConversationId, clearConversationStreamState, clearLiveResponseId, setHistoryLoading]);
 
   useEffect(() => {
     return () => {
@@ -261,12 +274,23 @@ export function ConversationPage() {
   }, []);
 
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? null;
-  const timeline = activeConversation ? timelinesByConversationId[activeConversation.id] ?? [] : [];
+  const durableTimeline = activeConversation ? timelinesByConversationId[activeConversation.id] ?? [] : [];
   const attachments = activeConversation ? attachmentsByConversationId[activeConversation.id] ?? [] : [];
   const isProcessing = activeConversationId !== null && processingConversationIds.has(activeConversationId);
   const activeStreamState = activeConversationId
     ? streamStatesByConversationId[activeConversationId]
     : undefined;
+  const activeLiveResponseId = activeConversationId
+    ? liveResponseIdsByConversationId[activeConversationId]
+    : undefined;
+  const liveResponse = activeStreamState && activeLiveResponseId !== undefined
+    ? projectConversationStream(activeStreamState, activeLiveResponseId)
+    : undefined;
+  const timeline = mergeLiveConversationResponse(
+    durableTimeline,
+    liveResponse,
+    activeLiveResponseId,
+  );
   const activeConversationStatus = activeConversationId
     ? statusMessagesByConversationId[activeConversationId]
     : undefined;
@@ -390,22 +414,6 @@ export function ConversationPage() {
         ...current,
         [conversationId]: nextState,
       }));
-
-      if (responseId === null) return;
-      const responseItem = projectConversationStream(nextState, responseId);
-      if (responseItem === undefined) return;
-
-      setTimelinesByConversationId((current) => {
-        const timeline = current[conversationId] ?? [];
-        const responseIndex = timeline.findIndex(
-          (item) => item.type === "response" && item.id === responseId,
-        );
-        const nextTimeline = [...timeline];
-        if (responseIndex === -1) nextTimeline.push(responseItem);
-        else nextTimeline[responseIndex] = responseItem;
-
-        return { ...current, [conversationId]: nextTimeline };
-      });
     };
 
     try {
@@ -434,7 +442,12 @@ export function ConversationPage() {
           : { attachments: [uploadedAttachment.attachment] }),
       };
       userMessage = optimisticUserMessage;
-      responseId = `response-${optimisticUserMessage.id}`;
+      const liveResponseId = `response-${optimisticUserMessage.id}`;
+      responseId = liveResponseId;
+      setLiveResponseIdsByConversationId((current) => ({
+        ...current,
+        [conversationId]: liveResponseId,
+      }));
 
       setTimelinesByConversationId((current) => ({
         ...current,
@@ -469,6 +482,8 @@ export function ConversationPage() {
           setConversationStatus(conversationId, "Assistant is thinking");
         } else if (event.type === "assistant_thinking_completed") {
           setConversationStatus(conversationId, "Assistant is responding");
+        } else if (event.type === "tool_execution_queued") {
+          setConversationStatus(conversationId, `Queued ${event.name}`);
         } else if (event.type === "tool_execution_started") {
           setConversationStatus(conversationId, `Running ${event.name}`);
         } else if (event.type === "tool_execution_completed") {
@@ -520,6 +535,9 @@ export function ConversationPage() {
             }
 
             const currentResponseId = responseId;
+            const liveResponseItem = currentResponseId === null
+              ? undefined
+              : projectConversationStream(streamState, currentResponseId);
             setTimelinesByConversationId((current) => ({
               ...current,
               [conversationId]: currentResponseId === null
@@ -528,9 +546,11 @@ export function ConversationPage() {
                     current[conversationId] ?? [],
                     historyItems,
                     currentResponseId,
+                    liveResponseItem,
                   ),
             }));
             clearConversationStreamState(conversationId);
+            clearLiveResponseId(conversationId);
             setErrorsByConversationId((current) => {
               const next = { ...current };
               if (event.status === "completed") {
@@ -575,6 +595,7 @@ export function ConversationPage() {
         if (!responseStarted) {
           removeOptimisticUserMessage();
           clearConversationStreamState(conversationId);
+          clearLiveResponseId(conversationId);
         } else if (streamState.phase === "streaming") {
           streamState = reduceConversationStreamEvent(streamState, {
             type: "response_completed",
@@ -595,6 +616,7 @@ export function ConversationPage() {
       if (!responseStarted) {
         removeOptimisticUserMessage();
         clearConversationStreamState(conversationId);
+        clearLiveResponseId(conversationId);
       } else {
         if (streamState.phase === "streaming") {
           streamState = reduceConversationStreamEvent(streamState, {

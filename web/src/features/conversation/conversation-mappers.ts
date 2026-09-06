@@ -4,13 +4,14 @@ import type {
   ConversationSummaryResponse,
 } from "../../api/conversations/conversation-contracts";
 import type {
+  AgentExecutionBlock,
   AssistantTextBlock,
+  AgentExecutionStep,
   ChatMessage,
   ConversationItem,
   ConversationResponseBlock,
   ConversationResponseItem,
   ConversationSummary,
-  ToolExecutionBlock,
 } from "./types";
 
 export function toConversationSummary(response: ConversationSummaryResponse): ConversationSummary {
@@ -26,8 +27,23 @@ export function toConversationItems(response: ConversationDetailResponse): Conve
   const items: ConversationItem[] = [];
   let responseBlocks: ConversationResponseBlock[] = [];
   let responseIdSeed: string | null = null;
+  let pendingToolSteps: AgentExecutionStep[] = [];
+
+  const flushToolExecution = () => {
+    if (pendingToolSteps.length === 0) return;
+
+    const firstStep = pendingToolSteps[0];
+    responseBlocks.push({
+      type: "agent_execution",
+      id: `execution-${firstStep.callId}`,
+      batchId: `tool-batch-${firstStep.callId}`,
+      steps: pendingToolSteps,
+    });
+    pendingToolSteps = [];
+  };
 
   const flushResponse = () => {
+    flushToolExecution();
     if (responseBlocks.length === 0) return;
 
     const responseId = `response-${responseIdSeed ?? responseBlocks[0].id}`;
@@ -50,7 +66,14 @@ export function toConversationItems(response: ConversationDetailResponse): Conve
       continue;
     }
 
-    const block = toResponseBlock(item);
+    if (item.type === "tool_execution") {
+      if (responseIdSeed === null) responseIdSeed = item.id;
+      pendingToolSteps.push(toToolExecutionStep(item));
+      continue;
+    }
+
+    flushToolExecution();
+    const block = toAssistantTextBlock(item);
     if (block === undefined) continue;
     if (responseIdSeed === null) responseIdSeed = block.id;
     responseBlocks.push(block);
@@ -65,12 +88,13 @@ export function reconcileConversationItems(
   currentItems: ConversationItem[],
   durableItems: ConversationItem[],
   liveResponseId: string,
+  liveResponse?: ConversationResponseItem,
 ): ConversationItem[] {
-  const liveResponse = currentItems.find(
+  const currentLiveResponse = liveResponse ?? currentItems.find(
     (item): item is ConversationResponseItem =>
       item.type === "response" && item.id === liveResponseId,
   );
-  if (liveResponse === undefined) return durableItems;
+  if (currentLiveResponse === undefined) return durableItems;
 
   const durableResponseIndex = findLastResponseIndex(durableItems);
   if (durableResponseIndex === -1) return durableItems;
@@ -80,9 +104,9 @@ export function reconcileConversationItems(
 
   const reconciledResponse: ConversationResponseItem = {
     ...durableResponse,
-    id: liveResponse.id,
-    status: liveResponse.status === "completed" ? durableResponse.status : liveResponse.status,
-    blocks: reconcileResponseBlocks(liveResponse.blocks, durableResponse.blocks),
+    id: currentLiveResponse.id,
+    status: currentLiveResponse.status === "completed" ? durableResponse.status : currentLiveResponse.status,
+    blocks: reconcileResponseBlocks(currentLiveResponse.blocks, durableResponse.blocks),
   };
   const reconciledItems = [...durableItems];
   reconciledItems[durableResponseIndex] = reconciledResponse;
@@ -99,26 +123,47 @@ export function formatMessageCreatedAt(createdAt = new Date().toISOString()): st
   }).format(date);
 }
 
-function toResponseBlock(item: ConversationHistoryItemResponse): ConversationResponseBlock | undefined {
-  if (item.type === "message") {
-    if (item.role !== "assistant") return undefined;
-    return {
-      type: "assistant_text",
-      id: `assistant-${item.id}`,
-      text: item.text,
-      completed: true,
-      createdAt: formatMessageCreatedAt(item.createdAtUtc),
-    } satisfies AssistantTextBlock;
+/** Adds the current live response to the committed timeline for rendering only. */
+export function mergeLiveConversationResponse(
+  durableItems: ConversationItem[],
+  liveResponse: ConversationResponseItem | undefined,
+  liveResponseId: string | undefined,
+): ConversationItem[] {
+  if (liveResponse === undefined || liveResponseId === undefined) return durableItems;
+
+  const responseIndex = durableItems.findIndex(
+    (item) => item.type === "response" && item.id === liveResponseId,
+  );
+  if (responseIndex !== -1) {
+    const nextItems = [...durableItems];
+    nextItems[responseIndex] = liveResponse;
+    return nextItems;
   }
 
+  return [...durableItems, liveResponse];
+}
+
+function toAssistantTextBlock(
+  item: Extract<ConversationHistoryItemResponse, { type: "message" }>,
+): AssistantTextBlock | undefined {
+  if (item.role !== "assistant") return undefined;
   return {
-    type: "tool_execution",
+    type: "assistant_text",
+    id: `assistant-${item.id}`,
+    text: item.text,
+    completed: true,
+  } satisfies AssistantTextBlock;
+}
+
+function toToolExecutionStep(
+  item: Extract<ConversationHistoryItemResponse, { type: "tool_execution" }>,
+): AgentExecutionStep {
+  return {
     id: item.callId,
     callId: item.callId,
     name: item.name,
     status: item.status,
-    createdAt: formatMessageCreatedAt(item.createdAtUtc),
-  } satisfies ToolExecutionBlock;
+  } satisfies AgentExecutionStep;
 }
 
 function toChatMessage(item: Extract<ConversationHistoryItemResponse, { type: "message" }>): ChatMessage {
@@ -144,14 +189,16 @@ function reconcileResponseBlocks(
 ): ConversationResponseBlock[] {
   let assistantBlockIndex = 0;
   return durableBlocks.map((durableBlock) => {
-    if (durableBlock.type === "tool_execution") {
-      const liveTool = liveBlocks.find(
-        (block): block is ToolExecutionBlock =>
-          block.type === "tool_execution" && block.callId === durableBlock.callId,
+    if (durableBlock.type === "agent_execution") {
+      const durableFirstCallId = durableBlock.steps[0]?.callId;
+      const liveExecution = liveBlocks.find(
+        (block): block is AgentExecutionBlock =>
+          block.type === "agent_execution" &&
+          block.steps[0]?.callId === durableFirstCallId,
       );
-      return liveTool === undefined
+      return liveExecution === undefined
         ? durableBlock
-        : { ...durableBlock, id: liveTool.id };
+        : { ...durableBlock, id: liveExecution.id, batchId: liveExecution.batchId };
     }
 
     const liveAssistantBlocks = liveBlocks.filter(

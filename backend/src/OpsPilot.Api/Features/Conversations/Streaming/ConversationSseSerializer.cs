@@ -40,6 +40,13 @@ public static class ConversationSseSerializer
                 new("assistant_text_delta", new AssistantTextDeltaPayload(textDelta.Delta)),
             ConversationStreamEvent.AssistantMessageCompleted =>
                 new("assistant_message_completed", new EmptyPayload()),
+            ConversationStreamEvent.ToolExecutionQueued toolQueued =>
+                new(
+                    "tool_execution_queued",
+                    new ToolExecutionQueuedPayload(
+                        toolQueued.BatchId,
+                        toolQueued.CallId,
+                        toolQueued.Name)),
             ConversationStreamEvent.ToolExecutionStarted toolStarted =>
                 new(
                     "tool_execution_started",
@@ -94,6 +101,11 @@ public static class ConversationSseSerializer
     private sealed record AssistantTextDeltaPayload(string Delta);
 
     private sealed record ToolExecutionStartedPayload(string CallId, string Name);
+
+    private sealed record ToolExecutionQueuedPayload(
+        string BatchId,
+        string CallId,
+        string Name);
 
     private sealed record ToolExecutionCompletedPayload(
         string CallId,

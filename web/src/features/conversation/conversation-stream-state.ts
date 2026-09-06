@@ -13,22 +13,16 @@ export type ConversationStreamActivity =
       messageIndex: number;
     }
   | {
-      type: "tool-execution";
-      callId: string;
+      type: "agent-execution";
+      batchId: string;
     };
 
-export type ConversationStreamToolExecution =
-  | {
-      callId: string;
-      name: string;
-      status: "running";
-    }
-  | {
-      callId: string;
-      name: string;
-      status: "completed";
-      isError: boolean;
-    };
+export type ConversationStreamToolExecution = {
+  batchId: string;
+  callId: string;
+  name: string;
+  status: "queued" | "running" | "completed" | "failed";
+};
 
 export type ConversationStreamUsage = {
   inputTokens: number;
@@ -171,34 +165,89 @@ export function reduceConversationStreamEvent(
       return { ...state, assistantMessages };
     }
 
-    case "tool_execution_started":
+    case "tool_execution_queued":
       ensureStreaming(state, event.type);
       if (state.toolExecutions.some((tool) => tool.callId === event.callId)) {
-        throw stateError(`tool_execution_started duplicated callId ${event.callId}`);
+        throw stateError(`tool_execution_queued duplicated callId ${event.callId}`);
       }
 
       return {
         ...state,
         toolExecutions: [
           ...state.toolExecutions,
-          { callId: event.callId, name: event.name, status: "running" },
+          {
+            batchId: event.batchId,
+            callId: event.callId,
+            name: event.name,
+            status: "queued",
+          },
         ],
-        activity: [
-          ...state.activity,
-          { type: "tool-execution", callId: event.callId },
-        ],
+        activity: state.activity.some(
+          (activity) =>
+            activity.type === "agent-execution" && activity.batchId === event.batchId,
+        )
+          ? state.activity
+          : [...state.activity, { type: "agent-execution", batchId: event.batchId }],
       };
+
+    case "tool_execution_started":
+      ensureStreaming(state, event.type);
+      {
+        const toolIndex = state.toolExecutions.findIndex(
+          (tool) => tool.callId === event.callId,
+        );
+
+        if (toolIndex === -1) {
+          const batchId = `tool-batch-${event.callId}`;
+          return {
+            ...state,
+            toolExecutions: [
+              ...state.toolExecutions,
+              {
+                batchId,
+                callId: event.callId,
+                name: event.name,
+                status: "running",
+              },
+            ],
+            activity: state.activity.some(
+              (activity) =>
+                activity.type === "agent-execution" && activity.batchId === batchId,
+            )
+              ? state.activity
+              : [...state.activity, { type: "agent-execution", batchId }],
+          };
+        }
+
+        const queuedTool = state.toolExecutions[toolIndex];
+        if (queuedTool.status !== "queued") {
+          throw stateError(`tool_execution_started duplicated callId ${event.callId}`);
+        }
+        if (queuedTool.name !== event.name) {
+          throw stateError(`tool_execution_started name mismatch for callId ${event.callId}`);
+        }
+
+        const toolExecutions = [...state.toolExecutions];
+        toolExecutions[toolIndex] = {
+          ...queuedTool,
+          status: "running",
+        };
+        return { ...state, toolExecutions };
+      }
 
     case "tool_execution_completed": {
       ensureStreaming(state, event.type);
       const toolIndex = state.toolExecutions.findIndex(
-        (tool) => tool.callId === event.callId && tool.status === "running",
+        (tool) => tool.callId === event.callId,
       );
       if (toolIndex === -1) {
         throw stateError(`tool_execution_completed has no running callId ${event.callId}`);
       }
 
       const runningTool = state.toolExecutions[toolIndex];
+      if (runningTool.status !== "running") {
+        throw stateError(`tool_execution_completed has no running callId ${event.callId}`);
+      }
       if (runningTool.name !== event.name) {
         throw stateError(`tool_execution_completed name mismatch for callId ${event.callId}`);
       }
@@ -206,9 +255,9 @@ export function reduceConversationStreamEvent(
       const toolExecutions = [...state.toolExecutions];
       toolExecutions[toolIndex] = {
         callId: runningTool.callId,
+        batchId: runningTool.batchId,
         name: runningTool.name,
-        status: "completed",
-        isError: event.isError,
+        status: event.isError ? "failed" : "completed",
       };
 
       return { ...state, toolExecutions };

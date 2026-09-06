@@ -33,6 +33,7 @@ export type AgentExecutionStatus = "queued" | "running" | "complete" | "failed";
 export type ConversationResponseStatus = "streaming" | "completed" | "failed" | "aborted";
 
 export type ConversationResponseBlockStatus =
+  | "queued"
   | "running"
   | "completed"
   | "failed"
@@ -43,19 +44,23 @@ export type AssistantTextBlock = {
   id: string;
   text: string;
   completed: boolean;
-  createdAt: string;
 };
 
-export type ToolExecutionBlock = {
-  type: "tool_execution";
+export type AgentExecutionStep = {
   id: string;
   callId: string;
   name: string;
   status: ConversationResponseBlockStatus;
-  createdAt: string;
 };
 
-export type ConversationResponseBlock = AssistantTextBlock | ToolExecutionBlock;
+export type AgentExecutionBlock = {
+  type: "agent_execution";
+  id: string;
+  batchId: string;
+  steps: AgentExecutionStep[];
+};
+
+export type ConversationResponseBlock = AssistantTextBlock | AgentExecutionBlock;
 
 export type ConversationResponseItem = {
   type: "response";

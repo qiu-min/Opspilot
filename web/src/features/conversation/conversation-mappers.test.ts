@@ -33,12 +33,20 @@ describe("conversation history mapping", () => {
     expect(response.id).toBe("response-user-1");
     expect(response.blocks.map((block) => block.type)).toEqual([
       "assistant_text",
-      "tool_execution",
+      "agent_execution",
       "assistant_text",
-      "tool_execution",
+      "agent_execution",
     ]);
-    expect(response.blocks[1]).toMatchObject({ id: "call-1", status: "completed" });
-    expect(response.blocks[3]).toMatchObject({ id: "call-2", status: "failed" });
+    expect(response.blocks[1]).toMatchObject({
+      id: "execution-call-1",
+      batchId: "tool-batch-call-1",
+      steps: [{ id: "call-1", status: "completed" }],
+    });
+    expect(response.blocks[3]).toMatchObject({
+      id: "execution-call-2",
+      batchId: "tool-batch-call-2",
+      steps: [{ id: "call-2", status: "failed" }],
+    });
   });
 
   it("creates separate response containers for separate user turns", () => {
@@ -69,9 +77,14 @@ describe("conversation history mapping", () => {
       id: "response-temp",
       status: "completed",
       blocks: [
-        { type: "assistant_text", id: "response-temp-assistant-0", text: "before", completed: true, createdAt: "Now" },
-        { type: "tool_execution", id: "call-1", callId: "call-1", name: "get_workbook_info", status: "completed", createdAt: "Now" },
-        { type: "assistant_text", id: "response-temp-assistant-1", text: "after", completed: true, createdAt: "Now" },
+        { type: "assistant_text", id: "response-temp-assistant-0", text: "before", completed: true },
+        {
+          type: "agent_execution",
+          id: "response-temp-execution-batch-a",
+          batchId: "batch-a",
+          steps: [{ id: "call-1", callId: "call-1", name: "get_workbook_info", status: "completed" }],
+        },
+        { type: "assistant_text", id: "response-temp-assistant-1", text: "after", completed: true },
       ],
     };
     const currentItems: ConversationItem[] = [
@@ -87,7 +100,7 @@ describe("conversation history mapping", () => {
     expect(response.id).toBe("response-temp");
     expect(response.blocks.map((block) => block.id)).toEqual([
       "response-temp-assistant-0",
-      "call-1",
+      "response-temp-execution-batch-a",
       "response-temp-assistant-1",
     ]);
   });
@@ -103,7 +116,7 @@ describe("conversation history mapping", () => {
         type: "response",
         id: "response-temp",
         status: "aborted",
-        blocks: [{ type: "assistant_text", id: "response-temp-assistant-0", text: "partial", completed: false, createdAt: "Now" }],
+        blocks: [{ type: "assistant_text", id: "response-temp-assistant-0", text: "partial", completed: false }],
       },
     ];
 

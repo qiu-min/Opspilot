@@ -16,6 +16,12 @@ public abstract record ConversationStreamEvent
 
     public sealed record AssistantMessageCompleted : ConversationStreamEvent;
 
+    public sealed record ToolExecutionQueued(
+        string BatchId,
+        string CallId,
+        string Name)
+        : ConversationStreamEvent;
+
     public sealed record ToolExecutionStarted(
         string CallId,
         string Name)
