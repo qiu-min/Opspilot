@@ -7,8 +7,14 @@ import {
   listConversations,
   streamConversationTurn,
 } from "../../api/conversations/conversations-api";
+import { uploadFile } from "../../api/files/files-api";
 import { ConversationStreamProtocolError } from "../../api/conversations/conversation-stream-contracts";
-import { getFileKind, getFileSize } from "../../lib/files";
+import {
+  ConversationAttachmentValidationError,
+  isXlsxFile,
+  replacePendingAttachment,
+  uploadPendingAttachment,
+} from "./conversation-attachments";
 import { demoAgentName, demoConnectedTools, demoContextFiles, demoContextStatus, demoEnvironmentLabel, demoRecentOutputs } from "./demo";
 import { formatMessageCreatedAt, toConversationItems, toConversationSummary } from "./conversation-mappers";
 import {
@@ -17,7 +23,7 @@ import {
   reduceConversationStreamEvent,
   type ConversationStreamState,
 } from "./conversation-stream-state";
-import type { Attachment, ChatMessage, ConversationItem, ConversationSummary } from "./types";
+import type { ChatMessage, ConversationItem, ConversationSummary, PendingAttachment } from "./types";
 import { useAuth } from "../auth/auth-provider";
 import { Composer, type ComposerSubmitPayload } from "./components/composer";
 import { ContextPanel } from "./components/context-panel";
@@ -70,7 +76,7 @@ export function ConversationPage() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [timelinesByConversationId, setTimelinesByConversationId] = useState<Record<string, ConversationItem[]>>({});
   const [streamStatesByConversationId, setStreamStatesByConversationId] = useState<Record<string, ConversationStreamState | undefined>>({});
-  const [attachmentsByConversationId, setAttachmentsByConversationId] = useState<Record<string, Attachment[]>>({});
+  const [attachmentsByConversationId, setAttachmentsByConversationId] = useState<Record<string, PendingAttachment[]>>({});
   const [draft, setDraft] = useState("");
   const [isExecutionExpanded, setIsExecutionExpanded] = useState(false);
   const [isContextVisible, setIsContextVisible] = useState(false);
@@ -327,15 +333,18 @@ export function ConversationPage() {
     setPageStatusMessage(`Selected ${conversation.title}`);
   }
 
-  async function handleSubmit({ body, attachments: submittedAttachments }: ComposerSubmitPayload) {
+  async function handleSubmit({ body: submittedBody, attachments: submittedAttachments }: ComposerSubmitPayload) {
     const conversationId = activeConversationId;
     const token = accessToken;
     if (!conversationId || !token || historyLoadingByConversationIdRef.current[conversationId] === true) return;
 
-    if (submittedAttachments.length > 0) {
-      const message = "File attachments are not connected yet. Remove the attachment before sending.";
+    const body = submittedBody.trim();
+    if (!body) return;
+
+    if (submittedAttachments.length > 1 || submittedAttachments.some((attachment) => !isXlsxFile(attachment.file))) {
+      const message = "Only one .xlsx file can be sent per message.";
       setErrorsByConversationId((current) => ({ ...current, [conversationId]: message }));
-      setConversationStatus(conversationId, "Attachment sending is unavailable");
+      setConversationStatus(conversationId, "Attachment rejected");
       return;
     }
 
@@ -353,35 +362,21 @@ export function ConversationPage() {
       return next;
     });
 
-    const userMessage: ChatMessage = {
-      id: createTemporaryMessageId(),
-      role: "user",
-      body,
-      createdAt: formatMessageCreatedAt(),
-    };
-
-    setTimelinesByConversationId((current) => ({
-      ...current,
-      [conversationId]: [...(current[conversationId] ?? []), { type: "message", id: userMessage.id, message: userMessage }],
-    }));
-    setDraft("");
-    setConversationStatus(conversationId, "Processing your request");
-
     const controller = new AbortController();
     turnAbortControllersRef.current.set(conversationId, controller);
     let streamState = createInitialConversationStreamState();
     let responseStarted = false;
-
-    setStreamStatesByConversationId((current) => ({
-      ...current,
-      [conversationId]: streamState,
-    }));
+    let uploadCompleted = submittedAttachments.length === 0;
+    let userMessage: ChatMessage | null = null;
 
     const removeOptimisticUserMessage = () => {
+      if (userMessage === null) return;
+      const optimisticUserMessageId = userMessage.id;
+
       setTimelinesByConversationId((current) => ({
         ...current,
         [conversationId]: (current[conversationId] ?? []).filter(
-          (item) => item.id !== userMessage.id,
+          (item) => item.id !== optimisticUserMessageId,
         ),
       }));
     };
@@ -394,9 +389,46 @@ export function ConversationPage() {
     };
 
     try {
+      if (submittedAttachments.length === 1) {
+        setConversationStatus(conversationId, `Uploading ${submittedAttachments[0].name}`);
+      } else {
+        setConversationStatus(conversationId, "Processing your request");
+      }
+
+      const uploadedAttachment = await uploadPendingAttachment(
+        submittedAttachments,
+        token,
+        controller.signal,
+        uploadFile,
+      );
+      uploadCompleted = true;
+      if (controller.signal.aborted) return;
+
+      const optimisticUserMessage: ChatMessage = {
+        id: createTemporaryMessageId(),
+        role: "user",
+        body,
+        createdAt: formatMessageCreatedAt(),
+        ...(uploadedAttachment.attachment === undefined
+          ? {}
+          : { attachments: [uploadedAttachment.attachment] }),
+      };
+      userMessage = optimisticUserMessage;
+
+      setTimelinesByConversationId((current) => ({
+        ...current,
+        [conversationId]: [...(current[conversationId] ?? []), { type: "message", id: optimisticUserMessage.id, message: optimisticUserMessage }],
+      }));
+      setDraft("");
+      setConversationStatus(conversationId, uploadedAttachment.fileId === null ? "Processing your request" : "File uploaded");
+      setStreamStatesByConversationId((current) => ({
+        ...current,
+        [conversationId]: streamState,
+      }));
+
       for await (const event of streamConversationTurn(
         conversationId,
-        { message: body, fileId: null },
+        { message: body, fileId: uploadedAttachment.fileId },
         token,
         controller.signal,
       )) {
@@ -405,6 +437,12 @@ export function ConversationPage() {
 
         if (event.type === "response_started") {
           responseStarted = true;
+          if (submittedAttachments.length > 0) {
+            setAttachmentsByConversationId((current) => ({
+              ...current,
+              [conversationId]: [],
+            }));
+          }
           setConversationStatus(conversationId, "Assistant response started");
         } else if (event.type === "assistant_thinking_started") {
           setConversationStatus(conversationId, "Assistant is thinking");
@@ -436,9 +474,33 @@ export function ConversationPage() {
             );
             if (controller.signal.aborted) return;
 
+            const historyItems = toConversationItems(response);
+            let historyUserMessageIndex = -1;
+            if (userMessage !== null) {
+              for (let index = historyItems.length - 1; index >= 0; index -= 1) {
+                const item = historyItems[index];
+                if (item.type === "message" && item.message.role === "user" && item.message.body === userMessage.body) {
+                  historyUserMessageIndex = index;
+                  break;
+                }
+              }
+            }
+            if (historyUserMessageIndex !== -1 && userMessage?.attachments !== undefined) {
+              const historyUserMessage = historyItems[historyUserMessageIndex];
+              if (historyUserMessage.type === "message") {
+                historyItems[historyUserMessageIndex] = {
+                  ...historyUserMessage,
+                  message: {
+                    ...historyUserMessage.message,
+                    attachments: userMessage.attachments,
+                  },
+                };
+              }
+            }
+
             setTimelinesByConversationId((current) => ({
               ...current,
-              [conversationId]: toConversationItems(response),
+              [conversationId]: historyItems,
             }));
             clearConversationStreamState(conversationId);
             setErrorsByConversationId((current) => {
@@ -489,7 +551,11 @@ export function ConversationPage() {
         return;
       }
 
-      const message = getConversationStreamErrorMessage(error);
+      const message = error instanceof ConversationAttachmentValidationError
+        ? error.message
+        : uploadCompleted
+          ? getConversationStreamErrorMessage(error)
+          : getConversationErrorMessage(error, "Unable to upload the Excel file. Try again.");
       if (!responseStarted) {
         removeOptimisticUserMessage();
         clearConversationStreamState(conversationId);
@@ -504,7 +570,10 @@ export function ConversationPage() {
       }
 
       setErrorsByConversationId((current) => ({ ...current, [conversationId]: message }));
-      setConversationStatus(conversationId, "Request failed. You can try again.");
+      setConversationStatus(
+        conversationId,
+        uploadCompleted ? "Request failed. You can try again." : "File upload failed. Try again.",
+      );
     } finally {
       turnAbortControllersRef.current.delete(conversationId);
       processingConversationIdsRef.current.delete(conversationId);
@@ -515,17 +584,19 @@ export function ConversationPage() {
   function handleAttach(files: FileList) {
     if (!activeConversationId) return;
     const conversationId = activeConversationId;
+    const file = files.item(0);
+    if (file === null) return;
 
-    const nextFiles = Array.from(files).map((file, index): Attachment => ({
-      id: `${file.name}-${file.lastModified}-${index}`,
-      name: file.name,
-      size: getFileSize(file.size),
-      kind: getFileKind(file.name),
-    }));
+    if (!isXlsxFile(file)) {
+      const message = "Only .xlsx files are supported.";
+      setErrorsByConversationId((current) => ({ ...current, [conversationId]: message }));
+      setConversationStatus(conversationId, "Attachment rejected");
+      return;
+    }
 
     setAttachmentsByConversationId((current) => ({
       ...current,
-      [conversationId]: [...(current[conversationId] ?? []), ...nextFiles],
+      [conversationId]: replacePendingAttachment(file),
     }));
     setErrorsByConversationId((current) => {
       if (!(conversationId in current)) {
@@ -536,7 +607,7 @@ export function ConversationPage() {
       delete next[conversationId];
       return next;
     });
-    setConversationStatus(conversationId, `${nextFiles.length} file${nextFiles.length === 1 ? "" : "s"} attached`);
+    setConversationStatus(conversationId, `${file.name} attached`);
   }
 
   function handleRemoveAttachment(id: string) {

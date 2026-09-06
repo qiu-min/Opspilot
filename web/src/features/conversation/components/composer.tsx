@@ -1,16 +1,16 @@
 import { FilePlus2, Mic, Paperclip, Send, X } from "lucide-react";
 import { useRef } from "react";
 import { Button } from "../../../components/ui/button";
-import type { Attachment } from "../types";
+import type { PendingAttachment } from "../types";
 
 export type ComposerSubmitPayload = {
   body: string;
-  attachments: Attachment[];
+  attachments: PendingAttachment[];
 };
 
 type ComposerProps = {
   draft: string;
-  attachments: Attachment[];
+  attachments: PendingAttachment[];
   isProcessing: boolean;
   disabled?: boolean;
   agentName: string;
@@ -69,8 +69,8 @@ export function Composer({ draft, attachments, isProcessing, disabled = false, a
         />
         <div className="flex items-center justify-between gap-2 px-1 pt-1">
           <div className="flex items-center gap-0.5">
-            <input ref={inputRef} type="file" className="sr-only" multiple accept=".xlsx,.xls,.csv,.pdf" onChange={handleFileChange} />
-            <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => inputRef.current?.click()} disabled={disabled} aria-label="Attach files" title="Attach files"><Paperclip size={16} aria-hidden="true" /></Button>
+            <input ref={inputRef} type="file" className="sr-only" accept=".xlsx" onChange={handleFileChange} />
+            <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => inputRef.current?.click()} disabled={disabled || isProcessing} aria-label="Attach an Excel file" title="Attach an Excel file"><Paperclip size={16} aria-hidden="true" /></Button>
             <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="Add analysis instruction" title="Add instruction"><FilePlus2 size={16} aria-hidden="true" /></Button>
             <span className="ml-2 hidden text-[10px] text-mutedInk sm:inline">Shift + Enter for new line</span>
           </div>

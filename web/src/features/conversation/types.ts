@@ -9,6 +9,11 @@ export type Attachment = {
   kind: AttachmentKind;
 };
 
+/** A browser-only attachment that has not been sent yet. */
+export type PendingAttachment = Attachment & {
+  file: File;
+};
+
 export type ChatMessage = {
   id: string;
   role: "assistant" | "user";
