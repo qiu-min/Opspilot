@@ -74,7 +74,7 @@ export class RunConversationTurn {
   ): Promise<RunConversationTurnResult> {
     const created = input.sessionId === undefined;
     const session = created ? this.sessionStore.create() : this.sessionStore.load(input.sessionId);
-    const sessionId = session.getHeader().id;
+    const sessionId = session.getId();
     await options?.onEvent?.({ type: 'session_ready', sessionId, created });
 
     const tools = wrapToolDefinitions(this.toolDefinitions, {

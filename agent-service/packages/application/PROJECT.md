@@ -1,15 +1,31 @@
 # OpsPilot Application Context Engineering 设计计划
 
+## Current Session boundary
+
+当前 Session 已是用户可见长期会话的 Domain aggregate，而不是 Application 内部的 SessionManager。它由 `SessionMetadata` 与 history tree 组成；Application 通过 `SessionStore` 负责 filesystem persistence。
+
+```text
+Session
+├── metadata: id / title / createdAt / updatedAt
+└── history tree: SessionHeader + SessionEntry[]
+
+sessions/{sessionId}/
+├── metadata.json   # mutable metadata, atomic replace
+└── history.jsonl   # append-only durable history
+```
+
+旧的 `{sessionId}.jsonl` 只在新目录不存在时读取，并在成功 restore 后 lazy migrate；迁移复制原始 history bytes、保留 legacy 文件，新目录优先，不完整新目录不 fallback。`title`、`createdAt`、`updatedAt` 不属于 SessionEntry，也不进入 Agent context。当前范围不实现 Run、RunSnapshot、RunEvent 或数据库 repository。
+
 ## 1. 目标
 
 为 OpsPilot Application 层建立可持续演进的上下文工程能力，使：
 
-* Session 保存完整、可恢复的会话事实
-* LLM Context 与 Session History 解耦
-* 长对话可以通过自动 Compaction 持续运行
-* ContextManager 保持为单次模型调用的上下文变换入口
-* Memory、RAG、Prompt、工具输出治理等能力以后可以独立接入
-* `agent-runtime` 保持通用，不感知 Session、Compaction、Memory、RAG 等业务能力
+- Session 保存完整、可恢复的会话事实
+- LLM Context 与 Session History 解耦
+- 长对话可以通过自动 Compaction 持续运行
+- ContextManager 保持为单次模型调用的上下文变换入口
+- Memory、RAG、Prompt、工具输出治理等能力以后可以独立接入
+- `agent-runtime` 保持通用，不感知 Session、Compaction、Memory、RAG 等业务能力
 
 核心原则：
 
@@ -48,17 +64,17 @@ SessionManager 回答：
 
 职责：
 
-* SessionHeader
-* SessionEntry 持久化
-* MessageEntry
-* ModelChangeEntry
-* ThinkingLevelChangeEntry
-* Session Tree
-* Branch
-* Session reload
-* 后续支持 CompactionEntry
-* 后续支持 BranchSummaryEntry
-* 根据当前分支构建 Session Context
+- SessionHeader
+- SessionEntry 持久化
+- MessageEntry
+- ModelChangeEntry
+- ThinkingLevelChangeEntry
+- Session Tree
+- Branch
+- Session reload
+- 后续支持 CompactionEntry
+- 后续支持 BranchSummaryEntry
+- 根据当前分支构建 Session Context
 
 原则：
 
@@ -82,9 +98,7 @@ ContextManager 回答：
 
 ```ts
 export interface ContextManager {
-  prepare(
-    input: ContextPrepareInput,
-  ): Promise<ContextPrepareResult>;
+  prepare(input: ContextPrepareInput): Promise<ContextPrepareResult>;
 }
 
 export interface ContextPrepareInput {
@@ -124,11 +138,11 @@ LLM
 
 ContextManager：
 
-* 不依赖 SessionManager
-* 不写 Session
-* 不追加 CompactionEntry
-* 不负责 Session Tree
-* 不负责自动压缩流程
+- 不依赖 SessionManager
+- 不写 Session
+- 不追加 CompactionEntry
+- 不负责 Session Tree
+- 不负责自动压缩流程
 
 当前 `DefaultContextManager` 保持 identity 行为：
 
@@ -140,12 +154,12 @@ return {
 
 未来 ContextManager 可以逐步承担：
 
-* Memory 注入
-* RAG 注入
-* 临时业务 Context
-* Context 排序
-* 特定消息过滤
-* 外部上下文组合
+- Memory 注入
+- RAG 注入
+- 临时业务 Context
+- Context 排序
+- 特定消息过滤
+- 外部上下文组合
 
 但：
 
@@ -184,14 +198,14 @@ ModelGateway
 
 Runtime 不应该知道：
 
-* SessionManager
-* Session JSONL
-* CompactionEntry
-* CompactionService
-* Memory
-* RAG
-* PromptBuilder
-* Application 业务规则
+- SessionManager
+- Session JSONL
+- CompactionEntry
+- CompactionService
+- Memory
+- RAG
+- PromptBuilder
+- Application 业务规则
 
 ---
 
@@ -550,9 +564,9 @@ toolResult
 
 Cut Point 应优先选择可以独立形成上下文边界的位置，例如：
 
-* user message
-* assistant message
-* 其他明确安全的消息边界
+- user message
+- assistant message
+- 其他明确安全的消息边界
 
 第一版策略：
 
@@ -588,17 +602,15 @@ export interface CompactionSummaryResult {
 }
 
 export interface CompactionService {
-  compact(
-    input: CompactionSummaryInput,
-  ): Promise<CompactionSummaryResult>;
+  compact(input: CompactionSummaryInput): Promise<CompactionSummaryResult>;
 }
 ```
 
 CompactionService 负责：
 
-* 接收 `prepareCompaction` 选出的 messages
-* 调模型生成 summary
-* 返回 `CompactionSummaryResult`
+- 接收 `prepareCompaction` 选出的 messages
+- 调模型生成 summary
+- 返回 `CompactionSummaryResult`
 
 但：
 
@@ -761,13 +773,13 @@ ResourceLoader
 
 负责：
 
-* Agent System Prompt
-* 项目级上下文
-* AGENTS.md
-* Skills
-* 工具说明
-* 工作区资源
-* 用户配置
+- Agent System Prompt
+- 项目级上下文
+- AGENTS.md
+- Skills
+- 工具说明
+- 工作区资源
+- 用户配置
 
 流程：
 
@@ -898,14 +910,14 @@ LLM Context
 
 已完成：
 
-* 新增 `context/`
-* ContextManager 契约
-* DefaultContextManager
-* `createAgentSession()` 接入
-* `RunConversationTurn` 注入
-* 连接 Runtime `transformContext`
-* 测试 ContextManager 变换不会修改 Session History
-* 测试新的消息仍正常持久化
+- 新增 `context/`
+- ContextManager 契约
+- DefaultContextManager
+- `createAgentSession()` 接入
+- `RunConversationTurn` 注入
+- 连接 Runtime `transformContext`
+- 测试 ContextManager 变换不会修改 Session History
+- 测试新的消息仍正常持久化
 
 当前：
 
@@ -930,11 +942,11 @@ identity transform
 
 实现：
 
-* `CompactionSettings`
-* `estimateTokens()`
-* `calculateContextTokens()`
-* `estimateContextTokens()`
-* `shouldCompact()`
+- `CompactionSettings`
+- `estimateTokens()`
+- `calculateContextTokens()`
+- `estimateContextTokens()`
+- `shouldCompact()`
 
 使用：
 
@@ -966,16 +978,16 @@ contextWindow - reserveTokens
 
 实现：
 
-* CompactionEntry
-* CompactionResult
-* CompactionService
-* prepareCompaction()
-* safe cut point
-* keepRecentTokens
-* summary generation
-* SessionManager.appendCompaction()
-* compaction-aware `buildSessionContext()`
-* Application 自动触发流程
+- CompactionEntry
+- CompactionResult
+- CompactionService
+- prepareCompaction()
+- safe cut point
+- keepRecentTokens
+- summary generation
+- SessionManager.appendCompaction()
+- compaction-aware `buildSessionContext()`
+- Application 自动触发流程
 
 完成后的核心链路：
 
@@ -1021,11 +1033,11 @@ Pre-prompt compaction 用于兜住上一轮 aborted/error 或 post-run maintenan
 
 已实现：
 
-* context overflow detection
-* compact after overflow
-* rebuild context
-* retry once
-* 防止无限重试
+- context overflow detection
+- compact after overflow
+- rebuild context
+- retry once
+- 防止无限重试
 
 Provider/model failure → `isContextOverflow()` → AgentSession recovery → overflow Compaction → `Agent.continue()` → retry once。
 Session 保留 failed Assistant，Runtime retry context 移除 failed Assistant。
@@ -1040,21 +1052,21 @@ Overflow Recovery 是异常兜底。
 
 在 Tool Gateway / AgentTool Adapter 层实现：
 
-* 最大字符数
-* 最大行数
-* 最大结果大小
-* head / tail 截取策略
-* paging
-* summary
-* full-result reference
+- 最大字符数
+- 最大行数
+- 最大结果大小
+- head / tail 截取策略
+- paging
+- summary
+- full-result reference
 
 重点覆盖：
 
-* Excel 大范围读取
-* 搜索
-* 文件
-* 日志
-* 大型结构化结果
+- Excel 大范围读取
+- 搜索
+- 文件
+- 日志
+- 大型结构化结果
 
 ---
 
@@ -1069,12 +1081,12 @@ ResourceLoader
 
 逐步支持：
 
-* Agent System Prompt
-* 项目说明
-* AGENTS.md
-* Skills
-* 工具说明
-* 工作区上下文
+- Agent System Prompt
+- 项目说明
+- AGENTS.md
+- Skills
+- 工具说明
+- 工作区上下文
 
 ---
 

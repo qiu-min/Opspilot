@@ -18,6 +18,18 @@ export interface LoadedSessionFile {
   readonly entries: SessionEntry[];
 }
 
+/** Reads the original history bytes so legacy migration can copy them exactly. */
+export function readSessionFileBytes(filePath: string): Buffer {
+  try {
+    return readFileSync(filePath);
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'ENOENT') {
+      throw new SessionJsonlError(`Session file does not exist: ${filePath}`, { cause: error });
+    }
+    throw new SessionJsonlError(`Unable to read session file: ${filePath}`, { cause: error });
+  }
+}
+
 export function serializeSessionRecord(record: SessionFileEntry): string {
   return `${JSON.stringify(record)}\n`;
 }
@@ -35,8 +47,13 @@ export function createSessionFile(filePath: string, header: SessionHeader): void
 /** Appends one already domain-validated entry without rewriting the history. */
 export function appendSessionEntry(filePath: string, entry: SessionEntry): void {
   try {
-    appendFileSync(filePath, serializeSessionRecord(entry), { encoding: 'utf8' });
+    const existing = readSessionFileBytes(filePath);
+    const separator = existing.length > 0 && existing.at(-1) !== 10 ? '\n' : '';
+    appendFileSync(filePath, `${separator}${serializeSessionRecord(entry)}`, {
+      encoding: 'utf8',
+    });
   } catch (error) {
+    if (error instanceof SessionJsonlError) throw error;
     throw new SessionJsonlError(`Unable to append session entry to: ${filePath}`, { cause: error });
   }
 }
@@ -71,17 +88,7 @@ export function parseSessionJsonl(content: string): LoadedSessionFile {
 
 /** Reads and parses one JSONL session file. */
 export function loadSessionFile(filePath: string): LoadedSessionFile {
-  let content: string;
-  try {
-    content = readFileSync(filePath, 'utf8');
-  } catch (error) {
-    if (isNodeError(error) && error.code === 'ENOENT') {
-      throw new SessionJsonlError(`Session file does not exist: ${filePath}`, { cause: error });
-    }
-    throw new SessionJsonlError(`Unable to read session file: ${filePath}`, { cause: error });
-  }
-
-  return parseSessionJsonl(content);
+  return parseSessionJsonl(readSessionFileBytes(filePath).toString('utf8'));
 }
 
 function parseHeader(value: unknown, lineNumber: number): SessionHeader {

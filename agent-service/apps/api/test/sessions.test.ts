@@ -80,6 +80,9 @@ describe('Session history API', () => {
       appendEntry: () => {
         throw new Error('history endpoint must not append sessions');
       },
+      saveMetadata: () => {
+        throw new Error('history endpoint must not save metadata');
+      },
     };
     app = await startServer(new GetConversationHistory(store));
 
@@ -146,6 +149,9 @@ describe('Session history API', () => {
       },
       appendEntry: () => {
         throw new Error('history endpoint must not append sessions');
+      },
+      saveMetadata: () => {
+        throw new Error('history endpoint must not save metadata');
       },
     };
     app = await startServer(new GetConversationHistory(store));

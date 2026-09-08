@@ -10,7 +10,12 @@ import {
   ThinkingLevelChangeEntry,
   isAgentThinkingLevel,
 } from './session-entry.js';
-import { SessionEntryNotFoundError, SessionTreeError } from './session-errors.js';
+import {
+  SessionEntryNotFoundError,
+  SessionMetadataError,
+  SessionTreeError,
+} from './session-errors.js';
+import { normalizeSessionTitle, type SessionMetadata } from './session-metadata.js';
 
 /** The only Session version currently understood by the domain. */
 export const CURRENT_SESSION_VERSION = 1;
@@ -21,20 +26,48 @@ export interface SessionCreateOptions {
   readonly timestamp?: string;
 }
 
+/** Durable state used to restore a Session aggregate. */
+export interface SessionRestoreInput {
+  readonly metadata: SessionMetadata;
+  readonly header: SessionHeader;
+  readonly entries: readonly SessionEntry[];
+}
+
 /**
  * The Session aggregate. It owns durable entry state and tree invariants, but
- * deliberately has no knowledge of files, JSONL, repositories, or callbacks.
+ * deliberately has no knowledge of external persistence or application callbacks.
  */
 export class Session {
   private readonly header: SessionHeader;
+  private metadata: SessionMetadata;
   private readonly entries: SessionEntry[] = [];
   private readonly byId = new Map<string, SessionEntry>();
   private leafId: string | null = null;
 
-  private constructor(header: SessionHeader, entries: readonly SessionEntry[]) {
+  private constructor(
+    metadata: SessionMetadata,
+    header: SessionHeader,
+    entries: readonly SessionEntry[],
+  ) {
+    validateMetadata(metadata);
     validateHeader(header);
+    if (metadata.id !== header.id) {
+      throw new SessionMetadataError(
+        `Session metadata id does not match history header id: ${metadata.id} !== ${header.id}.`,
+      );
+    }
+    if (metadata.createdAt !== header.timestamp) {
+      throw new SessionMetadataError(
+        `Session metadata createdAt does not match history header timestamp: ${metadata.createdAt} !== ${header.timestamp}.`,
+      );
+    }
+    this.metadata = { ...metadata };
     this.header = { ...header };
     this.restoreEntries(entries);
+    this.metadata = {
+      ...this.metadata,
+      updatedAt: latestTimestamp(this.metadata.updatedAt, this.metadata.createdAt, this.entries),
+    };
   }
 
   /** Creates an empty in-memory Session. */
@@ -46,16 +79,92 @@ export class Session {
       throw new SessionTreeError('Session header timestamp must be a valid timestamp.');
     }
 
-    return new Session({ type: 'session', version: CURRENT_SESSION_VERSION, id, timestamp }, []);
+    const metadata: SessionMetadata = {
+      id,
+      title: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    return new Session(
+      metadata,
+      { type: 'session', version: CURRENT_SESSION_VERSION, id, timestamp },
+      [],
+    );
   }
 
-  /** Restores a Session and re-validates all tree and compaction invariants. */
-  public static restore(header: SessionHeader, entries: readonly SessionEntry[]): Session {
-    return new Session(header, entries);
+  /** Restores a Session and re-validates metadata, tree, and compaction invariants. */
+  public static restore(input: SessionRestoreInput): Session;
+  public static restore(
+    metadata: SessionMetadata,
+    header: SessionHeader,
+    entries: readonly SessionEntry[],
+  ): Session;
+  /** Backward-compatible overload for callers that have not yet supplied metadata. */
+  public static restore(header: SessionHeader, entries: readonly SessionEntry[]): Session;
+  public static restore(
+    inputOrMetadata: SessionRestoreInput | SessionMetadata | SessionHeader,
+    headerOrEntries?: SessionHeader | readonly SessionEntry[],
+    inputEntries?: readonly SessionEntry[],
+  ): Session {
+    if (isRestoreInput(inputOrMetadata)) {
+      return new Session(inputOrMetadata.metadata, inputOrMetadata.header, inputOrMetadata.entries);
+    }
+
+    if (isSessionHeader(inputOrMetadata)) {
+      const entries = headerOrEntries;
+      if (!Array.isArray(entries)) {
+        throw new SessionTreeError('Session.restore requires Session entries.');
+      }
+      const metadata = deriveCompatibilityMetadata(inputOrMetadata, entries);
+      return new Session(metadata, inputOrMetadata, entries);
+    }
+
+    if (!isSessionHeader(headerOrEntries) || inputEntries === undefined) {
+      throw new SessionTreeError('Session.restore requires metadata, header, and entries.');
+    }
+    return new Session(inputOrMetadata, headerOrEntries, inputEntries);
   }
 
   public getHeader(): SessionHeader {
     return { ...this.header };
+  }
+
+  /** Returns an immutable snapshot of product metadata. */
+  public getMetadata(): SessionMetadata {
+    return { ...this.metadata };
+  }
+
+  /** Returns the Session product id. */
+  public getId(): string {
+    return this.metadata.id;
+  }
+
+  /** Returns the current product title, or null before a title is assigned. */
+  public getTitle(): string | null {
+    return this.metadata.title;
+  }
+
+  /** Returns the immutable creation timestamp. */
+  public getCreatedAt(): string {
+    return this.metadata.createdAt;
+  }
+
+  /** Returns the timestamp of the latest durable Session mutation. */
+  public getUpdatedAt(): string {
+    return this.metadata.updatedAt;
+  }
+
+  /** Renames the Session without adding an entry to the history tree. */
+  public rename(title: string): void {
+    if (typeof title !== 'string') {
+      throw new SessionMetadataError('Session title must be a string.');
+    }
+
+    this.metadata = {
+      ...this.metadata,
+      title: normalizeTitle(title),
+      updatedAt: this.nextMutationTimestamp(),
+    };
   }
 
   public getLeafId(): string | null {
@@ -163,11 +272,20 @@ export class Session {
     factory: (id: string, parentId: string | null, timestamp: string) => T,
   ): T {
     const id = this.createUniqueEntryId();
-    const entry = factory(id, this.leafId, new Date().toISOString());
+    const entry = factory(id, this.leafId, this.nextMutationTimestamp());
     this.entries.push(entry);
     this.byId.set(entry.id, entry);
     this.leafId = entry.id;
+    this.metadata = { ...this.metadata, updatedAt: entry.timestamp };
     return cloneEntry(entry) as T;
+  }
+
+  private nextMutationTimestamp(): string {
+    const now = Date.now();
+    const current = Date.parse(this.metadata.updatedAt);
+    const created = Date.parse(this.metadata.createdAt);
+    const timestamp = Math.max(now, current + 1, created);
+    return new Date(timestamp).toISOString();
   }
 
   private createUniqueEntryId(): string {
@@ -267,6 +385,80 @@ function validateHeader(header: SessionHeader): void {
   if (!isTimestamp(header.timestamp)) {
     throw new SessionTreeError('Session header timestamp is invalid.');
   }
+}
+
+function validateMetadata(metadata: SessionMetadata): void {
+  if (!isNonEmptyString(metadata.id)) {
+    throw new SessionMetadataError('Session metadata id must be a non-empty string.');
+  }
+  if (metadata.title !== null && !isNonEmptyString(metadata.title)) {
+    throw new SessionMetadataError('Session title must be null or a non-empty string.');
+  }
+  if (!isTimestamp(metadata.createdAt)) {
+    throw new SessionMetadataError('Session metadata createdAt is invalid.');
+  }
+  if (!isTimestamp(metadata.updatedAt)) {
+    throw new SessionMetadataError('Session metadata updatedAt is invalid.');
+  }
+  if (Date.parse(metadata.updatedAt) < Date.parse(metadata.createdAt)) {
+    throw new SessionMetadataError('Session metadata updatedAt cannot be earlier than createdAt.');
+  }
+}
+
+function normalizeTitle(title: string): string {
+  try {
+    return normalizeSessionTitle(title);
+  } catch (error) {
+    throw new SessionMetadataError(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function latestTimestamp(
+  current: string,
+  createdAt: string,
+  entries: readonly SessionEntry[],
+): string {
+  const lastEntry = entries.at(-1);
+  if (lastEntry !== undefined && Date.parse(lastEntry.timestamp) > Date.parse(current)) {
+    return lastEntry.timestamp;
+  }
+  return Date.parse(current) >= Date.parse(createdAt) ? current : createdAt;
+}
+
+function deriveCompatibilityMetadata(
+  header: SessionHeader,
+  entries: readonly SessionEntry[],
+): SessionMetadata {
+  return {
+    id: header.id,
+    title: null,
+    createdAt: header.timestamp,
+    updatedAt: entries.at(-1)?.timestamp ?? header.timestamp,
+  };
+}
+
+function isRestoreInput(
+  value: SessionRestoreInput | SessionMetadata | SessionHeader,
+): value is SessionRestoreInput {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'metadata' in value &&
+    'header' in value &&
+    'entries' in value
+  );
+}
+
+function isSessionHeader(value: unknown): value is SessionHeader {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'type' in value &&
+    value.type === 'session' &&
+    'version' in value &&
+    'id' in value &&
+    'timestamp' in value
+  );
 }
 
 function validateEntry(entry: SessionEntry): void {

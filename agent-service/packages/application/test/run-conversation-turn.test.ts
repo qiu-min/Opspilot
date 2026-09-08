@@ -246,7 +246,7 @@ describe('RunConversationTurn', () => {
     expect(result.leafId).toBe(loaded.getLeafId());
     expect(result.messages).toEqual([inputMessage, response]);
     expect(messageEntries(loaded)).toEqual([inputMessage, response]);
-    expect(readFileSync(join(directory, `${result.sessionId}.jsonl`), 'utf8')).toContain(
+    expect(readFileSync(join(directory, result.sessionId, 'history.jsonl'), 'utf8')).toContain(
       result.sessionId,
     );
   });
@@ -294,6 +294,9 @@ describe('RunConversationTurn', () => {
       },
       appendEntry: () => {
         throw new Error('append should not be called');
+      },
+      saveMetadata: () => {
+        throw new Error('metadata should not be saved');
       },
     };
     const runner = new RunConversationTurn({
@@ -1004,6 +1007,7 @@ describe('RunConversationTurn', () => {
         if (entry.type === 'message') throw new Error('prompt persistence failed');
         fileStore.appendEntry(sessionId, entry);
       },
+      saveMetadata: (sessionId, metadata) => fileStore.saveMetadata(sessionId, metadata),
     };
     const dispose = vi.spyOn(AgentSession.prototype, 'dispose');
     const gateway = createGateway([assistantStream(assistantMessage('will fail'), model)], [model]);
@@ -1079,6 +1083,7 @@ describe('RunConversationTurn', () => {
         return session;
       },
       appendEntry: (sessionId, entry) => store.appendEntry(sessionId, entry),
+      saveMetadata: (sessionId, metadata) => store.saveMetadata(sessionId, metadata),
     };
     const firstStarted = createDeferred<void>();
     const releaseFirst = createDeferred<void>();

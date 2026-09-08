@@ -21,6 +21,7 @@ Agent Service
 ├── Application
 │   ├── Conversations
 │   └── Sessions
+├── Session Domain (`packages/domain`)
 ├── Agent Runtime
 ├── Model Gateway
 └── Tool Gateway
@@ -32,11 +33,21 @@ Agent Runtime 必须保持业务无关。Runtime 不允许出现 `FileId`、`Exc
 
 ## Application
 
-Application 当前依赖 `@opspilot/domain` 提供纯内存 `Session` aggregate，并提供 JSONL SessionStore、最小 AgentSession、createAgentSession 及 RunConversationTurn 组合入口。
+Application 当前依赖 `@opspilot/domain` 提供纯内存 `Session` aggregate，并提供 `SessionStore` filesystem adapter、最小 AgentSession、createAgentSession 及 RunConversationTurn 组合入口。
 
 Conversation 当前通过 `RunConversationTurn` 编排一次用户 Conversation Turn：接收 `sessionId` 和用户消息，加载或创建 Session，调用 Agent Runtime，接收 Runtime 结果与事件，并更新 filesystem JSONL Session。
 
-Domain Session 负责 identity、entry、会话树、branch 和 compaction invariants；它不依赖文件系统或 JSONL。Application 的 SessionStore / JSONL adapter 负责文件创建、加载和 append-only 持久化；更完整的 Session switching、分支管理扩展和上层业务用例仍待实现。
+Domain Session 负责 metadata、identity、entry、会话树、branch 和 compaction invariants；它不依赖文件系统。Application 的 SessionStore adapter 负责文件创建、加载和 append-only 持久化。
+
+Session filesystem layout 为：
+
+```text
+sessions/{sessionId}/
+├── metadata.json
+└── history.jsonl
+```
+
+`metadata.json` 是可变 product metadata，使用 atomic replace；`history.jsonl` 保持现有 header + entry 的 append-only 格式。旧的 `sessions/{sessionId}.jsonl` 在首次成功 load 时 lazy migrate，迁移复制原始 history bytes，且保留旧文件不做 destructive cleanup。新目录优先；新目录不完整时明确报告损坏，不回退旧文件。
 
 ## Core Packages
 
@@ -60,7 +71,7 @@ Domain Session 负责 identity、entry、会话树、branch 和 compaction invar
 
 普通 Conversation 请求可以携带相对共享存储根目录的 Excel `storagePath`。`api-runtime` 将其安全解析为 Application 使用的绝对 `filePath`；SSE 和普通入口使用同一请求契约。
 
-Session 使用 Application 的 filesystem JSONL adapter 持久化；API 通过 Application 的 `RunConversationTurn` 访问，不直接操作 Domain Session 或 Model Gateway。
+Session 使用 Application 的 filesystem adapter 持久化；API 通过 Application 的 `RunConversationTurn` 访问，不直接操作 Domain Session 或 Model Gateway。
 历史恢复使用独立的 `buildConversationHistoryProjection()`，基于 `Session.getBranch()` 读取完整原始消息；它不复用会受 Compaction 影响的 `buildSessionContext()`，也不改变 JSONL persistence format。
 
 ## Development

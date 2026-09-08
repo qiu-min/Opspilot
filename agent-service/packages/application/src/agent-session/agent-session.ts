@@ -355,7 +355,7 @@ export class AgentSession {
   }
 
   private persistEntry(entry: Parameters<SessionStore['appendEntry']>[1]): void {
-    this.sessionStore?.appendEntry(this.session.getHeader().id, entry);
+    this.sessionStore?.appendEntry(this.session.getId(), entry);
   }
 }
 

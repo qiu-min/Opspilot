@@ -2,6 +2,11 @@
 
 OpsPilot 的 Session Domain package。
 
-当前只包含纯内存 `Session` aggregate：Session identity、entries、树/branch、active leaf 和 compaction invariants。它不依赖 JSONL、Node 文件系统、repository 或 application callback。
+当前只包含纯内存 `Session` aggregate。Session 同时拥有两部分业务状态：
 
-Session 的 JSONL create/load/append 由 `@opspilot/application` 的 `SessionStore` adapter 负责；Application projection 通过 `buildSessionContext(session)` 将 durable state 转换为 Agent Runtime context。
+- `SessionMetadata`：`id`、可空 `title`、`createdAt`、`updatedAt`
+- Session history tree：entries、parent、active leaf、branch 和 compaction invariants
+
+metadata mutation 不会生成 history entry，也不会改变 history tree。持久化格式和文件布局属于上层 Application adapter；Domain 只通过显式的 restore/create API 接收和返回业务状态。
+
+Application projection 通过 `buildSessionContext(session)` 将 durable history 转换为 Agent Runtime context，metadata 不进入 Agent context。

@@ -6,6 +6,20 @@ OpsPilot Agent Service 的应用层。
 
 当前已提供最小 `AgentSession` 闭环：从 Domain `Session` 恢复消息、模型和 thinking level，组合 `Agent` 与 `ModelGateway`，并通过 Application 的 `SessionStore` 在 Runtime `message_end` 之后 append finalized message。
 
+## Session persistence
+
+`Session` 是用户可见长期会话的 Domain aggregate，由 `SessionMetadata` 和 history tree 组成。Application 的 `FileSystemSessionStore` 使用以下新布局：
+
+```text
+sessions/{sessionId}/
+├── metadata.json   # mutable metadata, atomic replace
+└── history.jsonl   # append-only Session history
+```
+
+`metadata.json` 保存 versioned filesystem record；`history.jsonl` 保留现有 Session header 和 entry 格式。旧的 `sessions/{sessionId}.jsonl` 会在首次成功读取后非破坏性 lazy migrate 到新目录，旧文件保持不变；新目录优先，且不完整的新目录不会 fallback 到旧文件。
+
+`SessionStore.appendEntry()` 先追加 history，再原子更新 `metadata.updatedAt`；metadata update 失败会明确抛错，下一次 load 会根据 durable history reconciliation。`saveMetadata()` 通过 temp file + rename 原子替换整个 metadata snapshot。
+
 ## 职责
 
 本包主要负责：

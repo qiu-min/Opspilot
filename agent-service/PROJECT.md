@@ -74,6 +74,28 @@ Session Domain 与 Application Session 目录分别负责：
 - Application `buildSessionContext`
 - `FileReference` 等 OpsPilot 扩展 entry
 
+Session 现在是用户可见长期会话的 Domain aggregate，由两个逻辑部分组成：
+
+```text
+Session
+├── SessionMetadata
+│   ├── id
+│   ├── title
+│   ├── createdAt
+│   └── updatedAt
+└── Session History Tree
+```
+
+Application filesystem persistence 使用：
+
+```text
+sessions/{sessionId}/
+├── metadata.json   # mutable metadata, atomic replace
+└── history.jsonl   # append-only history
+```
+
+旧的 `sessions/{sessionId}.jsonl` 仅在新目录不存在时读取，并在成功 restore 后 lazy migrate；迁移复制原始 history bytes、保留 legacy 文件。新目录优先，不完整的新目录不会 fallback 到 legacy。当前不实现 Run、RunSnapshot、RunEvent 或数据库 repository。
+
 Session 不使用 PostgreSQL 保存消息树。Application 的 `SessionStore` / JSONL adapter
 负责 filesystem 持久化，Domain Session 不依赖 JSONL、Node fs 或 repository。
 

@@ -13,3 +13,11 @@ export class SessionTreeError extends Error {
     this.name = 'SessionTreeError';
   }
 }
+
+/** Raised when Session product metadata violates its domain invariants. */
+export class SessionMetadataError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'SessionMetadataError';
+  }
+}

@@ -157,5 +157,5 @@ function appendAndPersist(
   append: () => Parameters<SessionStore['appendEntry']>[1],
 ): void {
   const entry = append();
-  sessionStore?.appendEntry(session.getHeader().id, entry);
+  sessionStore?.appendEntry(session.getId(), entry);
 }
