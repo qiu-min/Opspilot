@@ -18,6 +18,7 @@ Agent Service 内部当前整理为：
 
 ```text
 Agent Service
+├── Infrastructure
 ├── Application
 │   ├── Conversations
 │   └── Sessions
@@ -27,7 +28,7 @@ Agent Service
 └── Tool Gateway
 ```
 
-Session Domain 负责纯内存 Session aggregate；Application 负责用例编排、projection 和 SessionStore 持久化边界。
+Session Domain 负责纯内存 Session aggregate；Application 负责用例编排、projection 和 `SessionStore` port；Infrastructure 提供 filesystem adapter。应用层不依赖 Infrastructure。
 
 ## 2. Application Boundary
 
@@ -86,7 +87,7 @@ Session
 └── Session History Tree
 ```
 
-Application filesystem persistence 使用：
+Infrastructure 的 filesystem persistence 使用：
 
 ```text
 sessions/{sessionId}/
@@ -96,14 +97,13 @@ sessions/{sessionId}/
 
 旧的 `sessions/{sessionId}.jsonl` 仅在新目录不存在时读取，并在成功 restore 后 lazy migrate；迁移复制原始 history bytes、保留 legacy 文件。新目录优先，不完整的新目录不会 fallback 到 legacy。当前不实现 Run、RunSnapshot、RunEvent 或数据库 repository。
 
-Session 不使用 PostgreSQL 保存消息树。Application 的 `SessionStore` / JSONL adapter
-负责 filesystem 持久化，Domain Session 不依赖 JSONL、Node fs 或 repository。
+Session 不使用 PostgreSQL 保存消息树。Application 只定义 `SessionStore` port；Infrastructure 的 JSONL/filesystem adapter 负责持久化，Domain Session 不依赖 JSONL、Node fs 或 repository。
 
 当前已实现：
 
 - `@opspilot/domain` Session
-- FileSystemSessionStore
-- JSONL create / load / append
+- `@opspilot/infrastructure` FileSystemSessionStore
+- Infrastructure JSONL create / load / append
 - Session 读写、分支和 compaction invariants
 
 ## 4. Core Runtime Packages
@@ -124,6 +124,10 @@ Session 不使用 PostgreSQL 保存消息树。Application 的 `SessionStore` / 
 
 `packages/observability` 作为 Agent Service 的可观测性边界保留。其实现和公开契约不属于本次目录调整范围。
 
+### Infrastructure
+
+`packages/infrastructure` 实现 Application 的 `SessionStore` port，封装 metadata JSON、append-only JSONL、legacy session migration 和 atomic filesystem writes。它可以依赖 Application contract 与 Domain，但 Application 不反向依赖它。
+
 ## 5. API Status
 
 `apps/api` 保留为 API 项目和通用 HTTP 基础设施，以便未来接入 Application。当前不实现：
@@ -139,7 +143,7 @@ API runtime 当前只保留能够构建通用 API 模块的组合根，不绑定
 
 ## 6. Persistence Direction
 
-当前 Application 不创建数据库表。Session 消息树使用 `SessionStore` 抽象和 JSONL / filesystem 实现；后续可以在不修改 Domain Session 的前提下加入 PostgreSQL repository。
+当前 Application 不创建数据库表。Session 消息树使用 Application 的 `SessionStore` 抽象和 Infrastructure 的 JSONL / filesystem 实现；后续可以在不修改 Domain Session 的前提下加入其他 repository。
 
 ## 7. Workspace Layout
 
@@ -149,6 +153,8 @@ agent-service/
 │   ├── api/
 │   └── api-runtime/
 ├── packages/
+│   ├── infrastructure/
+│   │   └── src/session/
 │   ├── domain/
 │   │   └── src/session/
 │   ├── application/
@@ -177,4 +183,4 @@ pnpm test
 pnpm build
 ```
 
-本次改动不改变 Agent Runtime、Model Gateway、Tool Gateway 和 API 的业务行为或公开契约；新增的 Session Domain 与 Application persistence boundary 只服务于 Session 内部重构。
+本次改动不改变 Agent Runtime、Model Gateway、Tool Gateway 和 API 的业务行为或公开契约；SessionStore filesystem 实现位于 Infrastructure，Application 只保留 persistence port。

@@ -2,13 +2,13 @@
 
 OpsPilot Agent Service 的应用层。
 
-`application` 位于业务入口与通用 Agent Runtime 之间，负责围绕 Session 组织 Agent 的实际使用流程，并协调运行时、会话状态、上下文、工具与持久化能力。
+`application` 位于业务入口与通用 Agent Runtime 之间，负责围绕 Session 组织 Agent 的实际使用流程，并协调运行时、会话状态、上下文、工具与持久化 port。
 
 当前已提供最小 `AgentSession` 闭环：从 Domain `Session` 恢复消息、模型和 thinking level，组合 `Agent` 与 `ModelGateway`，并通过 Application 的 `SessionStore` 在 Runtime `message_end` 之后 append finalized message。
 
 ## Session persistence
 
-`Session` 是用户可见长期会话的 Domain aggregate，由 `SessionMetadata` 和 history tree 组成。Application 的 `FileSystemSessionStore` 使用以下新布局：
+`Session` 是用户可见长期会话的 Domain aggregate，由 `SessionMetadata` 和 history tree 组成。Application 只定义 `SessionStore` port；`@opspilot/infrastructure` 的 `FileSystemSessionStore` 使用以下新布局：
 
 ```text
 sessions/{sessionId}/
@@ -25,7 +25,7 @@ sessions/{sessionId}/
 本包主要负责：
 
 - 创建、恢复和管理 Agent Session
-- 通过 `SessionStore` 协调 Domain Session mutation 与持久化
+- 通过 `SessionStore` port 协调 Domain Session mutation 与持久化
 - 接收用户输入并驱动一次 Agent Run
 - 将 Session 上下文恢复到 Agent Runtime
 - 通过 `ContextManager` 决定单次模型调用看到的消息
@@ -60,7 +60,7 @@ API / Transport
 application
       │
       ├── @opspilot/domain Session
-      ├── SessionStore / JSONL adapter
+      ├── SessionStore port
       │
       ├── Agent configuration
       │

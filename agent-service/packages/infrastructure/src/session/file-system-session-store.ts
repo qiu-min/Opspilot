@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 
+import type { SessionStore } from '@opspilot/application';
 import { Session, type SessionEntry, type SessionMetadata } from '@opspilot/domain';
 
 import {
@@ -25,7 +26,6 @@ import {
   writeSessionMetadataFile,
 } from './session-metadata-json.js';
 import { SessionStoreError } from './session-store-errors.js';
-import type { SessionStore } from './session-store.js';
 
 const sessionIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 

@@ -2,7 +2,9 @@
 
 ## Current Session boundary
 
-当前 Session 已是用户可见长期会话的 Domain aggregate，而不是 Application 内部的 SessionManager。它由 `SessionMetadata` 与 history tree 组成；Application 通过 `SessionStore` 负责 filesystem persistence。
+当前 Session 已是用户可见长期会话的 Domain aggregate，而不是 Application 内部的 SessionManager。它由 `SessionMetadata` 与 history tree 组成；Application 通过 `SessionStore` port 访问 persistence，filesystem adapter 位于 `@opspilot/infrastructure`。
+
+Application 的持久化边界只包含 `SessionStore` interface。Application 不导出或依赖 `FileSystemSessionStore`、JSONL parser、metadata JSON helper、filesystem error 或 Node fs；这些具体实现属于 Infrastructure。Application unit tests 使用 in-memory fake，真实 filesystem behavior 在 Infrastructure / api-runtime integration tests 中验证。
 
 ```text
 Session

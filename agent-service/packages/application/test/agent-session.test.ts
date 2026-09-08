@@ -1,7 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createModelEventStream,
   type AssistantMessage,
@@ -18,14 +15,12 @@ import {
   createAgentSession,
   createCompactionSummaryMessage,
   DefaultContextManager,
-  FileSystemSessionStore,
   prepareCompaction,
   Session,
   type AgentSessionEvent,
   type CompactionService,
 } from '../src/index.js';
-
-const directories: string[] = [];
+import { InMemorySessionStore } from './support/in-memory-session-store.js';
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -61,11 +56,6 @@ const alternateHighModel: Model = {
   id: 'alternate-high-model',
   name: 'Alternate High Model',
 };
-
-afterEach(() => {
-  for (const directory of directories.splice(0))
-    rmSync(directory, { recursive: true, force: true });
-});
 
 function userMessage(text: string): AgentMessage {
   return { role: 'user', content: [{ type: 'text', text }] };
@@ -208,9 +198,7 @@ describe('AgentSession composition and persistence', () => {
   });
 
   it('creates, persists, reloads, resumes, and appends without duplicating history', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'opspilot-agent-session-'));
-    directories.push(directory);
-    const sessionStore = new FileSystemSessionStore(directory);
+    const sessionStore = new InMemorySessionStore();
     const session = sessionStore.create();
     const firstGateway = createGateway([assistantStream(assistantMessage('B'))]);
     const firstSession = createAgentSession({

@@ -15,7 +15,7 @@ import {
   createAgentSession,
   Session,
   type AgentSessionEvent,
-} from '../src/index.js';
+} from '@opspilot/application';
 
 const PROVIDER_ID = 'moonshot';
 const MODEL_ID = 'kimi-k3';

@@ -17,10 +17,10 @@ import { Workbook } from 'exceljs';
 import {
   createGetSheetProfileTool,
   createGetWorkbookInfoTool,
-  FileSystemSessionStore,
   RunConversationTurn,
   type RunConversationTurnEvent,
-} from '../src/index.js';
+} from '@opspilot/application';
+import { FileSystemSessionStore } from '@opspilot/infrastructure';
 
 const providerId = 'moonshot';
 const modelId = 'kimi-k3';
@@ -86,10 +86,12 @@ function recordToolEvent(event: RunConversationTurnEvent, toolEvents: string[]):
 }
 
 function extractText(message: AssistantMessage | undefined): string {
-  return message?.content
-    .filter((content) => content.type === 'text')
-    .map((content) => content.text)
-    .join('') ?? '';
+  return (
+    message?.content
+      .filter((content) => content.type === 'text')
+      .map((content) => content.text)
+      .join('') ?? ''
+  );
 }
 
 function userMessage(text: string): AgentMessage {

@@ -11,15 +11,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AgentMessage } from '@opspilot/agent-runtime';
+import { buildSessionContext } from '@opspilot/application';
 import type { SessionEntry } from '@opspilot/domain';
+import { Session } from '@opspilot/domain';
 
 import {
   appendSessionEntry,
-  buildSessionContext,
   createSessionFile,
   FileSystemSessionStore,
   serializeSessionMetadata,
-  Session,
   SessionMetadataPersistenceError,
 } from '../src/index.js';
 

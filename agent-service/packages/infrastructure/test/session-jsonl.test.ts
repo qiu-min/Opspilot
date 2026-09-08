@@ -3,15 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AgentMessage } from '@opspilot/agent-runtime';
+import { buildSessionContext, createCompactionSummaryMessage } from '@opspilot/application';
 import type { SessionEntry } from '@opspilot/domain';
-import {
-  appendSessionEntry,
-  buildSessionContext,
-  createSessionFile,
-  createCompactionSummaryMessage,
-  loadSessionFile,
-  Session,
-} from '../src/index.js';
+import { Session } from '@opspilot/domain';
+import { appendSessionEntry, createSessionFile, loadSessionFile } from '../src/index.js';
 
 const temporaryDirectories: string[] = [];
 

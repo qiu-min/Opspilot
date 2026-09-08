@@ -3,11 +3,11 @@ import {
   createGetSheetProfileTool,
   createGetWorkbookInfoTool,
   buildOpsPilotSystemPrompt,
-  FileSystemSessionStore,
   GetConversationHistory,
   RunConversationTurn,
   type ToolDefinition,
 } from '@opspilot/application';
+import { FileSystemSessionStore } from '@opspilot/infrastructure';
 import { createModelGateway, loadModelGatewayConfig } from '@opspilot/model-gateway';
 import { ExcelJsDiscoveryAdapter } from '@opspilot/tool-gateway';
 

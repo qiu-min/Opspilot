@@ -277,6 +277,9 @@ importers:
       '@opspilot/application':
         specifier: workspace:*
         version: link:../../packages/application
+      '@opspilot/infrastructure':
+        specifier: workspace:*
+        version: link:../../packages/infrastructure
       '@opspilot/model-gateway':
         specifier: workspace:*
         version: link:../../packages/model-gateway
@@ -296,9 +299,15 @@ importers:
       '@nestjs/testing':
         specifier: ^11.0.0
         version: 11.1.29(@nestjs/common@11.1.29(reflect-metadata@0.2.2)(rxjs@7.8.1)(supports-color@7.1.0))(@nestjs/core@11.1.29)(@nestjs/platform-express@11.1.29)
+      '@opspilot/agent-runtime':
+        specifier: workspace:*
+        version: link:../../packages/agent-runtime
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.1
+      exceljs:
+        specifier: ^4.4.0
+        version: 4.4.0
       tsx:
         specifier: ^4.19.0
         version: 4.23.12
@@ -346,12 +355,6 @@ importers:
       '@types/node':
         specifier: ^26.2.0
         version: 26.2.0
-      exceljs:
-        specifier: ^4.4.0
-        version: 4.4.0
-      tsx:
-        specifier: ^4.19.0
-        version: 4.23.12
       typescript:
         specifier: ^5.7.0
         version: 5.7.2
@@ -365,6 +368,28 @@ importers:
         specifier: workspace:*
         version: link:../agent-runtime
     devDependencies:
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      typescript:
+        specifier: ^5.7.0
+        version: 5.7.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
+
+  packages/infrastructure:
+    dependencies:
+      '@opspilot/application':
+        specifier: workspace:*
+        version: link:../application
+      '@opspilot/domain':
+        specifier: workspace:*
+        version: link:../domain
+    devDependencies:
+      '@opspilot/agent-runtime':
+        specifier: workspace:*
+        version: link:../agent-runtime
       '@types/node':
         specifier: ^26.2.0
         version: 26.2.0

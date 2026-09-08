@@ -1,6 +1,3 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentMessage, AgentToolResult } from '@opspilot/agent-runtime';
 import type {
@@ -19,7 +16,6 @@ import {
   buildSessionContext,
   createCompactionSummaryMessage,
   type ContextManager,
-  FileSystemSessionStore,
   RunConversationTurn,
   type RunConversationTurnEvent,
   Session,
@@ -27,8 +23,7 @@ import {
   type ToolContext,
   type ToolDefinition,
 } from '../src/index.js';
-
-const directories: string[] = [];
+import { InMemorySessionStore } from './support/in-memory-session-store.js';
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -67,19 +62,14 @@ const lowOnlyModel: Model = {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  for (const directory of directories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
-  }
 });
 
-function createStore(): { directory: string; store: FileSystemSessionStore } {
-  const directory = mkdtempSync(join(tmpdir(), 'opspilot-conversation-'));
-  directories.push(directory);
-  return { directory, store: new FileSystemSessionStore(directory) };
+function createStore(): { store: InMemorySessionStore } {
+  return { store: new InMemorySessionStore() };
 }
 
-function appendPersisted<T extends Parameters<FileSystemSessionStore['appendEntry']>[1]>(
-  store: FileSystemSessionStore,
+function appendPersisted<T extends Parameters<SessionStore['appendEntry']>[1]>(
+  store: SessionStore,
   session: Session,
   append: () => T,
 ): T {
@@ -228,7 +218,7 @@ describe('RunConversationTurn', () => {
   });
 
   it('keeps the original behavior when onEvent is omitted', async () => {
-    const { directory, store } = createStore();
+    const { store } = createStore();
     const inputMessage = userMessage('hello');
     const response = assistantMessage('world');
     const gateway = createGateway([assistantStream(response, model)]);
@@ -246,9 +236,6 @@ describe('RunConversationTurn', () => {
     expect(result.leafId).toBe(loaded.getLeafId());
     expect(result.messages).toEqual([inputMessage, response]);
     expect(messageEntries(loaded)).toEqual([inputMessage, response]);
-    expect(readFileSync(join(directory, result.sessionId, 'history.jsonl'), 'utf8')).toContain(
-      result.sessionId,
-    );
   });
 
   it('awaits session_ready listeners before creating AgentSession', async () => {

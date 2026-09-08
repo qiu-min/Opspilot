@@ -18,6 +18,7 @@ Tool Gateway
 
 ```text
 Agent Service
+├── Infrastructure
 ├── Application
 │   ├── Conversations
 │   └── Sessions
@@ -27,17 +28,17 @@ Agent Service
 └── Tool Gateway
 ```
 
-Application 是业务编排边界，可以理解 OpsPilot 的 `Conversation`、`Session` 和 `FileReference` 等概念，并负责把这些概念转换为 Runtime 可消费的输入。
+Application 是业务编排边界，可以理解 OpsPilot 的 `Conversation`、`Session` 和 `FileReference` 等概念，并负责把这些概念转换为 Runtime 可消费的输入。它只定义 `SessionStore` port；filesystem adapter 位于 `packages/infrastructure`，由 `apps/api-runtime` 组合。
 
 Agent Runtime 必须保持业务无关。Runtime 不允许出现 `FileId`、`Excel`、`OpsPilot Session`、`Conversation` 等业务概念，也不直接依赖 Application 的业务模型。Model Gateway 负责模型 Provider 边界，Tool Gateway 负责 Tool Contract、输入校验和外部能力适配。
 
 ## Application
 
-Application 当前依赖 `@opspilot/domain` 提供纯内存 `Session` aggregate，并提供 `SessionStore` filesystem adapter、最小 AgentSession、createAgentSession 及 RunConversationTurn 组合入口。
+Application 当前依赖 `@opspilot/domain` 提供纯内存 `Session` aggregate，并提供 `SessionStore` port、最小 AgentSession、createAgentSession 及 RunConversationTurn 组合入口。`@opspilot/infrastructure` 提供 filesystem adapter。
 
-Conversation 当前通过 `RunConversationTurn` 编排一次用户 Conversation Turn：接收 `sessionId` 和用户消息，加载或创建 Session，调用 Agent Runtime，接收 Runtime 结果与事件，并更新 filesystem JSONL Session。
+Conversation 当前通过 `RunConversationTurn` 编排一次用户 Conversation Turn：接收 `sessionId` 和用户消息，加载或创建 Session，调用 Agent Runtime，接收 Runtime 结果与事件，并通过 `SessionStore` 更新 Session。具体 filesystem JSONL 实现由 `@opspilot/infrastructure` 提供。
 
-Domain Session 负责 metadata、identity、entry、会话树、branch 和 compaction invariants；它不依赖文件系统。Application 的 SessionStore adapter 负责文件创建、加载和 append-only 持久化。
+Domain Session 负责 metadata、identity、entry、会话树、branch 和 compaction invariants；它不依赖文件系统。Infrastructure 的 FileSystemSessionStore 负责文件创建、加载和 append-only 持久化；Application 不依赖该具体实现。
 
 Session filesystem layout 为：
 
@@ -53,6 +54,7 @@ sessions/{sessionId}/
 
 - `packages/agent-runtime`：业务无关的 Agent 生命周期、Loop、State、Context、Tool Execution 和事件能力。
 - `packages/domain`：纯内存 Session aggregate、SessionEntry、树/branch 和 compaction invariants；不依赖 JSONL 或文件系统。
+- `packages/infrastructure`：实现 Application 的 SessionStore port，负责 Session metadata、JSONL history、legacy migration 和 filesystem atomic write。
 - `packages/model-gateway`：模型调用、Provider 适配、消息和流式响应契约。
 - `packages/tool-gateway`：Tool Contract、运行时校验、Connector / Adapter 和外部能力边界。
 - `packages/observability`：Agent Service 可观测性边界。
@@ -71,7 +73,7 @@ sessions/{sessionId}/
 
 普通 Conversation 请求可以携带相对共享存储根目录的 Excel `storagePath`。`api-runtime` 将其安全解析为 Application 使用的绝对 `filePath`；SSE 和普通入口使用同一请求契约。
 
-Session 使用 Application 的 filesystem adapter 持久化；API 通过 Application 的 `RunConversationTurn` 访问，不直接操作 Domain Session 或 Model Gateway。
+Session 通过 Infrastructure 的 filesystem adapter 持久化；API 通过 Application 的 `RunConversationTurn` 访问，不直接操作 Domain Session 或 Model Gateway。
 历史恢复使用独立的 `buildConversationHistoryProjection()`，基于 `Session.getBranch()` 读取完整原始消息；它不复用会受 Compaction 影响的 `buildSessionContext()`，也不改变 JSONL persistence format。
 
 ## Development
@@ -92,12 +94,12 @@ pnpm build
 4. 配置 `OPS_PILOT_SHARED_STORAGE_ROOT` 为 Backend 共享文件存储根目录
 5. 根据需要设置 `DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID`
 6. 执行 `pnpm dev:api`
-7. 手动验证真实 Excel Tool Calling 可执行 `pnpm --filter @opspilot/application smoke:excel:kimi`
+7. 手动验证真实 Excel Tool Calling 可执行 `pnpm --filter @opspilot/api-runtime smoke:excel:kimi`
 
 本地 Backend → Agent Service 联调时，`FileStorage:RootPath` 与
 `OPS_PILOT_SHARED_STORAGE_ROOT` 必须指向同一个实际目录；Backend 保存的
 `uploads/<file>.xlsx` 才能被 Agent Service 通过同一相对路径读取。
 
-默认模型由 `DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID` 显式指定。`api-runtime` 会加载 `agent-service/.env`，并装配 Model Gateway、`RunConversationTurn` 和 filesystem SessionStore。
+默认模型由 `DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID` 显式指定。`api-runtime` 会加载 `agent-service/.env`，并装配 Model Gateway、`RunConversationTurn` 和 Infrastructure filesystem SessionStore。
 
 各 package 的具体职责和边界以其源码及 package README 为准。

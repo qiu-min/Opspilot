@@ -14,12 +14,12 @@ import {
 
 import {
   buildSessionContext,
-  FileSystemSessionStore,
   RunConversationTurn,
   type RunConversationTurnEvent,
   type RunConversationTurnResult,
   Session,
-} from '../src/index.js';
+} from '@opspilot/application';
+import { FileSystemSessionStore } from '@opspilot/infrastructure';
 
 const PROVIDER_ID = 'moonshot';
 const MODEL_ID = 'kimi-k3';

@@ -7,6 +7,9 @@
     "dev": "tsx watch --tsconfig tsconfig.json src/main.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
+    "smoke:agent-session:kimi": "tsx scripts/smoke-agent-session-kimi.ts",
+    "smoke:conversation:kimi": "tsx scripts/smoke-run-conversation-turn-kimi.ts",
+    "smoke:excel:kimi": "tsx scripts/smoke-excel-conversation-kimi.ts",
     "test": "vitest run",
     "test:production": "node test/production-import.mjs",
     "typecheck": "tsc --noEmit"
@@ -17,6 +20,7 @@
     "@nestjs/platform-express": "^11.0.0",
     "@opspilot/api": "workspace:*",
     "@opspilot/application": "workspace:*",
+    "@opspilot/infrastructure": "workspace:*",
     "@opspilot/model-gateway": "workspace:*",
     "@opspilot/tool-gateway": "workspace:*",
     "reflect-metadata": "^0.2.2",
@@ -24,8 +28,10 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@opspilot/agent-runtime": "workspace:*",
     "@nestjs/testing": "^11.0.0",
     "@types/node": "^22.0.0",
+    "exceljs": "^4.4.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.10"

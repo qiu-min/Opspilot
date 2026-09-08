@@ -21,10 +21,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createGetSheetProfileTool,
   createGetWorkbookInfoTool,
-  FileSystemSessionStore,
   RunConversationTurn,
   type RunConversationTurnEvent,
-} from '../src/index.js';
+} from '@opspilot/application';
+import { FileSystemSessionStore } from '@opspilot/infrastructure';
 
 const model: Model = {
   provider: 'test-provider',
@@ -54,9 +54,7 @@ describe('Application Excel discovery conversation integration', () => {
   it('executes get_workbook_info through Agent Runtime and persists the real ExcelJS result', async () => {
     const { filePath, sessionDirectory } = await createFixture();
     const gateway = createGateway([
-      assistantMessage('', [
-        { callId: 'workbook-call', name: 'get_workbook_info', arguments: {} },
-      ]),
+      assistantMessage('', [{ callId: 'workbook-call', name: 'get_workbook_info', arguments: {} }]),
       assistantMessage('The workbook contains Sales and Config.'),
     ]);
     const store = new FileSystemSessionStore(sessionDirectory);
@@ -351,9 +349,7 @@ async function createFixture(): Promise<{
     [1002, 'Mouse', 3],
   ]);
   const config = workbook.addWorksheet('Config');
-  config.addRows([
-    ['Environment', 'Test'],
-  ]);
+  config.addRows([['Environment', 'Test']]);
   await workbook.xlsx.writeFile(filePath);
 
   const sessionDirectory = join(directory, 'sessions');

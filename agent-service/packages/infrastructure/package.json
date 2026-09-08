@@ -1,5 +1,5 @@
 {
-  "name": "@opspilot/application",
+  "name": "@opspilot/infrastructure",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -15,12 +15,11 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@opspilot/agent-runtime": "workspace:*",
-    "@opspilot/domain": "workspace:*",
-    "@opspilot/model-gateway": "workspace:*",
-    "@opspilot/tool-gateway": "workspace:*"
+    "@opspilot/application": "workspace:*",
+    "@opspilot/domain": "workspace:*"
   },
   "devDependencies": {
+    "@opspilot/agent-runtime": "workspace:*",
     "@types/node": "^26.2.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.10"
