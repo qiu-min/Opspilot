@@ -1,7 +1,7 @@
 import type { AgentMessage } from '@opspilot/agent-runtime';
+import type { SessionEntry } from '@opspilot/domain';
 
 import { createCompactionSummaryMessage } from '../context/compaction-summary-message.js';
-import type { SessionEntry } from './session-types.js';
 
 /** A message projected from a session entry, retaining its source entry index. */
 export interface SessionProjectedMessage {
@@ -16,9 +16,7 @@ export interface SessionProjection {
 }
 
 /** Builds the current message projection for an active session branch. */
-export function buildSessionMessageProjection(
-  entries: readonly SessionEntry[],
-): SessionProjection {
+export function buildSessionMessageProjection(entries: readonly SessionEntry[]): SessionProjection {
   const latestCompactionIndex = findLatestCompactionIndex(entries);
   if (latestCompactionIndex === null) {
     return {

@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@opspilot/agent-runtime": "workspace:*",
+    "@opspilot/domain": "workspace:*",
     "@opspilot/model-gateway": "workspace:*",
     "@opspilot/tool-gateway": "workspace:*"
   },

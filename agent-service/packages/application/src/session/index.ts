@@ -1,23 +1,6 @@
 export {
-  CURRENT_SESSION_VERSION,
-  SessionEntryNotFoundError,
-  SessionManager,
-  SessionTreeError,
-} from './session-manager.js';
-export type { SessionManagerCreateOptions } from './session-manager.js';
-export type {
-  CompactionEntry,
-  ModelChangeEntry,
-  SessionContext,
-  SessionEntry,
-  SessionEntryBase,
-  SessionFileEntry,
-  SessionHeader,
-  SessionMessageEntry,
-  ThinkingLevelChangeEntry,
-} from './session-types.js';
-export {
   buildSessionMessageProjection,
   type SessionProjectedMessage,
   type SessionProjection,
 } from './session-projection.js';
+export { buildSessionContext, type SessionContext } from './session-context.js';

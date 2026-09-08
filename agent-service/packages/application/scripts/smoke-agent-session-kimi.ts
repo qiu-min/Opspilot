@@ -11,8 +11,9 @@ import {
 
 import {
   AgentSession,
+  buildSessionContext,
   createAgentSession,
-  SessionManager,
+  Session,
   type AgentSessionEvent,
 } from '../src/index.js';
 
@@ -94,12 +95,12 @@ function logAgentSessionState(
   write(`[smoke] ${prefix}.errorInfo=${formatDiagnosticValue(state.errorInfo)}`);
 }
 
-/** Prints SessionManager facts without dumping the complete session log. */
-function logSessionManagerSummary(sessionManager: SessionManager, write: DiagnosticWriter): void {
-  const entries = sessionManager.getEntries();
-  const branchEntries = sessionManager.getBranch();
-  write(`[smoke] sessionId=${sessionManager.getHeader().id}`);
-  write(`[smoke] leafId=${sessionManager.getLeafId() ?? 'none'}`);
+/** Prints Session facts without dumping the complete session log. */
+function logSessionSummary(session: Session, write: DiagnosticWriter): void {
+  const entries = session.getEntries();
+  const branchEntries = session.getBranch();
+  write(`[smoke] sessionId=${session.getHeader().id}`);
+  write(`[smoke] leafId=${session.getLeafId() ?? 'none'}`);
   write(`[smoke] entry count=${entries.length}`);
   write(`[smoke] branch entry count=${branchEntries.length}`);
   write(`[smoke] entry types=${entries.map((entry) => entry.type).join(' -> ') || 'none'}`);
@@ -130,7 +131,7 @@ function logAgentSessionEvent(event: AgentSessionEvent): void {
 function logFailure(
   error: unknown,
   agentSession: AgentSession | undefined,
-  sessionManager: SessionManager | undefined,
+  session: Session | undefined,
   lastObservedEventType: AgentSessionEvent['type'] | undefined,
 ): void {
   const record = asRecord(error);
@@ -165,7 +166,7 @@ function logFailure(
 
   console.error(`[smoke] last observed AgentSessionEvent=${lastObservedEventType ?? 'none'}`);
   if (agentSession) logAgentSessionState(agentSession, (message) => console.error(message));
-  if (sessionManager) logSessionManagerSummary(sessionManager, (message) => console.error(message));
+  if (session) logSessionSummary(session, (message) => console.error(message));
 }
 
 /** Extracts only user-visible text content from the final assistant message. */
@@ -206,7 +207,7 @@ async function main(): Promise<void> {
   const startedAt = Date.now();
   let elapsedLogged = false;
   let agentSession: AgentSession | undefined;
-  let sessionManager: SessionManager | undefined;
+  let session: Session | undefined;
   let lastObservedEventType: AgentSessionEvent['type'] | undefined;
   let unsubscribe: (() => void) | undefined;
 
@@ -223,10 +224,10 @@ async function main(): Promise<void> {
     console.info(`[smoke] provider=${PROVIDER_ID}`);
     console.info(`[smoke] model=${MODEL_ID}`);
     console.info('[smoke] creating in-memory session');
-    sessionManager = SessionManager.inMemory();
+    session = Session.create();
     console.info('[smoke] creating AgentSession');
     agentSession = createAgentSession({
-      sessionManager,
+      session,
       modelGateway: gateway,
       model,
     });
@@ -251,7 +252,7 @@ async function main(): Promise<void> {
         (message) => console.error(message),
         'agentSession.state',
       );
-      logSessionManagerSummary(sessionManager!, (message) => console.error(message));
+      logSessionSummary(session!, (message) => console.error(message));
       process.exitCode = 1;
     });
     elapsedLogged = true;
@@ -269,8 +270,8 @@ async function main(): Promise<void> {
     );
     console.info(`[smoke] assistant text=${redactSensitiveText(extractText(lastAssistant))}`);
 
-    logSessionManagerSummary(sessionManager, (message) => console.info(message));
-    const context = sessionManager.buildSessionContext();
+    logSessionSummary(session, (message) => console.info(message));
+    const context = buildSessionContext(session);
     console.info(`[smoke] context.messages.length=${context.messages.length}`);
     console.info(`[smoke] context.model=${formatDiagnosticValue(context.model)}`);
     console.info(`[smoke] context.thinkingLevel=${context.thinkingLevel}`);
@@ -290,7 +291,7 @@ async function main(): Promise<void> {
       process.exitCode = 1;
     }
   } catch (error: unknown) {
-    logFailure(error, agentSession, sessionManager, lastObservedEventType);
+    logFailure(error, agentSession, session, lastObservedEventType);
     process.exitCode = 1;
   } finally {
     unsubscribe?.();

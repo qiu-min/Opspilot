@@ -15,11 +15,14 @@ import {
   type CompactionService,
   type CompactionSettings,
 } from '../context/index.js';
-import { SessionManager } from '../session/session-manager.js';
+import { buildSessionContext } from '../session/session-context.js';
+import type { Session } from '@opspilot/domain';
+import type { SessionStore } from '../session-store/session-store.js';
 
 export interface AgentSessionConfig {
   readonly agent: Agent;
-  readonly sessionManager: SessionManager;
+  readonly session: Session;
+  readonly sessionStore?: SessionStore;
   readonly compactionService?: CompactionService;
   readonly compactionSettings?: CompactionSettings;
 }
@@ -49,12 +52,13 @@ export type AgentSessionEventListener = (event: AgentSessionEvent) => void | Pro
 /** 应用层的最小 Agent 生命周期包装器，负责将完成消息写入 Session。 */
 export class AgentSession {
   public readonly agent: Agent;
-  public readonly sessionManager: SessionManager;
+  public readonly session: Session;
 
   private readonly unsubscribeAgent: () => void;
   private readonly eventListeners = new Set<AgentSessionEventListener>();
   private readonly compactionService?: CompactionService;
   private readonly compactionSettings?: CompactionSettings;
+  private readonly sessionStore?: SessionStore;
   private autoCompactionAbortController?: AbortController;
   private disposed = false;
   private promptActive = false;
@@ -63,7 +67,8 @@ export class AgentSession {
   /** 创建 AgentSession 并注册唯一的内部持久化监听器。 */
   public constructor(config: AgentSessionConfig) {
     this.agent = config.agent;
-    this.sessionManager = config.sessionManager;
+    this.session = config.session;
+    this.sessionStore = config.sessionStore;
     this.compactionService = config.compactionService;
     this.compactionSettings = config.compactionSettings;
     this.unsubscribeAgent = this.agent.subscribe(
@@ -146,7 +151,7 @@ export class AgentSession {
 
   private async handleAgentEvent(event: AgentEvent): Promise<void> {
     if (event.type === 'message_end' && isStandardMessage(event.message)) {
-      this.sessionManager.appendMessage(event.message);
+      this.persistEntry(this.session.appendMessage(event.message));
     }
 
     await this.emit(event);
@@ -211,7 +216,7 @@ export class AgentSession {
     const compactionSettings = this.compactionSettings;
     if (compactionService === undefined || compactionSettings === undefined) return false;
 
-    const preparation = prepareCompaction(this.sessionManager.getBranch(), compactionSettings);
+    const preparation = prepareCompaction(this.session.getBranch(), compactionSettings);
     if (preparation === undefined) return false;
 
     return await this.runCompaction(
@@ -246,7 +251,7 @@ export class AgentSession {
     if (compactionService === undefined || compactionSettings === undefined) return;
     if (state.model.contextWindow === undefined) return;
 
-    const entries = this.sessionManager.getBranch();
+    const entries = this.session.getBranch();
     const estimate = estimateSessionContextTokens(entries);
     if (!shouldCompact(estimate.tokens, state.model.contextWindow, compactionSettings)) return;
 
@@ -289,12 +294,14 @@ export class AgentSession {
           tokensBefore: preparation.tokensBefore,
         };
         if (!controller.signal.aborted) {
-          this.sessionManager.appendCompaction(
-            result.summary,
-            result.firstKeptEntryId,
-            result.tokensBefore,
+          this.persistEntry(
+            this.session.appendCompaction(
+              result.summary,
+              result.firstKeptEntryId,
+              result.tokensBefore,
+            ),
           );
-          const sessionContext = this.sessionManager.buildSessionContext();
+          const sessionContext = buildSessionContext(this.session);
           this.agent.replaceMessages(sessionContext.messages);
           if (willRetry && retryTarget !== undefined) {
             this.removeRecoverableAssistantFromRuntime(retryTarget);
@@ -345,6 +352,10 @@ export class AgentSession {
     event: Omit<Extract<AgentSessionEvent, { type: 'compaction_end' }>, 'type' | 'reason'>,
   ): Promise<void> {
     return this.emit({ type: 'compaction_end', reason, ...event });
+  }
+
+  private persistEntry(entry: Parameters<SessionStore['appendEntry']>[1]): void {
+    this.sessionStore?.appendEntry(this.session.getHeader().id, entry);
   }
 }
 

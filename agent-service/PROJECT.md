@@ -21,12 +21,13 @@ Agent Service
 ├── Application
 │   ├── Conversations
 │   └── Sessions
+├── Session Domain (`packages/domain`)
 ├── Agent Runtime
 ├── Model Gateway
 └── Tool Gateway
 ```
 
-本次只完成旧代码清理和 Application 目录骨架调整，不实现业务用例、Session 持久化或 HTTP API。
+Session Domain 负责纯内存 Session aggregate；Application 负责用例编排、projection 和 SessionStore 持久化边界。
 
 ## 2. Application Boundary
 
@@ -63,25 +64,25 @@ Agent Runtime 必须保持业务无关，不出现 `FileId`、`Excel`、`OpsPilo
 
 ## 3. Session Boundary
 
-Session 目录未来负责：
+Session Domain 与 Application Session 目录分别负责：
 
-- Session 生命周期
-- Pi 风格 JSONL Session 持久化
+- Domain Session 生命周期、identity 和 tree invariants
 - `SessionEntry`
 - `id` / `parentId` 会话树
 - 当前 leaf
 - branch
-- `buildSessionContext`
+- Application `buildSessionContext`
 - `FileReference` 等 OpsPilot 扩展 entry
 
-Session 不使用 PostgreSQL 保存消息树。未来 Session 持久化采用 JSONL / filesystem。
+Session 不使用 PostgreSQL 保存消息树。Application 的 `SessionStore` / JSONL adapter
+负责 filesystem 持久化，Domain Session 不依赖 JSONL、Node fs 或 repository。
 
-当前尚未实现：
+当前已实现：
 
-- `SessionManager`
-- JSONL Store
-- 具体 Entry 类型
-- Session 读写和分支操作
+- `@opspilot/domain` Session
+- FileSystemSessionStore
+- JSONL create / load / append
+- Session 读写、分支和 compaction invariants
 
 ## 4. Core Runtime Packages
 
@@ -116,7 +117,7 @@ API runtime 当前只保留能够构建通用 API 模块的组合根，不绑定
 
 ## 6. Persistence Direction
 
-当前 Application 不包含 Session 存储实现。未来 Session 消息树使用 JSONL / filesystem；本次不创建数据库表，也不实现 JSONL Store 或 `SessionManager`。
+当前 Application 不创建数据库表。Session 消息树使用 `SessionStore` 抽象和 JSONL / filesystem 实现；后续可以在不修改 Domain Session 的前提下加入 PostgreSQL repository。
 
 ## 7. Workspace Layout
 
@@ -126,11 +127,13 @@ agent-service/
 │   ├── api/
 │   └── api-runtime/
 ├── packages/
+│   ├── domain/
+│   │   └── src/session/
 │   ├── application/
 │   │   └── src/
 │   │       ├── conversations/
-│   │       │   ├── ports/
-│   │       │   └── sessions/
+│   │       ├── session/
+│   │       └── session-store/
 │   │       └── index.ts
 │   ├── agent-runtime/
 │   ├── model-gateway/
@@ -152,4 +155,4 @@ pnpm test
 pnpm build
 ```
 
-本次改动不改变四个核心 package 的实现或公开契约。
+本次改动不改变 Agent Runtime、Model Gateway、Tool Gateway 和 API 的业务行为或公开契约；新增的 Session Domain 与 Application persistence boundary 只服务于 Session 内部重构。

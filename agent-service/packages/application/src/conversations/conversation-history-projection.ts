@@ -1,6 +1,5 @@
 import type { AgentMessage } from '@opspilot/agent-runtime';
-
-import type { SessionEntry } from '../session/session-types.js';
+import type { SessionEntry } from '@opspilot/domain';
 
 /** A UI-safe message item projected from one persisted session message entry. */
 export interface ConversationHistoryMessageItem {
@@ -34,7 +33,7 @@ export interface ConversationHistoryProjection {
 /**
  * Builds the user-visible history projection from an already selected session branch.
  *
- * The caller must obtain entries with SessionManager.getBranch(). This projection is
+ * The caller must obtain entries with Session.getBranch(). This projection is
  * intentionally independent from buildSessionContext(), so compaction never removes
  * durable messages from the history shown in the Web UI.
  */

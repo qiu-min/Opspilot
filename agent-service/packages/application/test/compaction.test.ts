@@ -12,7 +12,7 @@ import {
   buildSessionMessageProjection,
   DefaultCompactionService,
   prepareCompaction,
-  SessionManager,
+  Session,
   type CompactionSettings,
 } from '../src/index.js';
 
@@ -77,7 +77,7 @@ function createCompletionGateway(
 
 describe('Compaction preparation and service', () => {
   it('uses one projection for plain, latest-compacted, repeated, and branched history', () => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
     const first = session.appendMessage(userMessage('A'));
     const kept = session.appendMessage(assistantMessage([{ type: 'text', text: 'B' }]));
     session.appendCompaction('summary one', kept.id, 10);
@@ -115,7 +115,7 @@ describe('Compaction preparation and service', () => {
   });
 
   it('does not prepare compaction when the history is shorter than keepRecentTokens', () => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
     session.appendMessage(userMessage('A'));
     session.appendMessage(assistantMessage([{ type: 'text', text: 'B' }]));
 
@@ -128,7 +128,7 @@ describe('Compaction preparation and service', () => {
   });
 
   it('chooses an assistant cut point instead of starting with a tool result', () => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
     session.appendMessage(userMessage('A'));
     const assistant = session.appendMessage(
       assistantMessage([], {
@@ -154,7 +154,7 @@ describe('Compaction preparation and service', () => {
   });
 
   it('includes the previous summary without re-expanding compacted history', () => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
     session.appendMessage(userMessage('A'));
     const kept = session.appendMessage(assistantMessage([{ type: 'text', text: 'B' }]));
     session.appendCompaction('summary one', kept.id, 10);
@@ -177,7 +177,7 @@ describe('Compaction preparation and service', () => {
   });
 
   it('calls ModelGateway.complete with supplied messages and returns only the summary', async () => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
     session.appendMessage(userMessage('user goal'));
     session.appendMessage({
       ...assistantMessage([
@@ -223,7 +223,7 @@ describe('Compaction preparation and service', () => {
     ['aborted', 'aborted', []],
     ['empty summary', 'stop', []],
   ] as const)('rejects a %s summary response', async (_label, finishReason, content) => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
     session.appendMessage(userMessage('old'));
     session.appendMessage(assistantMessage([{ type: 'text', text: 'recent' }]));
     const gateway = createCompletionGateway(assistantMessage(content, { finishReason }));
@@ -236,8 +236,8 @@ describe('Compaction preparation and service', () => {
     ).rejects.toThrow('Compaction');
   });
 
-  it('does not mutate the SessionManager while generating a summary', async () => {
-    const session = SessionManager.inMemory();
+  it('does not mutate the Session while generating a summary', async () => {
+    const session = Session.create();
     session.appendMessage(userMessage('old'));
     session.appendMessage(assistantMessage([{ type: 'text', text: 'recent' }]));
     const before = session.getEntries();

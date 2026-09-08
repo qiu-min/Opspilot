@@ -9,7 +9,7 @@ import {
   estimateContextTokens,
   estimateSessionContextTokens,
   estimateTokens,
-  SessionManager,
+  Session,
   shouldCompact,
 } from '../src/index.js';
 
@@ -188,7 +188,7 @@ describe('Context Accounting', () => {
 
   describe('estimateSessionContextTokens', () => {
     it('preserves the existing accounting behavior when there is no compaction', () => {
-      const session = SessionManager.inMemory();
+      const session = Session.create();
       session.appendMessage(userMessage('A'));
       const assistant = session.appendMessage(
         assistantMessage([{ type: 'text', text: 'B' }], {
@@ -204,7 +204,7 @@ describe('Context Accounting', () => {
     });
 
     it('falls back to the projected message estimate when usage predates compaction', () => {
-      const session = SessionManager.inMemory();
+      const session = Session.create();
       session.appendMessage(userMessage('old history'));
       const oldAssistant = session.appendMessage(
         assistantMessage([{ type: 'text', text: 'old answer' }], {
@@ -232,7 +232,7 @@ describe('Context Accounting', () => {
     });
 
     it('uses a new assistant usage reported after compaction', () => {
-      const session = SessionManager.inMemory();
+      const session = Session.create();
       const kept = session.appendMessage(userMessage('kept input'));
       session.appendCompaction('summary', kept.id, 12);
       const recentAssistant = session.appendMessage(
@@ -243,7 +243,9 @@ describe('Context Accounting', () => {
       );
       const projection = buildSessionMessageProjection(session.getBranch());
       const recentIndex = projection.messages.findIndex(
-        (item) => item.entryIndex === session.getEntries().findIndex((entry) => entry.id === recentAssistant.id),
+        (item) =>
+          item.entryIndex ===
+          session.getEntries().findIndex((entry) => entry.id === recentAssistant.id),
       );
 
       expect(estimateSessionContextTokens(session.getBranch())).toEqual({

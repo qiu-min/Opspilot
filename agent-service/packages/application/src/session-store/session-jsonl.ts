@@ -1,18 +1,13 @@
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { AgentThinkingLevel } from '@opspilot/agent-runtime';
-import type {
-  CompactionEntry,
-  ModelChangeEntry,
-  SessionEntry,
-  SessionFileEntry,
-  SessionHeader,
-  SessionMessageEntry,
-  ThinkingLevelChangeEntry,
-} from './session-types.js';
+import { isAgentThinkingLevel, type SessionEntry, type SessionHeader } from '@opspilot/domain';
 
+/** Persistence representation written as one JSON object per line. */
+export type SessionFileEntry = SessionHeader | SessionEntry;
+
+/** Errors raised by the JSONL persistence adapter. */
 export class SessionJsonlError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
+  public constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = 'SessionJsonlError';
   }
@@ -23,22 +18,11 @@ export interface LoadedSessionFile {
   readonly entries: SessionEntry[];
 }
 
-const agentThinkingLevels: readonly AgentThinkingLevel[] = [
-  'off',
-  'minimal',
-  'low',
-  'medium',
-  'high',
-];
-
-export function isAgentThinkingLevel(value: unknown): value is AgentThinkingLevel {
-  return typeof value === 'string' && agentThinkingLevels.includes(value as AgentThinkingLevel);
-}
-
 export function serializeSessionRecord(record: SessionFileEntry): string {
   return `${JSON.stringify(record)}\n`;
 }
 
+/** Creates the JSONL file and writes its header exactly once. */
 export function createSessionFile(filePath: string, header: SessionHeader): void {
   try {
     mkdirSync(dirname(filePath), { recursive: true });
@@ -48,6 +32,7 @@ export function createSessionFile(filePath: string, header: SessionHeader): void
   }
 }
 
+/** Appends one already domain-validated entry without rewriting the history. */
 export function appendSessionEntry(filePath: string, entry: SessionEntry): void {
   try {
     appendFileSync(filePath, serializeSessionRecord(entry), { encoding: 'utf8' });
@@ -56,6 +41,7 @@ export function appendSessionEntry(filePath: string, entry: SessionEntry): void 
   }
 }
 
+/** Parses JSONL syntax and persistence fields; Session.restore owns tree invariants. */
 export function parseSessionJsonl(content: string): LoadedSessionFile {
   const lines = content.split(/\r?\n/);
   if (lines.at(-1) === '') lines.pop();
@@ -83,6 +69,7 @@ export function parseSessionJsonl(content: string): LoadedSessionFile {
   return { header, entries };
 }
 
+/** Reads and parses one JSONL session file. */
 export function loadSessionFile(filePath: string): LoadedSessionFile {
   let content: string;
   try {
@@ -144,21 +131,21 @@ function parseEntry(value: unknown, lineNumber: number): SessionEntry {
           `Message entry ${value.id} has an invalid message (line ${lineNumber}).`,
         );
       }
-      return value as unknown as SessionMessageEntry;
+      return value as unknown as SessionEntry;
     case 'model_change':
       if (!isNonEmptyString(value.provider) || !isNonEmptyString(value.modelId)) {
         throw new SessionJsonlError(
           `Model change entry ${value.id} is incomplete (line ${lineNumber}).`,
         );
       }
-      return value as unknown as ModelChangeEntry;
+      return value as unknown as SessionEntry;
     case 'thinking_level_change':
       if (!isAgentThinkingLevel(value.thinkingLevel)) {
         throw new SessionJsonlError(
           `Thinking level entry ${value.id} has an invalid thinkingLevel (line ${lineNumber}).`,
         );
       }
-      return value as unknown as ThinkingLevelChangeEntry;
+      return value as unknown as SessionEntry;
     case 'compaction':
       if (!isNonEmptyString(value.summary)) {
         throw new SessionJsonlError(
@@ -179,78 +166,34 @@ function parseEntry(value: unknown, lineNumber: number): SessionEntry {
           `Compaction entry ${value.id} has an invalid tokensBefore (line ${lineNumber}).`,
         );
       }
-      return value as unknown as CompactionEntry;
+      return value as unknown as SessionEntry;
     default:
       throw new SessionJsonlError(`Unsupported session entry type: ${value.type}.`);
   }
 }
 
+/** Validates ordering constraints that belong to the append-only file format. */
 function validateAppendOnlyOrder(entries: readonly SessionEntry[]): void {
   const seenIds = new Set<string>();
-  const entriesById = new Map<string, SessionEntry>();
-
   for (const entry of entries) {
     if (seenIds.has(entry.id)) {
+      throw new SessionJsonlError(`Duplicate session entry id: ${entry.id}.`);
+    }
+    if (seenIds.size === 0 && entry.parentId !== null) {
+      throw new SessionJsonlError(`First session entry must have parentId=null: ${entry.id}.`);
+    }
+    if (seenIds.size > 0 && entry.parentId === null) {
       throw new SessionJsonlError(
-        `Duplicate session entry id: ${entry.id} (parentId=${String(entry.parentId)}).`,
+        `Session entry ${entry.id} has parentId=null after the first entry; only the first SessionEntry may have parentId=null.`,
       );
     }
-
-    if (entry.parentId === null) {
-      if (seenIds.size > 0) {
-        throw new SessionJsonlError(
-          `Session entry ${entry.id} has parentId=null after the first entry; only the first SessionEntry may have parentId=null.`,
-        );
-      }
-    } else if (!seenIds.has(entry.parentId)) {
+    if (entry.parentId !== null && !seenIds.has(entry.parentId)) {
       throw new SessionJsonlError(
         `Session entry ${entry.id} references a parent that has not appeared yet: ${entry.parentId}.`,
       );
     }
-
-    if (entry.type === 'compaction') {
-      const firstKeptEntry = entriesById.get(entry.firstKeptEntryId);
-      if (firstKeptEntry === undefined) {
-        throw new SessionJsonlError(
-          `Compaction entry ${entry.id} references a firstKeptEntryId that has not appeared yet: ${entry.firstKeptEntryId}.`,
-        );
-      }
-      if (firstKeptEntry.type === 'compaction') {
-        throw new SessionJsonlError(
-          `Compaction entry ${entry.id} cannot use another compaction as firstKeptEntryId: ${entry.firstKeptEntryId}.`,
-        );
-      }
-      if (!isEntryOnBranch(entry.firstKeptEntryId, entry.parentId, entriesById)) {
-        throw new SessionJsonlError(
-          `Compaction entry ${entry.id} has a firstKeptEntryId outside its active branch: ${entry.firstKeptEntryId}.`,
-        );
-      }
-    }
-
     seenIds.add(entry.id);
-    entriesById.set(entry.id, entry);
   }
-}
-
-function isEntryOnBranch(
-  entryId: string,
-  branchHeadId: string | null,
-  entriesById: ReadonlyMap<string, SessionEntry>,
-): boolean {
-  const visited = new Set<string>();
-  let currentId = branchHeadId;
-
-  while (currentId !== null) {
-    if (currentId === entryId) return true;
-    if (visited.has(currentId)) return false;
-    visited.add(currentId);
-
-    const current = entriesById.get(currentId);
-    if (current === undefined) return false;
-    currentId = current.parentId;
-  }
-
-  return false;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

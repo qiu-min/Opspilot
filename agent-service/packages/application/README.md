@@ -4,13 +4,14 @@ OpsPilot Agent Service 的应用层。
 
 `application` 位于业务入口与通用 Agent Runtime 之间，负责围绕 Session 组织 Agent 的实际使用流程，并协调运行时、会话状态、上下文、工具与持久化能力。
 
-当前已提供最小 `AgentSession` 闭环：从 `SessionManager` 恢复消息、模型和 thinking level，组合 `Agent` 与 `ModelGateway`，并通过 Runtime 的 `message_end` 事件持久化后续 finalized message。
+当前已提供最小 `AgentSession` 闭环：从 Domain `Session` 恢复消息、模型和 thinking level，组合 `Agent` 与 `ModelGateway`，并通过 Application 的 `SessionStore` 在 Runtime `message_end` 之后 append finalized message。
 
 ## 职责
 
 本包主要负责：
 
 - 创建、恢复和管理 Agent Session
+- 通过 `SessionStore` 协调 Domain Session mutation 与持久化
 - 接收用户输入并驱动一次 Agent Run
 - 将 Session 上下文恢复到 Agent Runtime
 - 通过 `ContextManager` 决定单次模型调用看到的消息
@@ -25,10 +26,10 @@ OpsPilot Agent Service 的应用层。
 
 ## Context 边界
 
-`SessionManager` 保存完整会话事实；`ContextManager` 只决定本次模型调用使用哪些 `AgentMessage`，不依赖或修改 `SessionManager`。`createAgentSession` 将 ContextManager 接入 Agent Runtime 的 `transformContext` hook，因此经过 ContextManager 的消息只影响当前模型调用，不影响后续 Session 持久化。
+Domain `Session` 保存完整会话事实与树 invariant；Application 的 `buildSessionContext(session)` 将 durable state 投影成 Agent Runtime 输入。`ContextManager` 只决定本次模型调用使用哪些 `AgentMessage`，不依赖或修改 Domain Session。`createAgentSession` 将 ContextManager 接入 Agent Runtime 的 `transformContext` hook，因此经过 ContextManager 的消息只影响当前模型调用，不影响后续 Session 持久化。
 
 Web 历史恢复使用独立的 `buildConversationHistoryProjection()`：它读取
-`SessionManager.getBranch()` 的完整 active branch，保留原始 entry 顺序和 id，并输出 UI-safe 的 user / assistant 可见 text 以及 tool execution 的 callId、name、status。它不复用会受 Compaction 影响的 `buildSessionContext()`，也不会把 AgentMessage 的 thinking、provider、model metadata 或 tool raw output 暴露到 UI。
+`Session.getBranch()` 的完整 active branch，保留原始 entry 顺序和 id，并输出 UI-safe 的 user / assistant 可见 text 以及 tool execution 的 callId、name、status。它不复用会受 Compaction 影响的 `buildSessionContext()`，也不会把 AgentMessage 的 thinking、provider、model metadata 或 tool raw output 暴露到 UI。
 
 Phase 1 的默认 `DefaultContextManager` 不裁剪消息，只返回输入消息的副本。Context Accounting 仅负责测量上下文用量与判断阈值。
 
@@ -42,16 +43,20 @@ Phase 3 支持正常 Agent Run 完成后的自动 Compaction：生成摘要并�
 API / Transport
       │
       ▼
- application
+application
       │
-      ├── Session
+      ├── @opspilot/domain Session
+      ├── SessionStore / JSONL adapter
       │
       ├── Agent configuration
       │
       └── Runtime orchestration
       │
       ▼
- agent-runtime
+@opspilot/domain
+      │
+      ▼
+agent-runtime
       │
       ├── model-gateway
       └── AgentTool

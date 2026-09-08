@@ -3,7 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AgentMessage } from '@opspilot/agent-runtime';
-import { createCompactionSummaryMessage, SessionManager } from '../src/index.js';
+import type { SessionEntry } from '@opspilot/domain';
+import {
+  appendSessionEntry,
+  buildSessionContext,
+  createSessionFile,
+  createCompactionSummaryMessage,
+  loadSessionFile,
+  Session,
+} from '../src/index.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -34,9 +42,20 @@ function assistantMessage(text: string): AgentMessage {
   };
 }
 
-describe('SessionManager append and tree behavior', () => {
+function restoreSession(filePath: string): Session {
+  const loaded = loadSessionFile(filePath);
+  return Session.restore(loaded.header, loaded.entries);
+}
+
+function appendPersisted<T extends SessionEntry>(filePath: string, append: () => T): T {
+  const entry = append();
+  appendSessionEntry(filePath, entry);
+  return entry;
+}
+
+describe('Session append and tree behavior', () => {
   it('appends entries to the current leaf and protects the entry list', () => {
-    const session = SessionManager.inMemory({
+    const session = Session.create({
       id: 'session-1',
       timestamp: '2026-01-01T00:00:00.000Z',
     });
@@ -60,7 +79,7 @@ describe('SessionManager append and tree behavior', () => {
   });
 
   it('branches without changing old entries and appends from the new leaf', () => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
     const a = session.appendMessage(userMessage('a'));
     const b = session.appendMessage(assistantMessage('b'));
     const c = session.appendMessage(userMessage('c'));
@@ -76,7 +95,7 @@ describe('SessionManager append and tree behavior', () => {
   });
 
   it('builds context from the current branch and applies branch-local settings', () => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
     const root = session.appendMessage(userMessage('root'));
     session.appendModelChange('provider-a', 'model-a');
     const branchPoint = session.appendThinkingLevelChange('low');
@@ -84,17 +103,17 @@ describe('SessionManager append and tree behavior', () => {
     session.appendModelChange('provider-main', 'model-main');
     session.appendThinkingLevelChange('high');
 
-    expect(session.buildSessionContext().model).toEqual({
+    expect(buildSessionContext(session).model).toEqual({
       provider: 'provider-main',
       modelId: 'model-main',
     });
-    expect(session.buildSessionContext().thinkingLevel).toBe('high');
+    expect(buildSessionContext(session).thinkingLevel).toBe('high');
 
     session.branch(branchPoint.id);
     session.appendMessage(assistantMessage('branch'));
     session.appendModelChange('provider-branch', 'model-branch');
 
-    const context = session.buildSessionContext();
+    const context = buildSessionContext(session);
     expect(context.messages.map((message) => (message as { role: string }).role)).toEqual([
       'user',
       'assistant',
@@ -110,7 +129,7 @@ describe('SessionManager append and tree behavior', () => {
   });
 
   it('projects the latest compaction summary and keeps the original message entries', () => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
     const first = session.appendMessage(userMessage('A'));
     const second = session.appendMessage(assistantMessage('B'));
     const third = session.appendMessage(userMessage('C'));
@@ -120,7 +139,7 @@ describe('SessionManager append and tree behavior', () => {
     const firstCompaction = session.appendCompaction('summary one', fifth.id, 42);
 
     expect(firstCompaction.parentId).toBe(sixth.id);
-    expect(session.buildSessionContext().messages).toEqual([
+    expect(buildSessionContext(session).messages).toEqual([
       createCompactionSummaryMessage('summary one'),
       fifth.message,
       sixth.message,
@@ -137,7 +156,7 @@ describe('SessionManager append and tree behavior', () => {
 
     const seventh = session.appendMessage(userMessage('G'));
     const eighth = session.appendMessage(assistantMessage('H'));
-    expect(session.buildSessionContext().messages).toEqual([
+    expect(buildSessionContext(session).messages).toEqual([
       createCompactionSummaryMessage('summary one'),
       fifth.message,
       sixth.message,
@@ -146,7 +165,7 @@ describe('SessionManager append and tree behavior', () => {
     ]);
 
     const secondCompaction = session.appendCompaction('summary two', seventh.id, 84);
-    expect(session.buildSessionContext().messages).toEqual([
+    expect(buildSessionContext(session).messages).toEqual([
       createCompactionSummaryMessage('summary two'),
       seventh.message,
       eighth.message,
@@ -160,7 +179,7 @@ describe('SessionManager append and tree behavior', () => {
   });
 
   it('does not apply a compaction from a different branch', () => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
     const first = session.appendMessage(userMessage('A'));
     const second = session.appendMessage(assistantMessage('B'));
     const third = session.appendMessage(userMessage('C'));
@@ -168,12 +187,16 @@ describe('SessionManager append and tree behavior', () => {
 
     session.branch(third.id);
 
-    expect(session.buildSessionContext().messages).toEqual([first.message, second.message, third.message]);
+    expect(buildSessionContext(session).messages).toEqual([
+      first.message,
+      second.message,
+      third.message,
+    ]);
     expect(compaction.parentId).toBe(third.id);
   });
 
   it('rejects invalid compaction references and values without appending an entry', () => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
     const message = session.appendMessage(userMessage('A'));
     const entryCount = session.getEntries().length;
 
@@ -190,17 +213,20 @@ describe('SessionManager append and tree behavior', () => {
   });
 });
 
-describe('SessionManager JSONL persistence', () => {
+describe('Session JSONL persistence', () => {
   it('creates, appends, loads, and resumes a session without rewriting history', () => {
     const directory = temporaryDirectory();
     const filePath = join(directory, 'session.jsonl');
-    const session = SessionManager.createPersisted(filePath, {
+    const session = Session.create({
       id: 'session-persisted',
       timestamp: '2026-01-01T00:00:00.000Z',
     });
-    const first = session.appendMessage(userMessage('first'));
-    const second = session.appendMessage(assistantMessage('second'));
-    session.appendModelChange('provider', 'model');
+    createSessionFile(filePath, session.getHeader());
+    const first = appendPersisted(filePath, () => session.appendMessage(userMessage('first')));
+    const second = appendPersisted(filePath, () =>
+      session.appendMessage(assistantMessage('second')),
+    );
+    appendPersisted(filePath, () => session.appendModelChange('provider', 'model'));
 
     const initialLines = readFileSync(filePath, 'utf8').trim().split('\n');
     expect(initialLines).toHaveLength(4);
@@ -210,7 +236,7 @@ describe('SessionManager JSONL persistence', () => {
       id: 'session-persisted',
     });
 
-    const loaded = SessionManager.load(filePath);
+    const loaded = restoreSession(filePath);
     expect(loaded.getHeader()).toEqual(session.getHeader());
     expect(loaded.getEntries()).toEqual(session.getEntries());
     expect(loaded.getLeafId()).toBe(session.getLeafId());
@@ -219,11 +245,11 @@ describe('SessionManager JSONL persistence', () => {
       second.id,
       session.getLeafId(),
     ]);
-    expect(loaded.buildSessionContext().model).toEqual({ provider: 'provider', modelId: 'model' });
+    expect(buildSessionContext(loaded).model).toEqual({ provider: 'provider', modelId: 'model' });
 
-    const resumed = loaded.appendMessage(userMessage('resumed'));
+    const resumed = appendPersisted(filePath, () => loaded.appendMessage(userMessage('resumed')));
     expect(resumed.parentId).toBe(session.getLeafId());
-    const reloaded = SessionManager.load(filePath);
+    const reloaded = restoreSession(filePath);
     expect(reloaded.getLeafId()).toBe(resumed.id);
     expect(reloaded.getEntry(resumed.id)?.parentId).toBe(session.getLeafId());
   });
@@ -231,19 +257,22 @@ describe('SessionManager JSONL persistence', () => {
   it('serializes and reloads CompactionEntry without removing original messages', () => {
     const directory = temporaryDirectory();
     const filePath = join(directory, 'session-with-compaction.jsonl');
-    const session = SessionManager.createPersisted(filePath, {
+    const session = Session.create({
       id: 'session-compaction',
       timestamp: '2026-01-01T00:00:00.000Z',
     });
-    const first = session.appendMessage(userMessage('old'));
-    const kept = session.appendMessage(assistantMessage('kept'));
-    const compaction = session.appendCompaction('summary', kept.id, 123);
+    createSessionFile(filePath, session.getHeader());
+    const first = appendPersisted(filePath, () => session.appendMessage(userMessage('old')));
+    const kept = appendPersisted(filePath, () => session.appendMessage(assistantMessage('kept')));
+    const compaction = appendPersisted(filePath, () =>
+      session.appendCompaction('summary', kept.id, 123),
+    );
 
-    const loaded = SessionManager.load(filePath);
+    const loaded = restoreSession(filePath);
 
     expect(loaded.getEntries()).toEqual([first, kept, compaction]);
     expect(loaded.getLeafId()).toBe(compaction.id);
-    expect(loaded.buildSessionContext().messages).toEqual([
+    expect(buildSessionContext(loaded).messages).toEqual([
       createCompactionSummaryMessage('summary'),
       kept.message,
     ]);
@@ -251,11 +280,11 @@ describe('SessionManager JSONL persistence', () => {
   });
 });
 
-describe('SessionManager invalid JSONL files', () => {
+describe('Session invalid JSONL files', () => {
   it('rejects missing, empty, malformed, unsupported, duplicate, and invalid-order files', () => {
     const directory = temporaryDirectory();
     const missing = join(directory, 'missing.jsonl');
-    expect(() => SessionManager.load(missing)).toThrow('Session file does not exist');
+    expect(() => restoreSession(missing)).toThrow('Session file does not exist');
 
     const cases: Array<[string, string, string]> = [
       ['empty.jsonl', '', 'Session file is empty'],
@@ -398,7 +427,7 @@ describe('SessionManager invalid JSONL files', () => {
     for (const [name, content, expectedError] of cases) {
       const filePath = join(directory, name);
       writeFileSync(filePath, content, 'utf8');
-      expect(() => SessionManager.load(filePath), name).toThrow(expectedError);
+      expect(() => restoreSession(filePath), name).toThrow(expectedError);
     }
   });
 
@@ -438,7 +467,7 @@ describe('SessionManager invalid JSONL files', () => {
         .join('\n') + '\n',
       'utf8',
     );
-    expect(() => SessionManager.load(forwardParentPath)).toThrow(
+    expect(() => restoreSession(forwardParentPath)).toThrow(
       'Session entry C references a parent that has not appeared yet: D',
     );
 
@@ -460,7 +489,7 @@ describe('SessionManager invalid JSONL files', () => {
         .join('\n') + '\n',
       'utf8',
     );
-    expect(() => SessionManager.load(secondRootPath)).toThrow(
+    expect(() => restoreSession(secondRootPath)).toThrow(
       'Session entry B has parentId=null after the first entry',
     );
   });
@@ -499,9 +528,13 @@ describe('SessionManager invalid JSONL files', () => {
         message: userMessage('D'),
       },
     ];
-    writeFileSync(filePath, records.map((record) => JSON.stringify(record)).join('\n') + '\n', 'utf8');
+    writeFileSync(
+      filePath,
+      records.map((record) => JSON.stringify(record)).join('\n') + '\n',
+      'utf8',
+    );
 
-    const session = SessionManager.load(filePath);
+    const session = restoreSession(filePath);
     expect(session.getLeafId()).toBe('D');
     expect(session.getBranch().map((entry) => entry.id)).toEqual(['A', 'B', 'D']);
     expect(session.getEntries().map((entry) => entry.id)).toEqual(['A', 'B', 'C', 'D']);

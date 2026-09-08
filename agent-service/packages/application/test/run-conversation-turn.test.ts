@@ -16,12 +16,13 @@ import { createModelEventStream } from '@opspilot/model-gateway';
 
 import {
   AgentSession,
+  buildSessionContext,
   createCompactionSummaryMessage,
   type ContextManager,
   FileSystemSessionStore,
   RunConversationTurn,
   type RunConversationTurnEvent,
-  SessionManager,
+  Session,
   type SessionStore,
   type ToolContext,
   type ToolDefinition,
@@ -75,6 +76,16 @@ function createStore(): { directory: string; store: FileSystemSessionStore } {
   const directory = mkdtempSync(join(tmpdir(), 'opspilot-conversation-'));
   directories.push(directory);
   return { directory, store: new FileSystemSessionStore(directory) };
+}
+
+function appendPersisted<T extends Parameters<FileSystemSessionStore['appendEntry']>[1]>(
+  store: FileSystemSessionStore,
+  session: Session,
+  append: () => T,
+): T {
+  const entry = append();
+  store.appendEntry(session.getHeader().id, entry);
+  return entry;
 }
 
 function userMessage(text: string): AgentMessage {
@@ -192,8 +203,8 @@ function createGateway(
   };
 }
 
-function messageEntries(sessionManager: SessionManager): AgentMessage[] {
-  return sessionManager
+function messageEntries(session: Session): AgentMessage[] {
+  return session
     .getEntries()
     .filter((entry) => entry.type === 'message')
     .map((entry) => entry.message);
@@ -280,6 +291,9 @@ describe('RunConversationTurn', () => {
       },
       load: () => {
         throw new Error('load should not be called');
+      },
+      appendEntry: () => {
+        throw new Error('append should not be called');
       },
     };
     const runner = new RunConversationTurn({
@@ -446,9 +460,11 @@ describe('RunConversationTurn', () => {
       ...assistantMessage('R', compactingModel),
       usage: { inputTokens: 90, outputTokens: 10, totalTokens: 100 },
     };
-    existing.appendModelChange(compactingModel.provider, compactingModel.id);
-    existing.appendMessage(oldInput);
-    existing.appendMessage(oldResponse);
+    appendPersisted(store, existing, () =>
+      existing.appendModelChange(compactingModel.provider, compactingModel.id),
+    );
+    appendPersisted(store, existing, () => existing.appendMessage(oldInput));
+    appendPersisted(store, existing, () => existing.appendMessage(oldResponse));
 
     const newInput = userMessage('N');
     const response = assistantMessage('D', compactingModel);
@@ -482,7 +498,7 @@ describe('RunConversationTurn', () => {
     const loaded = store.load(existing.getHeader().id);
     expect(loaded.getEntries().filter((entry) => entry.type === 'compaction')).toHaveLength(1);
     expect(messageEntries(loaded)).toEqual([oldInput, oldResponse, newInput, response]);
-    expect(loaded.buildSessionContext().messages).toEqual([
+    expect(buildSessionContext(loaded).messages).toEqual([
       createCompactionSummaryMessage('S'),
       oldResponse,
       newInput,
@@ -499,9 +515,11 @@ describe('RunConversationTurn', () => {
       ...assistantMessage('R', compactingModel),
       usage: { inputTokens: 90, outputTokens: 10, totalTokens: 100 },
     };
-    existing.appendModelChange(compactingModel.provider, compactingModel.id);
-    existing.appendMessage(oldInput);
-    existing.appendMessage(oldResponse);
+    appendPersisted(store, existing, () =>
+      existing.appendModelChange(compactingModel.provider, compactingModel.id),
+    );
+    appendPersisted(store, existing, () => existing.appendMessage(oldInput));
+    appendPersisted(store, existing, () => existing.appendMessage(oldResponse));
 
     const oversizedInput = userMessage('x'.repeat(200));
     const abortedResponse: AssistantMessage = {
@@ -918,7 +936,7 @@ describe('RunConversationTurn', () => {
   it('lets createAgentSession restore the model for an existing session', async () => {
     const { store } = createStore();
     const existing = store.create();
-    existing.appendModelChange(model.provider, model.id);
+    appendPersisted(store, existing, () => existing.appendModelChange(model.provider, model.id));
     const gateway = createGateway(
       [assistantStream(assistantMessage('restored', model), model)],
       [model, alternateModel],
@@ -955,7 +973,7 @@ describe('RunConversationTurn', () => {
     const loaded = store.load(result.sessionId);
 
     expect(gateway.requestedOptions[0]?.reasoning).toBe('low');
-    expect(loaded.buildSessionContext().thinkingLevel).toBe('low');
+    expect(buildSessionContext(loaded).thinkingLevel).toBe('low');
   });
 
   it('disposes AgentSession after a successful prompt', async () => {
@@ -975,18 +993,17 @@ describe('RunConversationTurn', () => {
 
   it('disposes AgentSession when prompt fails', async () => {
     const { store: fileStore } = createStore();
+    let createdSession: Session | undefined;
     const sessionStore: SessionStore = {
       create: () => {
-        const sessionManager = fileStore.create();
-        const appendMessage = sessionManager.appendMessage.bind(sessionManager);
-        vi.spyOn(sessionManager, 'appendMessage')
-          .mockImplementationOnce(appendMessage)
-          .mockImplementation(() => {
-            throw new Error('prompt persistence failed');
-          });
-        return sessionManager;
+        createdSession = fileStore.create();
+        return createdSession;
       },
       load: (sessionId) => fileStore.load(sessionId),
+      appendEntry: (sessionId, entry) => {
+        if (entry.type === 'message') throw new Error('prompt persistence failed');
+        fileStore.appendEntry(sessionId, entry);
+      },
     };
     const dispose = vi.spyOn(AgentSession.prototype, 'dispose');
     const gateway = createGateway([assistantStream(assistantMessage('will fail'), model)], [model]);
@@ -1001,6 +1018,8 @@ describe('RunConversationTurn', () => {
       'prompt persistence failed',
     );
     expect(dispose).toHaveBeenCalledOnce();
+    expect(createdSession).toBeDefined();
+    expect(messageEntries(fileStore.load(createdSession!.getHeader().id))).toEqual([]);
   });
 
   it('unsubscribes before disposing when the event listener fails', async () => {
@@ -1055,10 +1074,11 @@ describe('RunConversationTurn', () => {
     const sessionStore: SessionStore = {
       create: () => store.create(),
       load: (sessionId) => {
-        const sessionManager = store.load(sessionId);
-        loadMessageCounts.push(messageEntries(sessionManager).length);
-        return sessionManager;
+        const session = store.load(sessionId);
+        loadMessageCounts.push(messageEntries(session).length);
+        return session;
       },
+      appendEntry: (sessionId, entry) => store.appendEntry(sessionId, entry),
     };
     const firstStarted = createDeferred<void>();
     const releaseFirst = createDeferred<void>();
@@ -1112,9 +1132,13 @@ describe('RunConversationTurn', () => {
   it('allows turns for different existing sessions to run concurrently', async () => {
     const { store } = createStore();
     const firstSession = store.create();
-    firstSession.appendModelChange(model.provider, model.id);
+    appendPersisted(store, firstSession, () =>
+      firstSession.appendModelChange(model.provider, model.id),
+    );
     const secondSession = store.create();
-    secondSession.appendModelChange(model.provider, model.id);
+    appendPersisted(store, secondSession, () =>
+      secondSession.appendModelChange(model.provider, model.id),
+    );
     const firstStarted = createDeferred<void>();
     const secondStarted = createDeferred<void>();
     const firstRelease = createDeferred<void>();

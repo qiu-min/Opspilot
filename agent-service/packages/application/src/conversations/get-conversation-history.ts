@@ -14,10 +14,7 @@ export class GetConversationHistory {
 
   /** Loads an existing session without creating one and projects its UI-safe history. */
   public execute(sessionId: string): ConversationHistoryProjection {
-    const sessionManager = this.sessionStore.load(sessionId);
-    return buildConversationHistoryProjection(
-      sessionManager.getBranch(),
-      sessionManager.getLeafId(),
-    );
+    const session = this.sessionStore.load(sessionId);
+    return buildConversationHistoryProjection(session.getBranch(), session.getLeafId());
   }
 }

@@ -1,7 +1,8 @@
-import type { SessionManager } from '../session/session-manager.js';
+import type { Session, SessionEntry } from '@opspilot/domain';
 
-/** Application boundary for creating and loading sessions by session id. */
+/** Application persistence boundary for Session aggregates. */
 export interface SessionStore {
-  create(): SessionManager;
-  load(sessionId: string): SessionManager;
+  create(): Session;
+  load(sessionId: string): Session;
+  appendEntry(sessionId: string, entry: SessionEntry): void;
 }

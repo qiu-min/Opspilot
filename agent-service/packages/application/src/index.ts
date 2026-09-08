@@ -5,3 +5,4 @@ export * from './context/index.js';
 export * from './tools/index.js';
 export * from './conversations/index.js';
 export * from './system-prompt/index.js';
+export * from '@opspilot/domain';

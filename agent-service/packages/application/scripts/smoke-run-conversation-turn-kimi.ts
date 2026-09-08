@@ -13,11 +13,12 @@ import {
 } from '@opspilot/model-gateway';
 
 import {
+  buildSessionContext,
   FileSystemSessionStore,
   RunConversationTurn,
   type RunConversationTurnEvent,
   type RunConversationTurnResult,
-  SessionManager,
+  Session,
 } from '../src/index.js';
 
 const PROVIDER_ID = 'moonshot';
@@ -131,24 +132,24 @@ function findLastAssistant(messages: readonly AgentMessage[]): AssistantMessage 
   });
 }
 
-/** Prints persisted SessionManager facts without dumping the JSONL contents. */
-function logSessionManagerSummary(sessionManager: SessionManager, write: DiagnosticWriter): void {
-  const entries = sessionManager.getEntries();
-  const branchEntries = sessionManager.getBranch();
-  write(`[smoke] persisted header.id=${sessionManager.getHeader().id}`);
+/** Prints persisted Session facts without dumping the JSONL contents. */
+function logSessionSummary(session: Session, write: DiagnosticWriter): void {
+  const entries = session.getEntries();
+  const branchEntries = session.getBranch();
+  write(`[smoke] persisted header.id=${session.getHeader().id}`);
   write(`[smoke] persisted entry count=${entries.length}`);
   write(`[smoke] persisted branch entry count=${branchEntries.length}`);
-  write(`[smoke] persisted leafId=${sessionManager.getLeafId() ?? 'none'}`);
+  write(`[smoke] persisted leafId=${session.getLeafId() ?? 'none'}`);
   write(`[smoke] persisted entry types=${entries.map((entry) => entry.type).join(' -> ')}`);
 }
 
 /** Prints the final context projection and verifies both turns are represented. */
 function logAndValidateFinalContext(
-  sessionManager: SessionManager,
+  session: Session,
   firstPrompt: string,
   secondPrompt: string,
 ): void {
-  const context = sessionManager.buildSessionContext();
+  const context = buildSessionContext(session);
   const userMessages = context.messages.filter((message) => message.role === 'user');
   const assistantMessages = context.messages.filter((message) => message.role === 'assistant');
   const userText = (message: AgentMessage): string =>
@@ -199,9 +200,7 @@ function logWatchdogDiagnostics(
 
   if (knownSessionId === undefined) return;
   try {
-    logSessionManagerSummary(sessionStore.load(knownSessionId), (message) =>
-      console.error(message),
-    );
+    logSessionSummary(sessionStore.load(knownSessionId), (message) => console.error(message));
   } catch (error: unknown) {
     console.error(`[smoke] watchdog reload error=${formatDiagnosticValue(error)}`);
   }
@@ -279,9 +278,7 @@ function logFailure(
     console.error(`[smoke] temp session directory=${tempSessionDirectory}`);
   if (sessionStore !== undefined && knownSessionId !== undefined) {
     try {
-      logSessionManagerSummary(sessionStore.load(knownSessionId), (message) =>
-        console.error(message),
-      );
+      logSessionSummary(sessionStore.load(knownSessionId), (message) => console.error(message));
     } catch (reloadError: unknown) {
       console.error(`[smoke] session reload error=${formatDiagnosticValue(reloadError)}`);
     }
@@ -375,7 +372,7 @@ async function main(): Promise<void> {
     if (!existsSync(sessionFilePath))
       throw new Error(`Expected persisted Session file was not created: ${sessionFilePath}`);
     const firstPersisted = sessionStore.load(firstResult.sessionId);
-    logSessionManagerSummary(firstPersisted, (message) => console.info(message));
+    logSessionSummary(firstPersisted, (message) => console.info(message));
     const firstEntries = firstPersisted.getEntries();
     if (!firstEntries.some((entry) => entry.type === 'model_change'))
       throw new Error('Persisted Session is missing model_change.');
@@ -385,7 +382,7 @@ async function main(): Promise<void> {
       throw new Error('Persisted Session is missing the first user/assistant messages.');
     if (firstPersisted.getLeafId() === null)
       throw new Error('Reloaded first Session did not have a leafId.');
-    const firstContext = firstPersisted.buildSessionContext();
+    const firstContext = buildSessionContext(firstPersisted);
     console.info(`[smoke] first reloaded context.messages.length=${firstContext.messages.length}`);
     console.info(
       `[smoke] first reloaded context.model=${formatDiagnosticValue(firstContext.model)}`,
@@ -442,7 +439,7 @@ async function main(): Promise<void> {
     console.info('[smoke] persisted session reload: success');
     console.info('[smoke] same session id: true');
     console.info(
-      `[smoke] final context message count=${finalPersisted.buildSessionContext().messages.length}`,
+      `[smoke] final context message count=${buildSessionContext(finalPersisted).messages.length}`,
     );
     console.info(`[smoke] first assistant finishReason=${firstAssistant.finishReason}`);
     console.info(`[smoke] second assistant finishReason=${secondAssistant.finishReason}`);

@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
-import { SessionManager } from '../session/session-manager.js';
+import { Session, type SessionEntry } from '@opspilot/domain';
+
+import { appendSessionEntry, createSessionFile, loadSessionFile } from './session-jsonl.js';
 import type { SessionStore } from './session-store.js';
 
 const sessionIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
-/** Stores SessionManager JSONL files under a single filesystem directory. */
+/** Stores Session aggregates as append-only JSONL files under one directory. */
 export class FileSystemSessionStore implements SessionStore {
   private readonly baseDirectory: string;
 
@@ -15,16 +17,18 @@ export class FileSystemSessionStore implements SessionStore {
   }
 
   /** Creates a persisted session whose header id matches its filename. */
-  public create(): SessionManager {
+  public create(): Session {
     const sessionId = randomUUID();
-    return SessionManager.createPersisted(this.getSessionFilePath(sessionId), { id: sessionId });
+    const session = Session.create({ id: sessionId });
+    createSessionFile(this.getSessionFilePath(sessionId), session.getHeader());
+    return session;
   }
 
   /** Loads a persisted session after validating both its id and stored header. */
-  public load(sessionId: string): SessionManager {
+  public load(sessionId: string): Session {
     this.assertValidSessionId(sessionId);
-    const sessionManager = SessionManager.load(this.getSessionFilePath(sessionId));
-    const storedSessionId = sessionManager.getHeader().id;
+    const loaded = loadSessionFile(this.getSessionFilePath(sessionId));
+    const storedSessionId = loaded.header.id;
 
     if (storedSessionId !== sessionId) {
       throw new Error(
@@ -32,7 +36,13 @@ export class FileSystemSessionStore implements SessionStore {
       );
     }
 
-    return sessionManager;
+    return Session.restore(loaded.header, loaded.entries);
+  }
+
+  /** Persists one domain mutation without coupling the domain to JSONL. */
+  public appendEntry(sessionId: string, entry: SessionEntry): void {
+    this.assertValidSessionId(sessionId);
+    appendSessionEntry(this.getSessionFilePath(sessionId), entry);
   }
 
   private getSessionFilePath(sessionId: string): string {

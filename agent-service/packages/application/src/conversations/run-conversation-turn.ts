@@ -73,10 +73,8 @@ export class RunConversationTurn {
     options?: RunConversationTurnExecutionOptions,
   ): Promise<RunConversationTurnResult> {
     const created = input.sessionId === undefined;
-    const sessionManager = created
-      ? this.sessionStore.create()
-      : this.sessionStore.load(input.sessionId);
-    const sessionId = sessionManager.getHeader().id;
+    const session = created ? this.sessionStore.create() : this.sessionStore.load(input.sessionId);
+    const sessionId = session.getHeader().id;
     await options?.onEvent?.({ type: 'session_ready', sessionId, created });
 
     const tools = wrapToolDefinitions(this.toolDefinitions, {
@@ -84,7 +82,8 @@ export class RunConversationTurn {
       ...(input.excelResource === undefined ? {} : { excelResource: input.excelResource }),
     });
     const agentSession = createAgentSession({
-      sessionManager,
+      session,
+      sessionStore: this.sessionStore,
       modelGateway: this.modelGateway,
       model: input.model ?? (input.sessionId === undefined ? this.defaultModel : undefined),
       thinkingLevel: input.thinkingLevel,
@@ -107,7 +106,7 @@ export class RunConversationTurn {
 
       return {
         sessionId,
-        leafId: sessionManager.getLeafId(),
+        leafId: session.getLeafId(),
         messages,
       };
     } finally {

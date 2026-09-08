@@ -13,7 +13,7 @@ import {
   buildSessionMessageProjection,
   type SessionProjectedMessage,
 } from '../session/session-projection.js';
-import type { SessionEntry } from '../session/session-types.js';
+import type { SessionEntry } from '@opspilot/domain';
 
 const COMPACTION_SYSTEM_PROMPT = `You summarize conversation history so another assistant can continue the work.
 Preserve the user's goals, important decisions, constraints, completed work, current state, unfinished work, and facts needed for future turns.

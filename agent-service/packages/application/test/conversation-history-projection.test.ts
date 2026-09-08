@@ -1,7 +1,7 @@
 import type { AgentMessage } from '@opspilot/agent-runtime';
 import { describe, expect, it } from 'vitest';
 
-import { buildConversationHistoryProjection, SessionManager } from '../src/index.js';
+import { buildConversationHistoryProjection, Session } from '../src/index.js';
 
 function userMessage(text: string): AgentMessage {
   return { role: 'user', content: [{ type: 'text', text }] };
@@ -26,7 +26,7 @@ function visibleMessages(items: ReturnType<typeof buildConversationHistoryProjec
 
 describe('buildConversationHistoryProjection', () => {
   it('returns an empty projection for an empty session branch', () => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
 
     expect(buildConversationHistoryProjection(session.getBranch(), session.getLeafId())).toEqual({
       leafId: null,
@@ -35,7 +35,7 @@ describe('buildConversationHistoryProjection', () => {
   });
 
   it('returns ordinary multi-turn user and assistant messages in branch order', () => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
     session.appendMessage(userMessage('user 1'));
     session.appendMessage(assistantMessage('assistant 1'));
     session.appendMessage(userMessage('user 2'));
@@ -52,7 +52,7 @@ describe('buildConversationHistoryProjection', () => {
   });
 
   it('uses the source SessionMessageEntry id as the stable item id', () => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
     const entry = session.appendMessage(userMessage('stable'));
 
     const projection = buildConversationHistoryProjection(session.getBranch());
@@ -61,7 +61,7 @@ describe('buildConversationHistoryProjection', () => {
   });
 
   it('ignores model, thinking-level, and compaction entries', () => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
     const message = session.appendMessage(userMessage('visible'));
     session.appendModelChange('provider', 'model');
     session.appendThinkingLevelChange('low');
@@ -73,7 +73,7 @@ describe('buildConversationHistoryProjection', () => {
   });
 
   it('projects tool messages as UI-safe tool execution items', () => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
     session.appendMessage(userMessage('user'));
     const tool = session.appendMessage({
       role: 'tool',
@@ -99,7 +99,7 @@ describe('buildConversationHistoryProjection', () => {
   });
 
   it('keeps assistant and tool entries in their original order', () => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
     session.appendMessage(userMessage('question'));
     session.appendMessage({
       role: 'assistant',
@@ -141,7 +141,7 @@ describe('buildConversationHistoryProjection', () => {
   });
 
   it('exposes assistant text while excluding thinking content', () => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
     session.appendMessage({
       role: 'assistant',
       api: 'test-api',
@@ -166,7 +166,7 @@ describe('buildConversationHistoryProjection', () => {
   });
 
   it('keeps the complete original history after compaction', () => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
     const oldUser = session.appendMessage(userMessage('old user'));
     const oldAssistant = session.appendMessage(assistantMessage('old assistant'));
     const newUser = session.appendMessage(userMessage('new user'));
@@ -190,7 +190,7 @@ describe('buildConversationHistoryProjection', () => {
   });
 
   it('returns only the active branch when the session has branching history', () => {
-    const session = SessionManager.inMemory();
+    const session = Session.create();
     const a = session.appendMessage(userMessage('A'));
     const b = session.appendMessage(assistantMessage('B'));
     const c = session.appendMessage(assistantMessage('C'));

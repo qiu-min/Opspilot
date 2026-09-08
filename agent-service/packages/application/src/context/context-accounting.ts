@@ -3,7 +3,7 @@ import type { AssistantMessage, TextContent, Usage } from '@opspilot/model-gatew
 
 import type { CompactionSettings } from './compaction-settings.js';
 import { buildSessionMessageProjection } from '../session/session-projection.js';
-import type { SessionEntry } from '../session/session-types.js';
+import type { SessionEntry } from '@opspilot/domain';
 
 const TOKENS_PER_ESTIMATED_CHARACTER = 4;
 
@@ -46,9 +46,7 @@ export function estimateTokens(message: AgentMessage): number {
 }
 
 /** Estimates context tokens without double-counting the history covered by usage. */
-export function estimateContextTokens(
-  messages: readonly AgentMessage[],
-): ContextUsageEstimate {
+export function estimateContextTokens(messages: readonly AgentMessage[]): ContextUsageEstimate {
   const usageInfo = findLastAssistantUsage(messages);
 
   if (usageInfo === undefined) {
@@ -84,7 +82,7 @@ export function estimateSessionContextTokens(
 
   if (projection.latestCompactionIndex === null) {
     return estimateContextTokens(messages);
-  } 
+  }
 
   const estimate = estimateContextTokens(messages);
   if (estimate.lastUsageIndex === null) return estimate;

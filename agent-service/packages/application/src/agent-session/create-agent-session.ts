@@ -1,7 +1,7 @@
 import { clampThinkingLevel, type Model, type ModelGateway } from '@opspilot/model-gateway';
 import { Agent, type AgentThinkingLevel, type AgentTool } from '@opspilot/agent-runtime';
+import { Session } from '@opspilot/domain';
 
-import { SessionManager } from '../session/session-manager.js';
 import {
   DEFAULT_COMPACTION_SETTINGS,
   DefaultCompactionService,
@@ -10,10 +10,13 @@ import {
   type CompactionSettings,
   type ContextManager,
 } from '../context/index.js';
+import { buildSessionContext } from '../session/session-context.js';
+import type { SessionStore } from '../session-store/session-store.js';
 import { AgentSession } from './agent-session.js';
 
 export interface CreateAgentSessionOptions {
-  readonly sessionManager: SessionManager;
+  readonly session: Session;
+  readonly sessionStore?: SessionStore;
   readonly modelGateway: ModelGateway;
   readonly model?: Model;
   readonly thinkingLevel?: AgentThinkingLevel;
@@ -26,8 +29,8 @@ export interface CreateAgentSessionOptions {
 
 /** 从 Session 上下文组装 Model、Agent Runtime 和 AgentSession。 */
 export function createAgentSession(options: CreateAgentSessionOptions): AgentSession {
-  const sessionContext = options.sessionManager.buildSessionContext();
-  const isNewSession = options.sessionManager.getEntries().length === 0;
+  const sessionContext = buildSessionContext(options.session);
+  const isNewSession = options.session.getEntries().length === 0;
   const model = resolveModel(options, sessionContext.model, isNewSession);
   const thinkingLevel = resolveThinkingLevel(
     model,
@@ -41,7 +44,8 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
   const compactionSettings = options.compactionSettings ?? DEFAULT_COMPACTION_SETTINGS;
 
   persistInitialOrOverriddenState(
-    options.sessionManager,
+    options.session,
+    options.sessionStore,
     model,
     thinkingLevel,
     sessionContext.model,
@@ -72,7 +76,8 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
 
   return new AgentSession({
     agent,
-    sessionManager: options.sessionManager,
+    session: options.session,
+    sessionStore: options.sessionStore,
     compactionService,
     compactionSettings,
   });
@@ -80,7 +85,7 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
 
 function resolveModel(
   options: CreateAgentSessionOptions,
-  sessionModel: ReturnType<SessionManager['buildSessionContext']>['model'],
+  sessionModel: ReturnType<typeof buildSessionContext>['model'],
   isNewSession: boolean,
 ): Model {
   if (options.model !== undefined) {
@@ -115,16 +120,19 @@ function resolveThinkingLevel(
 }
 
 function persistInitialOrOverriddenState(
-  sessionManager: SessionManager,
+  session: Session,
+  sessionStore: SessionStore | undefined,
   model: Model,
   thinkingLevel: AgentThinkingLevel,
-  restoredModel: ReturnType<SessionManager['buildSessionContext']>['model'],
+  restoredModel: ReturnType<typeof buildSessionContext>['model'],
   restoredThinkingLevel: AgentThinkingLevel,
   isNewSession: boolean,
 ): void {
   if (isNewSession) {
-    sessionManager.appendModelChange(model.provider, model.id);
-    sessionManager.appendThinkingLevelChange(thinkingLevel);
+    appendAndPersist(session, sessionStore, () =>
+      session.appendModelChange(model.provider, model.id),
+    );
+    appendAndPersist(session, sessionStore, () => session.appendThinkingLevelChange(thinkingLevel));
     return;
   }
 
@@ -133,10 +141,21 @@ function persistInitialOrOverriddenState(
     restoredModel.provider !== model.provider ||
     restoredModel.modelId !== model.id
   ) {
-    sessionManager.appendModelChange(model.provider, model.id);
+    appendAndPersist(session, sessionStore, () =>
+      session.appendModelChange(model.provider, model.id),
+    );
   }
 
   if (thinkingLevel !== restoredThinkingLevel) {
-    sessionManager.appendThinkingLevelChange(thinkingLevel);
+    appendAndPersist(session, sessionStore, () => session.appendThinkingLevelChange(thinkingLevel));
   }
+}
+
+function appendAndPersist(
+  session: Session,
+  sessionStore: SessionStore | undefined,
+  append: () => Parameters<SessionStore['appendEntry']>[1],
+): void {
+  const entry = append();
+  sessionStore?.appendEntry(session.getHeader().id, entry);
 }

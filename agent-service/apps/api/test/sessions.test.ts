@@ -3,7 +3,7 @@ import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import {
   GetConversationHistory,
   RunConversationTurn,
-  SessionManager,
+  Session,
   type SessionStore,
 } from '@opspilot/application';
 import { Test } from '@nestjs/testing';
@@ -29,7 +29,7 @@ describe('Session history API', () => {
 
   it('loads an existing session and returns only the active branch UI history', async () => {
     const sessionId = '11111111-1111-4111-8111-111111111111';
-    const session = SessionManager.inMemory({ id: sessionId });
+    const session = Session.create({ id: sessionId });
     const user = session.appendMessage({
       role: 'user',
       content: [{ type: 'text', text: 'hello' }],
@@ -77,6 +77,9 @@ describe('Session history API', () => {
         if (requestedSessionId !== sessionId) throw new Error('missing session');
         return session;
       },
+      appendEntry: () => {
+        throw new Error('history endpoint must not append sessions');
+      },
     };
     app = await startServer(new GetConversationHistory(store));
 
@@ -111,7 +114,7 @@ describe('Session history API', () => {
 
   it('projects tool messages without exposing their output or details', async () => {
     const sessionId = '22222222-2222-4222-8222-222222222222';
-    const session = SessionManager.inMemory({ id: sessionId });
+    const session = Session.create({ id: sessionId });
     session.appendMessage({
       role: 'user',
       content: [{ type: 'text', text: 'inspect' }],
@@ -140,6 +143,9 @@ describe('Session history API', () => {
       load: (requestedSessionId) => {
         if (requestedSessionId !== sessionId) throw new Error('missing session');
         return session;
+      },
+      appendEntry: () => {
+        throw new Error('history endpoint must not append sessions');
       },
     };
     app = await startServer(new GetConversationHistory(store));
