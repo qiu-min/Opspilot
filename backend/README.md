@@ -1,474 +1,82 @@
 # OpsPilot Backend
 
-`backend/` 是 OpsPilot 的 ASP.NET Core 业务后端。
+Backend 是面向 Web 的 ASP.NET Core 业务边界，负责用户认证、Session ownership、产品元数据、文件资产和 Agent Service HTTP 协调。
 
-它负责面向 Web 的业务 API、业务数据持久化、文件资产管理以及与其他服务之间的业务流程协调。
-
-Excel 工作簿的读取、修改等具体文件处理能力不在 Backend 中实现，由 Agent Service 的 Tool Gateway 提供。
-
----
-
-## Responsibilities
-
-Backend 主要负责：
-
-* 对外 HTTP API
-* 业务用例与状态管理
-* PostgreSQL 数据持久化
-* 文件上传、存储与文件资产管理
-* User / FileAsset / Conversation 等业务记录
-* 身份认证与权限控制
-* 与 Agent Service 的跨服务协作
-* 后续需要的缓存、任务调度和实时通信能力
-
-Backend 负责管理“文件这个业务资源”，但不负责理解和操作 Excel Workbook 内容。
-
-例如：
+## Session / Turn boundary
 
 ```text
-Backend
-  ↓
-FileAsset
-  ↓
-文件存储
-
-Agent Service
-  ↓
-Tool Gateway
-  ↓
-ExcelJS
-  ↓
-Excel Workbook 操作
+Web Session
+    ↓
+Backend Session ownership boundary
+    ↓
+Agent Service Session
+    ↓
+Turn
+    ↓
+Step
 ```
 
----
-
-## Architecture
-
-Backend 使用分层结构：
+Backend `Session.Id` 与 Agent Service `Session.Id` 是同一个 identity。Backend PostgreSQL 只保存：
 
 ```text
-API
- ↓
-Application
- ↓
-Domain / Abstractions
- ↑
-Infrastructure
+sessions(id, user_id, title, created_at_utc, updated_at_utc)
 ```
 
-### API
+消息树和执行事实仍由 Agent Service 的 Session / Turn / TurnEvent 持久化；Backend 不保存 Turn 表、消息历史或 `TurnStreamProjection`。`TurnEvent` 是 durable execution fact，`TurnStreamEvent` 是 ephemeral live UI event。
 
-负责：
-
-* HTTP Endpoint / Controller
-* Request Binding
-* Authentication / Authorization
-* Response Mapping
-* ProblemDetails
-
-API 层保持轻量，不直接实现业务流程或基础设施逻辑。
-
-### Application
-
-负责：
-
-* 业务 Use Case
-* 流程编排
-* 调用 Domain
-* 通过抽象访问持久化、文件存储和外部服务
-
-### Domain
-
-负责：
-
-* 核心业务实体
-* 状态
-* 业务不变量
-
-Domain 不依赖 ASP.NET Core、EF Core 或其他基础设施。
-
-### Infrastructure
-
-负责具体技术实现，例如：
-
-* EF Core
-* PostgreSQL
-* File Storage
-* External Service Client
-* 其他基础设施 Adapter
-
-具体工程规范见：
+创建 Session 的调用链：
 
 ```text
-backend/AGENTS.md
+POST /api/sessions
+    ↓
+Backend → POST /sessions
+    ↓
+Agent Service 返回真实 sessionId
+    ↓
+Backend 保存 Session ownership row
 ```
 
----
+如果 Agent Service 创建成功而 Backend 保存失败，第一版允许 orphan Agent Service Session。
 
-## Current Capabilities
+## Public API
 
-当前 Backend 已实现：
-
-* ASP.NET Core API 基础启动
-* `GET /health`
-* `POST /api/auth/register`
-* `POST /api/auth/login` with JWT Bearer authentication
-* `ProblemDetails` 统一异常响应
-* Application / Infrastructure DI 注册
-* EF Core + PostgreSQL
-* User / FileAsset / Conversation 持久化
-* EF Core Migration
-* 上传 `.xlsx` 文件的 Vertical Slice
-* 通过 `FileAsset.UserId` 隔离用户文件归属
-* `POST /api/conversations` 创建当前用户的 Conversation
-* `GET /api/conversations` 列出当前用户的 Conversation
-* `GET /api/conversations/{conversationId}` 读取当前用户 Conversation metadata 与 Agent Session UI history
-* 通过 Agent Service 执行普通 Conversation Turn
-
-用户注册的最小调用链为：
+所有 Session 路由都要求 JWT，并按 `Session.UserId == currentUser.UserId` 做 ownership 验证；不存在或不属于当前用户统一按 404 处理。
 
 ```text
-POST /api/auth/register
-  ↓
-RegisterUserHandler
-  ↓
-IUserRepository
-  ↓
-User.Create(...)
-  ↓
-PostgreSQL
+POST /api/sessions
+GET  /api/sessions
+GET  /api/sessions/{sessionId}
+POST /api/sessions/{sessionId}/turns
+POST /api/sessions/{sessionId}/turns/stream
+GET  /api/sessions/{sessionId}/active-turn
+GET  /api/sessions/{sessionId}/turns/{turnId}/stream?after=N
 ```
 
-当前主要业务链路：
+Backend stream adapter 原样转发 Agent Service PR2 `TurnStreamEvent`，保留 `turnId`、`sessionId`、`sequence`、`timestamp`，SSE `id` 等于 `sequence`。Backend 只负责 ownership、文件资源解析、错误映射和 SSE transport，不再次推断 thinking、assistant、tool 或 compaction semantics。
 
-```text
-Client
-  ↓
-POST /api/auth/register
-  ↓
-User
-  ↓
-POST /api/files
-  ↓
-JwtBearer → ICurrentUser → FileAsset.UserId
-  ↓
-POST /api/conversations
-  ↓
-Conversation
-  ↓
-GET /api/conversations
-```
+`GET /api/sessions/{sessionId}/active-turn` 直接读取 Agent Service live Hub projection。reattach 先验证 Session ownership，再确认 active Turn 的 `turnId` 与 route 一致，随后只调用 Agent Service reattach endpoint，不创建新 Turn。reattach 是恢复观看，不是 resume 执行。
 
-普通 Conversation Turn 的最小调用链为：
+SSE subscriber 断开只取消该 subscriber 的 HTTP/Agent stream connection，不调用 Turn cancel 或 Agent abort；执行状态不变。
 
-```text
-POST /api/conversations/{conversationId}/turns
-  ↓
-RunConversationTurnHandler
-  ↓
-Load Conversation by current user
-  ↓
-Conversation.AgentSessionId
-  ↓
-FileId → FileAsset.StoragePath
-  ↓
-AgentServiceClient
-  ↓
-POST Agent Service /conversations/turns
-```
+## Files
 
-Conversation detail 的历史恢复链路为：
+Backend 管理 FileAsset 生命周期和访问权限。请求中的 `fileId` 先经过 ownership 检查，再将共享存储相对路径转换为 Agent Service 的 Excel resource。Workbook 解析和工具执行属于 Agent Service Tool Gateway。
 
-```text
-GET /api/conversations/{conversationId}
-  ↓
-ownership check
-  ↓
-Conversation.AgentSessionId
-  ↓
-AgentServiceClient
-  ↓
-GET Agent Service /sessions/{sessionId}/history
-```
+## Persistence migration
 
-Agent Service Session JSONL 仍是消息历史的 source of truth；Backend 不复制消息到 PostgreSQL。
-
-客户端只认识 `ConversationId`。`SessionId` 是 Backend 与 Agent Service
-之间的内部实现细节：第一次 Turn 创建并绑定 Session，后续 Turn 复用并确认该 Session。
-
----
-
-## File Management
-
-Backend 负责文件作为业务资产的生命周期。
-
-当前上传接口：
-
-```http
-POST /api/files
-Content-Type: multipart/form-data
-```
-
-表单字段：
-
-```text
-file
-```
-
-当前仅接受 `.xlsx` 文件。
-
-上传后 Backend：
-
-```text
-Upload
-  ↓
-Validate
-  ↓
-ICurrentUser.UserId
-  ↓
-File Storage
-  ↓
-FileAsset
-  ↓
-PostgreSQL
-```
-
-对外返回稳定的文件资源标识：
-
-```text
-FileId
-```
-
-而不是暴露：
-
-* 服务器物理路径
-* 内部存储文件名
-* Infrastructure 实现细节
-
-`FileId` 可以继续用于 Conversation 或跨服务文件访问。
-
-文件上传和带 `fileId` 的 Conversation 请求都要求 JWT Bearer 认证，并且只允许
-当前用户访问自己拥有的 `FileAsset`。不存在或不属于当前用户的文件统一返回 404。
-
-### File Boundary
-
-Backend 负责：
-
-```text
-文件上传
-文件存储
-文件 Metadata
-FileAsset
-文件访问权限
-文件生命周期
-```
-
-Backend 不负责：
-
-```text
-Workbook 解析
-Worksheet 操作
-Cell / Range 操作
-公式和样式处理
-ExcelJS
-```
-
-Excel 内容处理由 Agent Service 的 Tool Gateway 提供。
-
----
-
-## Agent Service Integration
-
-Backend 与 Agent Service 是两个独立进程。
-
-整体关系：
-
-```text
-Web
- ↓
-Backend
- ↓
-Agent Service
-```
-
-Backend 负责业务请求和业务状态。
-
-Agent Service 负责 Agent 执行。
-
-跨服务通信应通过稳定契约，例如：
-
-```text
-HTTP
-Message Queue
-Event
-```
-
-而不是直接访问对方内部代码或数据库。
-
-后续典型流程：
-
-```text
-User Request
-     ↓
-Backend
-     ↓
-Conversation
-     ↓
-Agent Service
-     ↓
-Agent Execution
-```
-
-Agent Service 执行期间需要使用具体工具能力时，由 Agent Service 自己的 Tool Gateway 负责。
-
-当前 Backend 仅代理非流式 Conversation Turn；SSE 代理仍待后续实现。
-
----
-
-## Persistence
-
-Backend 当前使用：
-
-```text
-EF Core
-   ↓
-Npgsql
-   ↓
-PostgreSQL
-```
-
-主要持久化模型包括：
-
-```text
-User
-FileAsset
-Conversation
-```
-
-数据库模型变化通过 EF Core Migration 管理。
-
-`AddFileAssetOwnership` 为 `file_assets` 增加必填 `user_id`。已有旧文件没有可推断的
-用户归属，迁移会明确终止；开发环境应重建数据库，或在迁移前显式完成数据回填。
-
-开发环境更新数据库：
-
-```bash
-dotnet ef database update \
-  --project src/OpsPilot.Infrastructure \
-  --startup-project src/OpsPilot.Api
-```
-
----
-
-## Project Structure
-
-```text
-backend/
-├── src/
-│   ├── OpsPilot.Api/
-│   ├── OpsPilot.Application/
-│   ├── OpsPilot.Domain/
-│   └── OpsPilot.Infrastructure/
-├── tests/
-│   ├── OpsPilot.UnitTests/
-│   └── OpsPilot.IntegrationTests/
-├── AGENTS.md
-└── README.md
-```
-
-具体 Feature 的代码尽量围绕业务能力组织，而不是把所有 Request、Handler 或 DTO 堆积到全局目录。
-
----
+`20260909122355_MigrateConversationsToSessions` 是真实 schema transition：已绑定旧行使用非空 `agent_session_id` 作为新的 `sessions.id`，保留 user/title/timestamps；没有真实 Agent Service Session 的 legacy empty rows 被清理。之后 schema 不再包含 `agent_session_id`，模型也不保留 compatibility layer。历史 migration 文件只作为不可修改的 schema history 保留。
 
 ## Development
-
-安装依赖：
 
 ```bash
 cd backend
 dotnet restore
-```
-
-构建：
-
-```bash
 dotnet build
-```
-
-测试：
-
-```bash
 dotnet test
 ```
 
-启动 API：
+数据库结构通过 EF Core Migration 管理；开发数据库可按项目约定执行：
 
 ```bash
-dotnet run --project src/OpsPilot.Api
+dotnet ef database update --project src/OpsPilot.Infrastructure --startup-project src/OpsPilot.Api
 ```
-
-启动本地 PostgreSQL：
-
-```bash
-docker compose up -d postgres
-```
-
-然后执行 Migration：
-
-```bash
-dotnet ef database update \
-  --project src/OpsPilot.Infrastructure \
-  --startup-project src/OpsPilot.Api
-```
-
-具体配置以：
-
-```text
-src/OpsPilot.Api/appsettings*.json
-```
-
-及环境变量为准。
-
----
-
-## Service Boundary
-
-Backend 解决的是：
-
-> OpsPilot 的业务系统如何管理用户请求、业务状态和持久化资源。
-
-Agent Service 解决的是：
-
-> Agent 如何运行、调用模型并执行工具。
-
-Tool Gateway 解决的是：
-
-> Agent 如何访问具体可执行能力。
-
-因此：
-
-```text
-Backend
-   ↓
-业务资源与业务状态
-
-Agent Service
-   ↓
-Agent 执行
-
-Tool Gateway
-   ↓
-具体工具能力
-```
-
-这些边界应通过稳定契约连接，而不是为了调用方便逐渐混合实现细节。
-
----
-
-## Related Documentation
-
-* [OpsPilot README](../README.md)
-* [Backend Development Rules](AGENTS.md)
-* [Agent Service](../agent-service/README.md)
-* [Tool Gateway](../agent-service/packages/tool-gateway/README.md)

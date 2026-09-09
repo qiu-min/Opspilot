@@ -2,6 +2,7 @@ import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 
 import {
   GetSessionHistory,
+  CreateSession,
   ExecuteTurn,
   GetActiveTurn,
   SubscribeTurnStream,
@@ -186,6 +187,7 @@ async function startServer(getSessionHistory: GetSessionHistory): Promise<INestA
     imports: [
       ApiModule.register({
         providers: [
+          { provide: CreateSession, useValue: { execute: () => ({ sessionId: "11111111-1111-4111-8111-111111111111", createdAt: "2026-09-09T00:00:00.000Z", updatedAt: "2026-09-09T00:00:00.000Z" }) } },
           {
             provide: ExecuteTurn,
             useValue: {

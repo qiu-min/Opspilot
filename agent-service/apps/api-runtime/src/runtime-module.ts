@@ -4,6 +4,7 @@ import {
   createGetWorkbookInfoTool,
   buildOpsPilotSystemPrompt,
   GetActiveTurn,
+  CreateSession,
   GetSessionHistory,
   ExecuteTurn,
   SubscribeTurnStream,
@@ -62,6 +63,7 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     turnStreamHub,
   });
   const getSessionHistory = new GetSessionHistory(sessionStore);
+  const createSession = new CreateSession(sessionStore);
   const getActiveTurn = new GetActiveTurn(turnStreamHub);
   const subscribeTurnStream = new SubscribeTurnStream(turnStreamHub);
 
@@ -69,6 +71,7 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     providers: [
       { provide: ExecuteTurn, useValue: executeTurn },
       { provide: GetSessionHistory, useValue: getSessionHistory },
+      { provide: CreateSession, useValue: createSession },
       { provide: GetActiveTurn, useValue: getActiveTurn },
       { provide: SubscribeTurnStream, useValue: subscribeTurnStream },
       { provide: EXCEL_RESOURCE_PATH_RESOLVER, useValue: excelResourcePathResolver },
@@ -76,6 +79,7 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     exports: [
       ExecuteTurn,
       GetSessionHistory,
+      CreateSession,
       GetActiveTurn,
       SubscribeTurnStream,
       EXCEL_RESOURCE_PATH_RESOLVER,

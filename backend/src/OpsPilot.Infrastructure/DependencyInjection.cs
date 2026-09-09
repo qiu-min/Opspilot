@@ -34,7 +34,7 @@ public static class DependencyInjection
 
         services.AddDbContext<OpsPilotDbContext>(options =>
             options.UseNpgsql(connectionString));
-        services.AddScoped<IConversationRepository, ConversationRepository>();
+        services.AddScoped<ISessionRepository, SessionRepository>();
         services.AddScoped<IFileAssetRepository, FileAssetRepository>();
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddSingleton<IPasswordHasher, AspNetCorePasswordHasher>();
@@ -65,7 +65,7 @@ public static class DependencyInjection
             BaseUrl = agentServiceBaseUri.ToString(),
         };
         services.AddSingleton(agentServiceOptions);
-        services.AddHttpClient<IAgentConversationClient, AgentServiceClient>(httpClient =>
+        services.AddHttpClient<IAgentSessionClient, AgentServiceClient>(httpClient =>
         {
             httpClient.BaseAddress = agentServiceBaseUri;
         });

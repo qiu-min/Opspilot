@@ -1,4 +1,4 @@
-import { ConversationPage } from "./features/conversation/conversation-page";
+import { SessionPage } from "./features/session/session-page";
 import { useAuth } from "./features/auth/auth-provider";
 import { LoginPage } from "./features/auth/login-page";
 import { RegisterPage } from "./features/auth/register-page";
@@ -7,7 +7,7 @@ import { useState } from "react";
 type AuthView = "login" | "register";
 
 export default function App() {
-  const { session } = useAuth();
+  const { session: authSession } = useAuth();
   const [authView, setAuthView] = useState<AuthView>("login");
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -26,8 +26,8 @@ export default function App() {
     setAuthView("login");
   }
 
-  if (session !== null) {
-    return <ConversationPage />;
+  if (authSession !== null) {
+    return <SessionPage />;
   }
 
   return authView === "login" ? (

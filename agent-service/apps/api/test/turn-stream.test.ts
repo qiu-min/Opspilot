@@ -66,6 +66,7 @@ describe('Turn stream API', () => {
       }),
     } as unknown as TurnStreamHub;
     const controller = new SessionsController(
+      { execute: () => ({ sessionId: identity.sessionId, createdAt: "2026-09-09T00:00:00.000Z", updatedAt: "2026-09-09T00:00:00.000Z" }) } as never,
       { execute: () => ({ leafId: null, items: [] }) } as unknown as GetSessionHistory,
       new GetActiveTurn(hub),
     );

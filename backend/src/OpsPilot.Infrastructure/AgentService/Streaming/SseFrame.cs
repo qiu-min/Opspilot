@@ -1,5 +1,3 @@
 namespace OpsPilot.Infrastructure.AgentService.Streaming;
 
-internal sealed record SseFrame(
-    string Event,
-    string Data);
+internal sealed record SseFrame(string Event, string Data, string? Id);

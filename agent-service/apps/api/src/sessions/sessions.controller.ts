@@ -1,5 +1,6 @@
-import { Controller, Get, Param, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, HttpCode, Optional, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import {
+  CreateSession,
   GetActiveTurn,
   GetSessionHistory,
   type ActiveTurnStreamSnapshot,
@@ -10,9 +11,17 @@ import {
 @Controller('sessions')
 export class SessionsController {
   constructor(
+    @Optional() private readonly createSession: CreateSession | undefined,
     private readonly getSessionHistory: GetSessionHistory,
     private readonly getActiveTurn: GetActiveTurn,
   ) {}
+
+  @Post()
+  @HttpCode(201)
+  create(): { readonly sessionId: string; readonly createdAt: string; readonly updatedAt: string } {
+    if (this.createSession === undefined) throw new Error('CreateSession is not configured.');
+    return this.createSession.execute();
+  }
 
   @Get(':sessionId/active-turn')
   getActiveTurnSnapshot(

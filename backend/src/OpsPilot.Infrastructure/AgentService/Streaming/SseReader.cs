@@ -16,6 +16,7 @@ internal static class SseReader
             bufferSize: 1024,
             leaveOpen: true);
         string eventName = string.Empty;
+        string? id = null;
         var dataLines = new List<string>();
 
         while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
@@ -24,10 +25,11 @@ internal static class SseReader
             {
                 if (dataLines.Count > 0)
                 {
-                    yield return CreateFrame(eventName, dataLines);
+                    yield return CreateFrame(eventName, dataLines, id);
                 }
 
                 eventName = string.Empty;
+                id = null;
                 dataLines.Clear();
                 continue;
             }
@@ -47,17 +49,21 @@ internal static class SseReader
                 case "data":
                     dataLines.Add(value);
                     break;
+                case "id":
+                    id = value;
+                    break;
             }
         }
 
         if (dataLines.Count > 0)
         {
-            yield return CreateFrame(eventName, dataLines);
+            yield return CreateFrame(eventName, dataLines, id);
         }
     }
 
-    private static SseFrame CreateFrame(string eventName, IReadOnlyList<string> dataLines) =>
+    private static SseFrame CreateFrame(string eventName, IReadOnlyList<string> dataLines, string? id = null) =>
         new(
             string.IsNullOrEmpty(eventName) ? "message" : eventName,
-            string.Join('\n', dataLines));
+            string.Join('\n', dataLines),
+            id);
 }
