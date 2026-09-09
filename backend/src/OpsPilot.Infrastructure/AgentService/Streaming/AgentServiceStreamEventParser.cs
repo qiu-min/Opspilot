@@ -16,6 +16,8 @@ internal static class AgentServiceStreamEventParser
 
     public static AgentTurnStreamEvent Parse(SseFrame frame)
     {
+        Console.WriteLine(
+        $"[turn-stream][backend-http-in] event={frame.Event} id={frame.Id ?? "<null>"}");
         if (!EventTypes.Contains(frame.Event)) throw Malformed(frame, "event name is not a supported TurnStreamEvent type.");
         using JsonDocument document = ParseJson(frame);
         JsonElement data = document.RootElement;

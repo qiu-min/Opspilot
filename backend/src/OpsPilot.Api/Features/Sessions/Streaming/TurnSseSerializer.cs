@@ -15,6 +15,8 @@ public static class TurnSseSerializer
 
     public static async Task WriteAsync(HttpResponse response, AgentTurnStreamEvent streamEvent, CancellationToken cancellationToken)
     {
+         Console.WriteLine(
+        $"[turn-stream][web-http-out] turnId={streamEvent.TurnId} sessionId={streamEvent.SessionId} type={streamEvent.Type} seq={streamEvent.Sequence}");
         string data = JsonSerializer.Serialize(streamEvent, streamEvent.GetType(), Options);
         string frame = $"id: {streamEvent.Sequence}\nevent: {streamEvent.Type}\ndata: {data}\n\n";
         await response.Body.WriteAsync(Encoding.UTF8.GetBytes(frame), cancellationToken);

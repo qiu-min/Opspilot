@@ -112,8 +112,18 @@ export class TurnsController {
     try {
       while (!disconnected) {
         const next = await iterator.next();
-        if (next.done) break;
+        if (next.done) {
+          console.info('[turn-stream][agent-http-out] iterator done');
+          break;
+        }
+        console.info(
+          `[turn-stream][agent-http-out] turnId=${next.value.turnId} sessionId=${next.value.sessionId} type=${next.value.type} seq=${next.value.sequence}`,
+        );
+
         if (!writeTurnStreamSseEvent(response, next.value)) {
+          console.warn(
+            `[turn-stream][agent-http-out-failed] turnId=${next.value.turnId} type=${next.value.type} seq=${next.value.sequence}`,
+          );
           onClose();
           break;
         }
