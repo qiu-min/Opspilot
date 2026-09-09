@@ -1,4 +1,4 @@
-import { Controller, Get, HttpCode, Optional, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Controller, Get, HttpCode, Inject, Optional, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import {
   CreateSession,
   GetActiveTurn,
@@ -11,7 +11,7 @@ import {
 @Controller('sessions')
 export class SessionsController {
   constructor(
-    @Optional() private readonly createSession: CreateSession | undefined,
+    @Optional() @Inject(CreateSession) private readonly createSession: CreateSession | undefined,
     private readonly getSessionHistory: GetSessionHistory,
     private readonly getActiveTurn: GetActiveTurn,
   ) {}

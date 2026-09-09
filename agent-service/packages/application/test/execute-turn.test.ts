@@ -1273,6 +1273,34 @@ describe('ExecuteTurn', () => {
     expect(gateway.requestedModels[0]).toBe(alternateModel);
   });
 
+  it('uses and persists defaultModel for a pre-created empty session', async () => {
+    const { store } = createStore();
+    const existing = store.create();
+    const gateway = createGateway(
+      [assistantStream(assistantMessage('default', alternateModel), alternateModel)],
+      [alternateModel],
+    );
+    const runner = new TestExecuteTurn({
+      sessionStore: store,
+      modelGateway: gateway,
+      toolDefinitions: [],
+      defaultModel: alternateModel,
+    });
+
+    await runner.execute({ sessionId: existing.getHeader().id, message: userMessage('hello') });
+
+    const loaded = store.load(existing.getHeader().id);
+    expect(gateway.requestedModels[0]).toBe(alternateModel);
+    expect(loaded.getEntries().slice(0, 2).map((entry) => entry.type)).toEqual([
+      'model_change',
+      'thinking_level_change',
+    ]);
+    expect(buildSessionContext(loaded).model).toEqual({
+      provider: alternateModel.provider,
+      modelId: alternateModel.id,
+    });
+  });
+
   it('lets createAgentSession restore the model for an existing session', async () => {
     const { store } = createStore();
     const existing = store.create();

@@ -52,7 +52,8 @@ function resolveModel(
   options: PrepareSessionExecutionConfigOptions,
   sessionModel: ReturnType<typeof buildSessionContext>['model'],
 ): Model {
-  const requestedModel = options.model ?? (options.created ? options.defaultModel : undefined);
+  const requestedModel =
+    options.model ?? (sessionModel === null ? options.defaultModel : undefined);
   if (requestedModel !== undefined) {
     const canonicalModel = options.modelGateway.getModel(
       requestedModel.provider,
@@ -102,7 +103,7 @@ function persistExecutionConfig(
     appendAndPersist(options, () => options.session.appendModelChange(model.provider, model.id));
   }
 
-  if (options.created || thinkingLevel !== restoredThinkingLevel) {
+  if (options.created || restoredModel === null || thinkingLevel !== restoredThinkingLevel) {
     appendAndPersist(options, () => options.session.appendThinkingLevelChange(thinkingLevel));
   }
 }

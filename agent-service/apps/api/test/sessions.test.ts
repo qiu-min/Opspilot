@@ -31,6 +31,33 @@ describe('Session history API', () => {
     app = undefined;
   });
 
+  it('creates a Session through the configured application binding', async () => {
+    const store: SessionStore = {
+      create: () => {
+        throw new Error('create endpoint must use the configured CreateSession binding');
+      },
+      load: () => {
+        throw new Error('not used');
+      },
+      appendEntry: () => {
+        throw new Error('not used');
+      },
+      saveMetadata: () => {
+        throw new Error('not used');
+      },
+    };
+    app = await startServer(new GetSessionHistory(store));
+
+    const response = await postJson(app, '/sessions');
+
+    expect(response.statusCode).toBe(201);
+    expect(JSON.parse(response.body)).toEqual({
+      sessionId: '11111111-1111-4111-8111-111111111111',
+      createdAt: '2026-09-09T00:00:00.000Z',
+      updatedAt: '2026-09-09T00:00:00.000Z',
+    });
+  });
+
   it('loads an existing session and returns only the active branch UI history', async () => {
     const sessionId = '11111111-1111-4111-8111-111111111111';
     const session = Session.create({ id: sessionId });
@@ -208,6 +235,7 @@ async function startServer(getSessionHistory: GetSessionHistory): Promise<INestA
         ],
         exports: [
           ExecuteTurn,
+          CreateSession,
           GetSessionHistory,
           GetActiveTurn,
           SubscribeTurnStream,
@@ -236,6 +264,39 @@ function getJson(app: INestApplication, path: string): Promise<HttpResponse> {
         port: address.port,
         path,
         method: 'GET',
+      },
+      (response) => {
+        const chunks: string[] = [];
+        response.setEncoding('utf8');
+        response.on('data', (chunk: string) => chunks.push(chunk));
+        response.on('end', () => {
+          resolve({
+            statusCode: response.statusCode ?? 0,
+            headers: response.headers,
+            body: chunks.join(''),
+          });
+        });
+      },
+    );
+    request.on('error', reject);
+    request.end();
+  });
+}
+
+function postJson(app: INestApplication, path: string): Promise<HttpResponse> {
+  const address = app.getHttpServer().address();
+  if (address === null || typeof address === 'string') {
+    throw new Error('Test server did not expose a TCP address.');
+  }
+
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(
+      {
+        host: '127.0.0.1',
+        port: address.port,
+        path,
+        method: 'POST',
+        headers: { 'content-length': 0 },
       },
       (response) => {
         const chunks: string[] = [];
