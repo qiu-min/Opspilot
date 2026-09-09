@@ -20,12 +20,15 @@ sessions/{sessionId}/
 
 `SessionStore.appendEntry()` 先追加 history，再原子更新 `metadata.updatedAt`；metadata update 失败会明确抛错，下一次 load 会根据 durable history reconciliation。`saveMetadata()` 通过 temp file + rename 原子替换整个 metadata snapshot。
 
+Application 同时定义 `TurnStore` port。Turn snapshot 与 append-only `TurnEvent` history 是独立的 durable execution boundary，不写入 Session JSONL；本阶段只提供 Domain model、port 和 filesystem adapter，不实现 Turn resume orchestration。
+
 ## 职责
 
 本包主要负责：
 
 - 创建、恢复和管理 Agent Session
 - 通过 `SessionStore` port 协调 Domain Session mutation 与持久化
+- 通过 `TurnStore` port 保存 Application Turn snapshot 与 durable execution events
 - 接收用户输入并驱动一次 Agent Run
 - 将 Session 上下文恢复到 Agent Runtime
 - 通过 `ContextManager` 决定单次模型调用看到的消息

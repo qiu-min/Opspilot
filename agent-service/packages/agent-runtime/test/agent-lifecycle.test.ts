@@ -324,7 +324,7 @@ describe('Agent run lifecycle', () => {
     expect(events.slice(-4)).toEqual([
       'message_start',
       'message_end',
-      'turn_end',
+      'step_end',
       'agent_end',
     ]);
     expect(agent.state.errorInfo).toEqual({

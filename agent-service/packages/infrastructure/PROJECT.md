@@ -1,15 +1,15 @@
 # @opspilot/infrastructure Project
 
-`@opspilot/infrastructure` 提供 Agent Service 的具体外部系统 adapter。当前范围是实现 Application 的 `SessionStore` port，并将 Session metadata 与 append-only history 持久化到 filesystem。
+`@opspilot/infrastructure` 提供 Agent Service 的具体外部系统 adapter。当前范围是实现 Application 的 `SessionStore` 与 `TurnStore` port，并将 Session history、Turn metadata snapshot 和 append-only TurnEvent history 持久化到 filesystem。
 
 ## Boundary
 
 ```text
 @opspilot/domain
         ↑
-@opspilot/application  (SessionStore port)
+@opspilot/application  (SessionStore / TurnStore ports)
         ↑
-@opspilot/infrastructure (FileSystemSessionStore)
+@opspilot/infrastructure (FileSystemSessionStore / FileSystemTurnStore)
         ↑
 apps/api-runtime (composition root)
 ```
@@ -30,7 +30,17 @@ Infrastructure 保留 legacy `{sessionId}.jsonl` 读取和 lazy migration 行为
 
 公开的具体能力包括 `FileSystemSessionStore`、JSONL helpers、metadata JSON helpers 和 filesystem persistence errors。它们不从 Application 导出。
 
-本 package 不拥有 `Run`、`RunSnapshot`、`RunEvent`，不直接引入 Prisma、SQLite、Redis 或数据库 repository。
+本 package 不定义 Turn 业务状态转换；它只实现 Application 的持久化 port，不直接引入 Prisma、SQLite、Redis 或数据库 repository。
+
+Turn filesystem layout 为：
+
+```text
+turns/{turnId}/
+├── metadata.json
+└── events.jsonl
+```
+
+`metadata.json` 保存当前 Turn snapshot 并使用 atomic replacement；`events.jsonl` 保存严格连续 sequence 的 append-only `TurnEvent`。本阶段不实现自动恢复执行。
 
 ## Verification
 

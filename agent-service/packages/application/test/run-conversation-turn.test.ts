@@ -836,10 +836,10 @@ describe('RunConversationTurn', () => {
     );
     expect(events.map((event) => event.type)).toEqual(
       expect.arrayContaining([
-        'turn_start',
+        'step_start',
         'message_start',
         'message_end',
-        'turn_end',
+        'step_end',
         'agent_end',
       ]),
     );

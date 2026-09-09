@@ -28,13 +28,13 @@ Agent Service
 └── Tool Gateway
 ```
 
-Application 是业务编排边界，可以理解 OpsPilot 的 `Conversation`、`Session` 和 `FileReference` 等概念，并负责把这些概念转换为 Runtime 可消费的输入。它只定义 `SessionStore` port；filesystem adapter 位于 `packages/infrastructure`，由 `apps/api-runtime` 组合。
+Application 是业务编排边界，可以理解 OpsPilot 的 `Session`、`Turn` 和 `FileReference` 等概念，并负责把这些概念转换为 Runtime 可消费的输入。它定义 `SessionStore` 与 `TurnStore` port；filesystem adapter 位于 `packages/infrastructure`，由 `apps/api-runtime` 组合。
 
 Agent Runtime 必须保持业务无关。Runtime 不允许出现 `FileId`、`Excel`、`OpsPilot Session`、`Conversation` 等业务概念，也不直接依赖 Application 的业务模型。Model Gateway 负责模型 Provider 边界，Tool Gateway 负责 Tool Contract、输入校验和外部能力适配。
 
 ## Application
 
-Application 当前依赖 `@opspilot/domain` 提供纯内存 `Session` aggregate，并提供 `SessionStore` port、最小 AgentSession、createAgentSession 及 RunConversationTurn 组合入口。`@opspilot/infrastructure` 提供 filesystem adapter。
+Application 当前依赖 `@opspilot/domain` 提供纯内存 `Session` 与 `Turn` aggregate，并提供 `SessionStore`、`TurnStore` port、最小 AgentSession、createAgentSession 及 RunConversationTurn 组合入口。`@opspilot/infrastructure` 提供 filesystem adapter。
 
 Conversation 当前通过 `RunConversationTurn` 编排一次用户 Conversation Turn：接收 `sessionId` 和用户消息，加载或创建 Session，调用 Agent Runtime，接收 Runtime 结果与事件，并通过 `SessionStore` 更新 Session。具体 filesystem JSONL 实现由 `@opspilot/infrastructure` 提供。
 
@@ -73,7 +73,7 @@ sessions/{sessionId}/
 
 普通 Conversation 请求可以携带相对共享存储根目录的 Excel `storagePath`。`api-runtime` 将其安全解析为 Application 使用的绝对 `filePath`；SSE 和普通入口使用同一请求契约。
 
-Session 通过 Infrastructure 的 filesystem adapter 持久化；API 通过 Application 的 `RunConversationTurn` 访问，不直接操作 Domain Session 或 Model Gateway。
+Session 与 Turn 通过 Infrastructure 的 filesystem adapter 分别持久化；API 通过 Application 的 `RunConversationTurn` 访问，不直接操作 Domain Session、Turn 或 Model Gateway。
 历史恢复使用独立的 `buildConversationHistoryProjection()`，基于 `Session.getBranch()` 读取完整原始消息；它不复用会受 Compaction 影响的 `buildSessionContext()`，也不改变 JSONL persistence format。
 
 ## Development

@@ -72,7 +72,7 @@ export async function runAgentLoopWithOutcome(
 
   await emit({ type: 'agent_start' });
 
-  await emit({ type: 'turn_start' });
+  await emit({ type: 'step_start' });
 
   for (const prompt of prompts) {
     await emit({ type: 'message_start', message: prompt });
@@ -108,16 +108,16 @@ async function runLoop(
   let config = initialConfig;
   const initialSteeringMessages = await config.getSteeringMessages?.(signal);
   let pendingMessages: AgentMessage[] = [...(initialSteeringMessages ?? [])];
-  let firstTurn = true;
+  let firstStep = true;
 
   while (true) {
     let hasMoreToolCalls = true;
 
     while (hasMoreToolCalls || pendingMessages.length > 0) {
-      if (firstTurn) {
-        firstTurn = false;
+      if (firstStep) {
+        firstStep = false;
       } else {
-        await emit({ type: 'turn_start' });
+        await emit({ type: 'step_start' });
       }
 
       for (const pendingMessage of pendingMessages) {
@@ -143,7 +143,7 @@ async function runLoop(
         assistantMessage.finishReason === 'aborted'
       ) {
         await emit({
-          type: 'turn_end',
+          type: 'step_end',
           message: assistantMessage,
           toolResults: [],
         });
@@ -187,12 +187,12 @@ async function runLoop(
       }
 
       await emit({
-        type: 'turn_end',
+        type: 'step_end',
         message: assistantMessage,
         toolResults,
       });
 
-      const nextTurnUpdate = await config.prepareNextTurn?.(
+      const nextStepUpdate = await config.prepareNextStep?.(
         {
           message: assistantMessage,
           toolResults,
@@ -201,17 +201,17 @@ async function runLoop(
         },
         signal,
       );
-      if (nextTurnUpdate?.context !== undefined) {
-        currentContext = nextTurnUpdate.context;
+      if (nextStepUpdate?.context !== undefined) {
+        currentContext = nextStepUpdate.context;
       }
-      if (nextTurnUpdate?.model !== undefined) {
+      if (nextStepUpdate?.model !== undefined) {
         config = {
           ...config,
-          model: nextTurnUpdate.model,
+          model: nextStepUpdate.model,
         };
       }
 
-      const shouldStop = await config.shouldStopAfterTurn?.({
+      const shouldStop = await config.shouldStopAfterStep?.({
         message: assistantMessage,
         toolResults,
         context: currentContext,

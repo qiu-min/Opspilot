@@ -128,7 +128,7 @@ function textTool(name: string, text: string): AgentTool {
 }
 
 describe('steering and follow-up loop', () => {
-  it('injects steering after a completed tool turn and returns it in newMessages', async () => {
+  it('injects steering after a completed tool step and returns it in newMessages', async () => {
     const prompt = userMessage('initial');
     const steering = userMessage('steering');
     const call: ModelToolCall = {
@@ -248,11 +248,11 @@ describe('steering and follow-up loop', () => {
     const followUpStart = events.findIndex(
       (event) => event.type === 'message_start' && event.message === followUp,
     );
-    expect(events[followUpStart - 1]).toEqual({ type: 'turn_start' });
+    expect(events[followUpStart - 1]).toEqual({ type: 'step_start' });
     expect(events[followUpStart + 1]).toEqual({ type: 'message_end', message: followUp });
   });
 
-  it('emits pending message events after turn_start and before the next assistant', async () => {
+  it('emits pending message events after step_start and before the next assistant', async () => {
     const prompt = userMessage('initial');
     const steering = userMessage('steering');
     const assistant1 = assistantMessage('stop');
@@ -280,7 +280,7 @@ describe('steering and follow-up loop', () => {
     const steeringEnd = events.findIndex(
       (event) => event.type === 'message_end' && event.message === steering,
     );
-    expect(events[steeringStart - 1]).toEqual({ type: 'turn_start' });
+    expect(events[steeringStart - 1]).toEqual({ type: 'step_start' });
     expect(steeringEnd).toBe(steeringStart + 1);
     expect(events[steeringEnd + 1]).toMatchObject({
       type: 'message_start',
@@ -323,7 +323,7 @@ describe('steering and follow-up loop', () => {
     expect(getFollowUpMessages).toHaveBeenCalledTimes(2);
   });
 
-  it('polls follow-up only after shouldStopAfterTurn allows continuation', async () => {
+  it('polls follow-up only after shouldStopAfterStep allows continuation', async () => {
     const getSteeringMessages = vi.fn(() => []);
     const getFollowUpMessages = vi.fn(() => [userMessage('must not run')]);
     const events: AgentEvent[] = [];
@@ -335,7 +335,7 @@ describe('steering and follow-up loop', () => {
         model,
         getSteeringMessages,
         getFollowUpMessages,
-        shouldStopAfterTurn: () => true,
+        shouldStopAfterStep: () => true,
       },
       sequentialStreamFn([assistantStream(assistantMessage())], []),
       (event) => {
@@ -348,7 +348,7 @@ describe('steering and follow-up loop', () => {
     expect(events.at(-1)?.type).toBe('agent_end');
   });
 
-  it('does not poll follow-up while a tool call requires another turn', async () => {
+  it('does not poll follow-up while a tool call requires another step', async () => {
     const call: ModelToolCall = {
       callId: 'call_1',
       name: 'query_logs',
@@ -397,13 +397,13 @@ describe('steering and follow-up loop', () => {
     expect(followUpSignals).toEqual([controller.signal]);
   });
 
-  it('keeps Agent queues when shouldStopAfterTurn stops before polling them', async () => {
+  it('keeps Agent queues when shouldStopAfterStep stops before polling them', async () => {
     const steering = userMessage('steering');
     const followUp = userMessage('follow-up');
     let agent: Agent | undefined;
     agent = new Agent({
       model,
-      shouldStopAfterTurn: () => true,
+      shouldStopAfterStep: () => true,
       streamFn: () => {
         agent?.steer(steering);
         agent?.followUp(followUp);

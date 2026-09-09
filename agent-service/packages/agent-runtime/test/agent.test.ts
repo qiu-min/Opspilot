@@ -176,13 +176,13 @@ describe('Agent', () => {
 
     expect(events.map((event) => event.type)).toEqual([
       'agent_start',
-      'turn_start',
+      'step_start',
       'message_start',
       'message_end',
       'message_start',
       'message_update',
       'message_end',
-      'turn_end',
+      'step_end',
       'agent_end',
     ]);
     expect(events[2]).toEqual({ type: 'message_start', message: prompt });
@@ -358,7 +358,7 @@ describe('Agent', () => {
     expect(agent.state.errorInfo).toBeUndefined();
   });
 
-  it('continues to the next LLM turn for AgentToolExecutionError', async () => {
+  it('continues to the next LLM step for AgentToolExecutionError', async () => {
     const call: ModelToolCall = {
       callId: 'call_recoverable',
       name: 'query_logs',
@@ -728,7 +728,7 @@ describe('Agent', () => {
     expect(agent.state.tools).toEqual([tool]);
   });
 
-  it('passes transformContext, convertToLlm and shouldStopAfterTurn through the real loop', async () => {
+  it('passes transformContext, convertToLlm and shouldStopAfterStep through the real loop', async () => {
     const prompt = userMessage('use hooks');
     const assistant = assistantMessage();
     const transformed = [prompt];
@@ -742,13 +742,13 @@ describe('Agent', () => {
       converted.push([...messages]);
       return defaultConvertToLlm(messages);
     });
-    const shouldStopAfterTurn = vi.fn(() => true);
+    const shouldStopAfterStep = vi.fn(() => true);
     const contexts: Context[] = [];
     const agent = new Agent({
       model,
       transformContext,
       convertToLlm,
-      shouldStopAfterTurn,
+      shouldStopAfterStep,
       streamFn: sequentialStreamFn([assistantStream(assistant)], contexts),
     });
 
@@ -757,7 +757,7 @@ describe('Agent', () => {
     expect(transformedInputs).toEqual([[prompt]]);
     expect(converted).toEqual([transformed]);
     expect(contexts[0]?.messages).toEqual([prompt]);
-    expect(shouldStopAfterTurn).toHaveBeenCalledTimes(1);
+    expect(shouldStopAfterStep).toHaveBeenCalledTimes(1);
   });
 
   it('continues from the current history without emitting a new prompt message', async () => {
@@ -779,10 +779,10 @@ describe('Agent', () => {
     expect(contexts[0]?.messages).toEqual([history]);
     expect(events.map((event) => event.type)).toEqual([
       'agent_start',
-      'turn_start',
+      'step_start',
       'message_start',
       'message_end',
-      'turn_end',
+      'step_end',
       'agent_end',
     ]);
     expect(events.filter((event) => event.type === 'message_start')).toHaveLength(1);

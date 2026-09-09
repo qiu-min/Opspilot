@@ -15,7 +15,7 @@ import type {
   AgentContext,
   AgentMessage,
   AgentTool,
-  PrepareNextTurnContext,
+  PrepareNextStepContext,
   StreamFn,
 } from '../src/index.js';
 
@@ -143,19 +143,19 @@ function textTool(name: string, text: string): AgentTool {
   };
 }
 
-/** 创建一个需要工具执行后再进入下一 Turn 的模型响应序列。
- * @param firstAssistant 第一 Turn 的 assistant 消息。
- * @param secondAssistant 第二 Turn 的 assistant 消息。
+/** 创建一个需要工具执行后再进入下一 Step 的模型响应序列。
+ * @param firstAssistant 第一 Step 的 assistant 消息。
+ * @param secondAssistant 第二 Step 的 assistant 消息。
  * @returns 两次模型调用对应的事件流。
  */
-function twoTurnStreams(
+function twoStepStreams(
   firstAssistant: AssistantMessage,
   secondAssistant: AssistantMessage,
 ): readonly ModelEventStream[] {
   return [assistantStream(firstAssistant), assistantStream(secondAssistant)];
 }
 
-describe('prepareNextTurn', () => {
+describe('prepareNextStep', () => {
   it('keeps the previous behavior when the hook is not configured', async () => {
     const prompt = userMessage('initial');
     const assistant = assistantMessage();
@@ -170,7 +170,7 @@ describe('prepareNextTurn', () => {
     expect(result).toEqual([prompt, assistant]);
   });
 
-  it('calls prepareNextTurn once after every complete Turn', async () => {
+  it('calls prepareNextStep once after every complete Step', async () => {
     const call: ModelToolCall = {
       callId: 'call_1',
       name: 'query_logs',
@@ -179,22 +179,22 @@ describe('prepareNextTurn', () => {
     const tool = textTool('query_logs', 'logs found');
     const firstAssistant = assistantMessage(modelA, 'tool_calls', [call]);
     const secondAssistant = assistantMessage();
-    const prepareNextTurn = vi.fn(() => undefined);
+    const prepareNextStep = vi.fn(() => undefined);
 
     await runAgentLoop(
       [userMessage('initial')],
       createContext([], [tool]),
       {
         model: modelA,
-        prepareNextTurn,
+        prepareNextStep,
         getSteeringMessages: () => [],
         getFollowUpMessages: () => [],
       },
-      sequentialStreamFn(twoTurnStreams(firstAssistant, secondAssistant), [], []),
+    sequentialStreamFn(twoStepStreams(firstAssistant, secondAssistant), [], []),
       () => undefined,
     );
 
-    expect(prepareNextTurn).toHaveBeenCalledTimes(2);
+    expect(prepareNextStep).toHaveBeenCalledTimes(2);
   });
 
   it('receives the completed assistant, tool results, context and newMessages', async () => {
@@ -206,18 +206,18 @@ describe('prepareNextTurn', () => {
     };
     const tool = textTool('query_logs', 'logs found');
     const assistant = assistantMessage(modelA, 'tool_calls', [call]);
-    const prepareNextTurn = vi.fn((_context: PrepareNextTurnContext) => undefined);
+    const prepareNextStep = vi.fn((_context: PrepareNextStepContext) => undefined);
 
     const result = await runAgentLoop(
       [prompt],
       createContext([], [tool]),
-      { model: modelA, prepareNextTurn, shouldStopAfterTurn: () => true },
+      { model: modelA, prepareNextStep, shouldStopAfterStep: () => true },
       sequentialStreamFn([assistantStream(assistant)], [], []),
       () => undefined,
     );
 
     const toolResult = result[2];
-    const hookContext = prepareNextTurn.mock.calls[0]?.[0];
+    const hookContext = prepareNextStep.mock.calls[0]?.[0];
     expect(hookContext?.message).toBe(assistant);
     expect(hookContext?.toolResults).toEqual([toolResult]);
     expect(hookContext?.context.messages).toEqual([prompt, assistant, toolResult]);
@@ -234,7 +234,7 @@ describe('prepareNextTurn', () => {
     const firstAssistant = assistantMessage(modelA, 'tool_calls', [call]);
     const secondAssistant = assistantMessage(modelB);
     const models: Model[] = [];
-    const prepareNextTurn = vi.fn(({ message }: PrepareNextTurnContext) => {
+    const prepareNextStep = vi.fn(({ message }: PrepareNextStepContext) => {
       if (message === firstAssistant) return { model: modelB };
       return undefined;
     });
@@ -244,18 +244,18 @@ describe('prepareNextTurn', () => {
       createContext([], [tool]),
       {
         model: modelA,
-        prepareNextTurn,
+        prepareNextStep,
         getSteeringMessages: () => [],
         getFollowUpMessages: () => [],
       },
-      sequentialStreamFn(twoTurnStreams(firstAssistant, secondAssistant), models, []),
+      sequentialStreamFn(twoStepStreams(firstAssistant, secondAssistant), models, []),
       () => undefined,
     );
 
     expect(models).toEqual([modelA, modelB]);
   });
 
-  it('keeps the original model when prepareNextTurn returns undefined', async () => {
+  it('keeps the original model when prepareNextStep returns undefined', async () => {
     const call: ModelToolCall = {
       callId: 'call_1',
       name: 'query_logs',
@@ -269,12 +269,12 @@ describe('prepareNextTurn', () => {
       createContext([], [tool]),
       {
         model: modelA,
-        prepareNextTurn: () => undefined,
+        prepareNextStep: () => undefined,
         getSteeringMessages: () => [],
         getFollowUpMessages: () => [],
       },
       sequentialStreamFn(
-        twoTurnStreams(assistantMessage(modelA, 'tool_calls', [call]), assistantMessage()),
+        twoStepStreams(assistantMessage(modelA, 'tool_calls', [call]), assistantMessage()),
         models,
         [],
       ),
@@ -295,7 +295,7 @@ describe('prepareNextTurn', () => {
     const firstAssistant = assistantMessage(modelA, 'tool_calls', [call]);
     const secondAssistant = assistantMessage();
     const contexts: Context[] = [];
-    const prepareNextTurn = vi.fn(({ message, context }: PrepareNextTurnContext) => {
+    const prepareNextStep = vi.fn(({ message, context }: PrepareNextStepContext) => {
       if (message === firstAssistant) {
         return {
           context: {
@@ -312,11 +312,11 @@ describe('prepareNextTurn', () => {
       createContext([], [tool]),
       {
         model: modelA,
-        prepareNextTurn,
+        prepareNextStep,
         getSteeringMessages: () => [],
         getFollowUpMessages: () => [],
       },
-      sequentialStreamFn(twoTurnStreams(firstAssistant, secondAssistant), [], contexts),
+      sequentialStreamFn(twoStepStreams(firstAssistant, secondAssistant), [], contexts),
       () => undefined,
     );
 
@@ -334,7 +334,7 @@ describe('prepareNextTurn', () => {
     const replacement = userMessage('compacted context');
     const firstAssistant = assistantMessage(modelA, 'tool_calls', [call]);
     const secondAssistant = assistantMessage();
-    const prepareNextTurn = vi.fn(({ message, context }: PrepareNextTurnContext) => {
+    const prepareNextStep = vi.fn(({ message, context }: PrepareNextStepContext) => {
       if (message === firstAssistant) {
         return { context: { ...context, messages: [replacement] } };
       }
@@ -346,11 +346,11 @@ describe('prepareNextTurn', () => {
       createContext([], [tool]),
       {
         model: modelA,
-        prepareNextTurn,
+        prepareNextStep,
         getSteeringMessages: () => [],
         getFollowUpMessages: () => [],
       },
-      sequentialStreamFn(twoTurnStreams(firstAssistant, secondAssistant), [], []),
+      sequentialStreamFn(twoStepStreams(firstAssistant, secondAssistant), [], []),
       () => undefined,
     );
 
@@ -370,7 +370,7 @@ describe('prepareNextTurn', () => {
     const secondAssistant = assistantMessage(modelB);
     const models: Model[] = [];
     const contexts: Context[] = [];
-    const prepareNextTurn = vi.fn(({ message, context }: PrepareNextTurnContext) => {
+    const prepareNextStep = vi.fn(({ message, context }: PrepareNextStepContext) => {
       if (message === firstAssistant) {
         return {
           model: modelB,
@@ -385,11 +385,11 @@ describe('prepareNextTurn', () => {
       createContext([], [tool]),
       {
         model: modelA,
-        prepareNextTurn,
+        prepareNextStep,
         getSteeringMessages: () => [],
         getFollowUpMessages: () => [],
       },
-      sequentialStreamFn(twoTurnStreams(firstAssistant, secondAssistant), models, contexts),
+      sequentialStreamFn(twoStepStreams(firstAssistant, secondAssistant), models, contexts),
       () => undefined,
     );
 
@@ -408,11 +408,11 @@ describe('prepareNextTurn', () => {
       createContext(),
       {
         model: modelA,
-        prepareNextTurn: () => {
+        prepareNextStep: () => {
           order.push('prepare');
           return { context: updatedContext };
         },
-        shouldStopAfterTurn: ({ context }) => {
+        shouldStopAfterStep: ({ context }) => {
           order.push('stop');
           receivedContext = context;
           return true;
@@ -440,11 +440,11 @@ describe('prepareNextTurn', () => {
       createContext(),
       {
         model: modelA,
-        prepareNextTurn: () => {
+        prepareNextStep: () => {
           order.push('prepare');
           return undefined;
         },
-        shouldStopAfterTurn: () => {
+        shouldStopAfterStep: () => {
           order.push('stop');
           return false;
         },
@@ -469,7 +469,7 @@ describe('prepareNextTurn', () => {
       steeringPollCount += 1;
       return steeringPollCount === 2 ? [steering] : [];
     });
-    const prepareNextTurn = vi.fn(({ message, context }: PrepareNextTurnContext) => {
+    const prepareNextStep = vi.fn(({ message, context }: PrepareNextStepContext) => {
       if (message === firstAssistant) return { context: { ...context, messages: [replacement] } };
       return undefined;
     });
@@ -479,7 +479,7 @@ describe('prepareNextTurn', () => {
       createContext(),
       {
         model: modelA,
-        prepareNextTurn,
+        prepareNextStep,
         getSteeringMessages,
         getFollowUpMessages: () => [],
       },
@@ -496,7 +496,7 @@ describe('prepareNextTurn', () => {
     const firstAssistant = assistantMessage();
     const secondAssistant = assistantMessage();
     const contexts: Context[] = [];
-    const prepareNextTurn = vi.fn(({ message, context }: PrepareNextTurnContext) => {
+    const prepareNextStep = vi.fn(({ message, context }: PrepareNextStepContext) => {
       if (message === firstAssistant) return { context: { ...context, messages: [replacement] } };
       return undefined;
     });
@@ -510,7 +510,7 @@ describe('prepareNextTurn', () => {
       createContext(),
       {
         model: modelA,
-        prepareNextTurn,
+        prepareNextStep,
         getSteeringMessages: () => [],
         getFollowUpMessages,
       },
@@ -521,16 +521,16 @@ describe('prepareNextTurn', () => {
     expect(contexts[1]?.messages).toEqual([replacement, followUp]);
   });
 
-  it('does not create a new Turn just because the model was updated', async () => {
+  it('does not create a new Step just because the model was updated', async () => {
     const models: Model[] = [];
-    const prepareNextTurn = vi.fn(() => ({ model: modelB }));
+    const prepareNextStep = vi.fn(() => ({ model: modelB }));
 
     await runAgentLoop(
       [userMessage('initial')],
       createContext(),
       {
         model: modelA,
-        prepareNextTurn,
+        prepareNextStep,
         getSteeringMessages: () => [],
         getFollowUpMessages: () => [],
       },
@@ -538,11 +538,11 @@ describe('prepareNextTurn', () => {
       () => undefined,
     );
 
-    expect(prepareNextTurn).toHaveBeenCalledTimes(1);
+    expect(prepareNextStep).toHaveBeenCalledTimes(1);
     expect(models).toEqual([modelA]);
   });
 
-  it('passes the same AbortSignal to prepareNextTurn', async () => {
+  it('passes the same AbortSignal to prepareNextStep', async () => {
     const controller = new AbortController();
     let receivedSignal: AbortSignal | undefined;
 
@@ -551,7 +551,7 @@ describe('prepareNextTurn', () => {
       createContext(),
       {
         model: modelA,
-        prepareNextTurn: (_context, signal) => {
+        prepareNextStep: (_context, signal) => {
           receivedSignal = signal;
           return undefined;
         },
@@ -564,20 +564,20 @@ describe('prepareNextTurn', () => {
     expect(receivedSignal).toBe(controller.signal);
   });
 
-  it('passes AgentOptions.prepareNextTurn through the real Agent', async () => {
+  it('passes AgentOptions.prepareNextStep through the real Agent', async () => {
     const call: ModelToolCall = {
       callId: 'call_1',
       name: 'query_logs',
       arguments: {},
     };
     const tool = textTool('query_logs', 'logs found');
-    const prepareNextTurn = vi.fn(() => undefined);
+    const prepareNextStep = vi.fn(() => undefined);
     const agent = new Agent({
       model: modelA,
       tools: [tool],
-      prepareNextTurn,
+      prepareNextStep,
       streamFn: sequentialStreamFn(
-        twoTurnStreams(
+        twoStepStreams(
           assistantMessage(modelA, 'tool_calls', [call]),
           assistantMessage(),
         ),
@@ -588,10 +588,10 @@ describe('prepareNextTurn', () => {
 
     await agent.prompt(userMessage('initial'));
 
-    expect(prepareNextTurn).toHaveBeenCalledTimes(2);
+    expect(prepareNextStep).toHaveBeenCalledTimes(2);
   });
 
-  it('uses the active run model for a runtime failure after prepareNextTurn switches models', async () => {
+  it('uses the active run model for a runtime failure after prepareNextStep switches models', async () => {
     const call: ModelToolCall = {
       callId: 'call_1',
       name: 'query_logs',
@@ -605,10 +605,10 @@ describe('prepareNextTurn', () => {
       tools: [textTool('query_logs', 'logs found')],
       transformContext: (messages) => {
         transformCallCount += 1;
-        if (transformCallCount === 2) throw new Error('second turn runtime failed');
+        if (transformCallCount === 2) throw new Error('second step runtime failed');
         return messages;
       },
-      prepareNextTurn: () => ({ model: modelB }),
+      prepareNextStep: () => ({ model: modelB }),
       streamFn: sequentialStreamFn([assistantStream(firstAssistant)], models, []),
     });
 
@@ -621,17 +621,17 @@ describe('prepareNextTurn', () => {
       provider: modelB.provider,
       model: modelB.id,
       finishReason: 'error',
-      errorMessage: 'second turn runtime failed',
+      errorMessage: 'second step runtime failed',
     });
     expect(agent.state.model).toBe(modelA);
     expect(agent.state.errorInfo).toEqual({
       source: 'runtime',
       reason: 'error',
-      message: 'second turn runtime failed',
+      message: 'second step runtime failed',
     });
   });
 
-  it('keeps the previous active model when prepareNextTurn throws before switching models', async () => {
+  it('keeps the previous active model when prepareNextStep throws before switching models', async () => {
     const call: ModelToolCall = {
       callId: 'call_1',
       name: 'query_logs',
@@ -641,7 +641,7 @@ describe('prepareNextTurn', () => {
     const agent = new Agent({
       model: modelA,
       tools: [textTool('query_logs', 'logs found')],
-      prepareNextTurn: () => {
+      prepareNextStep: () => {
         throw new Error('prepare failed');
       },
       streamFn: sequentialStreamFn([assistantStream(firstAssistant)], [], []),

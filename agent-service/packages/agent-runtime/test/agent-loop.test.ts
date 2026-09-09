@@ -19,7 +19,7 @@ import type {
   AgentEvent,
   AgentMessage,
   AgentTool,
-  ShouldStopAfterTurnContext,
+  ShouldStopAfterStepContext,
   StreamFn,
 } from '../src/index.js';
 
@@ -169,12 +169,12 @@ describe('runAgentLoop tool loop', () => {
     const streamFn = createSequentialStreamFn([createAssistantStream(assistant, 'done')], contexts);
     const events: AgentEvent[] = [];
     const context = createContext();
-    const shouldStopAfterTurn = vi.fn(() => false);
+    const shouldStopAfterStep = vi.fn(() => false);
 
     const result = await runAgentLoop(
       [prompt],
       context,
-      { ...config, shouldStopAfterTurn },
+      { ...config, shouldStopAfterStep },
       streamFn,
       (event) => {
         events.push(event);
@@ -182,22 +182,22 @@ describe('runAgentLoop tool loop', () => {
     );
 
     expect(contexts).toHaveLength(1);
-    expect(shouldStopAfterTurn).toHaveBeenCalledTimes(1);
+    expect(shouldStopAfterStep).toHaveBeenCalledTimes(1);
     expect(result).toEqual([prompt, assistant]);
     expect(events.map((event) => event.type)).toEqual([
       'agent_start',
-      'turn_start',
+      'step_start',
       'message_start',
       'message_end',
       'message_start',
       'message_update',
       'message_end',
-      'turn_end',
+      'step_end',
       'agent_end',
     ]);
   });
 
-  it('executes one tool and gives its result to the next turn', async () => {
+  it('executes one tool and gives its result to the next step', async () => {
     const prompt = createPrompt();
     const call = {
       callId: 'call_1',
@@ -257,7 +257,7 @@ describe('runAgentLoop tool loop', () => {
     expect(result).toEqual([prompt, assistant1, toolResult, assistant2]);
     expect(events.map((event) => event.type)).toEqual([
       'agent_start',
-      'turn_start',
+      'step_start',
       'message_start',
       'message_end',
       'message_start',
@@ -266,22 +266,22 @@ describe('runAgentLoop tool loop', () => {
       'tool_execution_end',
       'message_start',
       'message_end',
-      'turn_end',
-      'turn_start',
+      'step_end',
+      'step_start',
       'message_start',
       'message_end',
-      'turn_end',
+      'step_end',
       'agent_end',
     ]);
     expect(events[6]).toEqual({ type: 'tool_execution_start', toolCall: call });
     expect(events[7]).toEqual({ type: 'tool_execution_end', toolCall: call, result: toolResult });
     expect(events[8]).toEqual({ type: 'message_start', message: toolResult });
     expect(events[9]).toEqual({ type: 'message_end', message: toolResult });
-    expect(events[10]).toEqual({ type: 'turn_end', message: assistant1, toolResults: [toolResult] });
-    expect(events[11]).toEqual({ type: 'turn_start' });
+    expect(events[10]).toEqual({ type: 'step_end', message: assistant1, toolResults: [toolResult] });
+    expect(events[11]).toEqual({ type: 'step_start' });
   });
 
-  it('stops after a complete tool turn when policy requests it', async () => {
+  it('stops after a complete tool step when policy requests it', async () => {
     const prompt = createPrompt();
     const call = {
       callId: 'call_policy',
@@ -295,12 +295,12 @@ describe('runAgentLoop tool loop', () => {
     const context = createContext([tool]);
     const events: AgentEvent[] = [];
     const streamFn = createSequentialStreamFn([createAssistantStream(assistant)], contexts);
-    const shouldStopAfterTurn = vi.fn((_context: ShouldStopAfterTurnContext) => true);
+    const shouldStopAfterStep = vi.fn((_context: ShouldStopAfterStepContext) => true);
 
     const result = await runAgentLoop(
       [prompt],
       context,
-      { ...config, shouldStopAfterTurn },
+      { ...config, shouldStopAfterStep },
       streamFn,
       (event) => {
         events.push(event);
@@ -308,7 +308,7 @@ describe('runAgentLoop tool loop', () => {
     );
 
     const toolResult = result[2];
-    const hookContext = shouldStopAfterTurn.mock.calls[0]?.[0];
+    const hookContext = shouldStopAfterStep.mock.calls[0]?.[0];
     expect(contexts).toHaveLength(1);
     expect(execute).toHaveBeenCalledTimes(1);
     expect(hookContext?.message).toBe(assistant);
@@ -326,12 +326,12 @@ describe('runAgentLoop tool loop', () => {
       'tool_execution_end',
       'message_start',
       'message_end',
-      'turn_end',
+      'step_end',
       'agent_end',
     ]);
   });
 
-  it('executes multiple tool calls in order within one turn', async () => {
+  it('executes multiple tool calls in order within one step', async () => {
     const prompt = createPrompt();
     const call1 = {
       callId: 'call_1',
@@ -589,12 +589,12 @@ describe('runAgentLoop tool loop', () => {
     const tool = createTextTool('query_logs', 'should not run', execute);
     const assistant = createAssistantMessage('length', [call]);
     const events: AgentEvent[] = [];
-    const shouldStopAfterTurn = vi.fn((_context: ShouldStopAfterTurnContext) => false);
+    const shouldStopAfterStep = vi.fn((_context: ShouldStopAfterStepContext) => false);
 
     await runAgentLoop(
       [createPrompt()],
       createContext([tool]),
-      { ...config, shouldStopAfterTurn },
+      { ...config, shouldStopAfterStep },
       createSequentialStreamFn([createAssistantStream(assistant)], []),
       (event) => {
         events.push(event);
@@ -602,8 +602,8 @@ describe('runAgentLoop tool loop', () => {
     );
 
     expect(execute).not.toHaveBeenCalled();
-    expect(shouldStopAfterTurn).toHaveBeenCalledTimes(1);
-    expect(events.map((event) => event.type).slice(-2)).toEqual(['turn_end', 'agent_end']);
+    expect(shouldStopAfterStep).toHaveBeenCalledTimes(1);
+    expect(events.map((event) => event.type).slice(-2)).toEqual(['step_end', 'agent_end']);
   });
 
   it('does not execute tools when finishReason is refusal', async () => {
@@ -616,12 +616,12 @@ describe('runAgentLoop tool loop', () => {
     const tool = createTextTool('query_logs', 'should not run', execute);
     const assistant = createAssistantMessage('refusal', [call]);
     const events: AgentEvent[] = [];
-    const shouldStopAfterTurn = vi.fn((_context: ShouldStopAfterTurnContext) => false);
+    const shouldStopAfterStep = vi.fn((_context: ShouldStopAfterStepContext) => false);
 
     await runAgentLoop(
       [createPrompt()],
       createContext([tool]),
-      { ...config, shouldStopAfterTurn },
+      { ...config, shouldStopAfterStep },
       createSequentialStreamFn([createAssistantStream(assistant)], []),
       (event) => {
         events.push(event);
@@ -629,8 +629,8 @@ describe('runAgentLoop tool loop', () => {
     );
 
     expect(execute).not.toHaveBeenCalled();
-    expect(shouldStopAfterTurn).toHaveBeenCalledTimes(1);
-    expect(events.map((event) => event.type).slice(-2)).toEqual(['turn_end', 'agent_end']);
+    expect(shouldStopAfterStep).toHaveBeenCalledTimes(1);
+    expect(events.map((event) => event.type).slice(-2)).toEqual(['step_end', 'agent_end']);
   });
 
   it('keeps the caller context unchanged while the loop context grows', async () => {
@@ -687,12 +687,12 @@ describe('runAgentLoop tool loop', () => {
     ).resolves.toEqual([createPrompt(), failure]);
     expect(events.map((event) => event.type)).toEqual([
       'agent_start',
-      'turn_start',
+      'step_start',
       'message_start',
       'message_end',
       'message_start',
       'message_end',
-      'turn_end',
+      'step_end',
       'agent_end',
     ]);
     expect(events).not.toContainEqual(expect.objectContaining({ type: 'tool_execution_start' }));
@@ -707,8 +707,8 @@ describe('runAgentLoop tool loop', () => {
     const stream = createModelEventStream(async (controller) => controller.error(failure));
     const getSteeringMessages = vi.fn(() => []);
     const getFollowUpMessages = vi.fn(() => []);
-    const prepareNextTurn = vi.fn();
-    const shouldStopAfterTurn = vi.fn();
+    const prepareNextStep = vi.fn();
+    const shouldStopAfterStep = vi.fn();
     const events: AgentEvent[] = [];
 
     await expect(
@@ -719,8 +719,8 @@ describe('runAgentLoop tool loop', () => {
           ...config,
           getSteeringMessages,
           getFollowUpMessages,
-          prepareNextTurn,
-          shouldStopAfterTurn,
+          prepareNextStep,
+          shouldStopAfterStep,
         },
         () => stream,
         (event) => {
@@ -731,20 +731,20 @@ describe('runAgentLoop tool loop', () => {
 
     expect(events.map((event) => event.type)).toEqual([
       'agent_start',
-      'turn_start',
+      'step_start',
       'message_start',
       'message_end',
       'message_start',
       'message_end',
-      'turn_end',
+      'step_end',
       'agent_end',
     ]);
     expect(events[4]).toEqual({ type: 'message_start', message: { ...failure } });
     expect(events[5]).toEqual({ type: 'message_end', message: failure });
     expect(getSteeringMessages).toHaveBeenCalledTimes(1);
     expect(getFollowUpMessages).not.toHaveBeenCalled();
-    expect(prepareNextTurn).not.toHaveBeenCalled();
-    expect(shouldStopAfterTurn).not.toHaveBeenCalled();
+    expect(prepareNextStep).not.toHaveBeenCalled();
+    expect(shouldStopAfterStep).not.toHaveBeenCalled();
   });
 
   it('keeps unexpected stream runtime errors rejected', async () => {
@@ -767,7 +767,7 @@ describe('runAgentLoop tool loop', () => {
     ).rejects.toBe(failure);
     expect(events.map((event) => event.type)).toEqual([
       'agent_start',
-      'turn_start',
+      'step_start',
       'message_start',
       'message_end',
     ]);

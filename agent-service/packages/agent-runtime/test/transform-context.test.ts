@@ -82,7 +82,7 @@ function createAssistantStream(message: AssistantMessage): ModelEventStream {
 }
 
 /** 创建按顺序返回模型事件流的函数。
- * @param streams 各 Turn 要返回的模型事件流。
+ * @param streams 各 Step 要返回的模型事件流。
  * @param contexts 记录每次传给模型的上下文。
  */
 function createSequentialStreamFn(
@@ -174,7 +174,7 @@ describe('transformContext', () => {
     expect(contexts[0]?.messages).toEqual([messageB]);
   });
 
-  it('runs once for every model turn and observes the growing Agent history', async () => {
+  it('runs once for every model step and observes the growing Agent history', async () => {
     const call: ModelToolCall = {
       callId: 'call_1',
       name: 'query_logs',
@@ -238,7 +238,7 @@ describe('transformContext', () => {
       {
         model,
         transformContext,
-        shouldStopAfterTurn: () => true,
+        shouldStopAfterStep: () => true,
       },
       createSequentialStreamFn([createAssistantStream(assistant)], contexts),
       () => undefined,

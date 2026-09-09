@@ -105,28 +105,28 @@ export interface AgentOptions {
   readonly messages?: readonly AgentMessage[];
   readonly transformContext?: AgentLoopConfig['transformContext'];
   readonly convertToLlm?: AgentLoopConfig['convertToLlm'];
-  readonly prepareNextTurn?: AgentLoopConfig['prepareNextTurn'];
-  readonly shouldStopAfterTurn?: AgentLoopConfig['shouldStopAfterTurn'];
+  readonly prepareNextStep?: AgentLoopConfig['prepareNextStep'];
+  readonly shouldStopAfterStep?: AgentLoopConfig['shouldStopAfterStep'];
   readonly beforeToolCall?: AgentLoopConfig['beforeToolCall'];
   readonly afterToolCall?: AgentLoopConfig['afterToolCall'];
   readonly toolExecution?: ToolExecutionMode;
 }
 
-export interface ShouldStopAfterTurnContext {
+export interface ShouldStopAfterStepContext {
   readonly message: AssistantMessage;
   readonly toolResults: readonly ToolResultMessage[];
   readonly context: AgentContext;
   readonly newMessages: readonly AgentMessage[];
 }
 
-export interface PrepareNextTurnContext {
+export interface PrepareNextStepContext {
   readonly message: AssistantMessage;
   readonly toolResults: readonly ToolResultMessage[];
   readonly context: AgentContext;
   readonly newMessages: readonly AgentMessage[];
 }
 
-export interface AgentLoopTurnUpdate {
+export interface AgentLoopStepUpdate {
   readonly context?: AgentContext;
   readonly model?: Model;
 }
@@ -147,18 +147,18 @@ export interface AgentLoopConfig {
   readonly convertToLlm?: (
     messages: readonly AgentMessage[],
   ) => readonly Message[] | Promise<readonly Message[]>;
-  readonly prepareNextTurn?: (
-    context: PrepareNextTurnContext,
+  readonly prepareNextStep?: (
+    context: PrepareNextStepContext,
     signal?: AbortSignal,
-  ) => AgentLoopTurnUpdate | undefined | Promise<AgentLoopTurnUpdate | undefined>;
+  ) => AgentLoopStepUpdate | undefined | Promise<AgentLoopStepUpdate | undefined>;
   readonly getSteeringMessages?: (
     signal?: AbortSignal,
   ) => readonly AgentMessage[] | Promise<readonly AgentMessage[]>;
   readonly getFollowUpMessages?: (
     signal?: AbortSignal,
   ) => readonly AgentMessage[] | Promise<readonly AgentMessage[]>;
-  readonly shouldStopAfterTurn?: (
-    context: ShouldStopAfterTurnContext,
+  readonly shouldStopAfterStep?: (
+    context: ShouldStopAfterStepContext,
   ) => boolean | Promise<boolean>;
   readonly beforeToolCall?: (
     context: BeforeToolCallContext,
@@ -188,12 +188,12 @@ export type AgentEvent =
       readonly messages: readonly AgentMessage[];
     }
 
-  // 单个 Turn 生命周期
+  // 单个 Step 生命周期
   | {
-      readonly type: 'turn_start';
+      readonly type: 'step_start';
     }
   | {
-      readonly type: 'turn_end';
+      readonly type: 'step_end';
       readonly message: AgentMessage;
       readonly toolResults: readonly ToolResultMessage[];
     }

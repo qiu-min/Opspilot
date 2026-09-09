@@ -55,8 +55,8 @@ export class Agent {
   private readonly streamFn: AgentOptions['streamFn'];
   private readonly transformContext: AgentOptions['transformContext'];
   private readonly convertToLlm: AgentOptions['convertToLlm'];
-  private readonly prepareNextTurn: AgentOptions['prepareNextTurn'];
-  private readonly shouldStopAfterTurn: AgentOptions['shouldStopAfterTurn'];
+  private readonly prepareNextStep: AgentOptions['prepareNextStep'];
+  private readonly shouldStopAfterStep: AgentOptions['shouldStopAfterStep'];
   private readonly beforeToolCall: AgentOptions['beforeToolCall'];
   private readonly afterToolCall: AgentOptions['afterToolCall'];
   private readonly toolExecution: AgentOptions['toolExecution'];
@@ -73,8 +73,8 @@ export class Agent {
     this.streamFn = options.streamFn;
     this.transformContext = options.transformContext;
     this.convertToLlm = options.convertToLlm;
-    this.prepareNextTurn = options.prepareNextTurn;
-    this.shouldStopAfterTurn = options.shouldStopAfterTurn;
+    this.prepareNextStep = options.prepareNextStep;
+    this.shouldStopAfterStep = options.shouldStopAfterStep;
     this.beforeToolCall = options.beforeToolCall;
     this.afterToolCall = options.afterToolCall;
     this.toolExecution = options.toolExecution;
@@ -240,18 +240,18 @@ export class Agent {
    * @returns 包含模型、现有 hooks 和队列 drain callback 的 Loop 配置。
    */
   private createLoopConfig(): AgentLoopConfig {
-    const prepareNextTurn = this.prepareNextTurn;
+    const prepareNextStep = this.prepareNextStep;
 
     return {
       model: this._state.model,
       thinkingLevel: this._state.thinkingLevel,
       transformContext: this.transformContext,
       convertToLlm: this.convertToLlm,
-      prepareNextTurn:
-        prepareNextTurn === undefined
+      prepareNextStep:
+        prepareNextStep === undefined
           ? undefined
           : async (context, signal) => {
-              const update = await prepareNextTurn(context, signal);
+              const update = await prepareNextStep(context, signal);
               if (update?.model !== undefined && this.activeRun !== undefined) {
                 this.activeRun.currentModel = update.model;
               }
@@ -259,7 +259,7 @@ export class Agent {
             },
       getSteeringMessages: () => this.drainSteeringQueue(),
       getFollowUpMessages: () => this.drainFollowUpQueue(),
-      shouldStopAfterTurn: this.shouldStopAfterTurn,
+      shouldStopAfterStep: this.shouldStopAfterStep,
       beforeToolCall: this.beforeToolCall,
       afterToolCall: this.afterToolCall,
       toolExecution: this.toolExecution,
@@ -371,7 +371,7 @@ export class Agent {
 
     const runMessages = this._state.messages.slice(runStartMessageIndex);
     await this.processEvents({
-      type: 'turn_end',
+      type: 'step_end',
       message: failureMessage,
       toolResults: [...termination.toolResults],
     });
@@ -417,7 +417,7 @@ export class Agent {
 
     const runMessages = this._state.messages.slice(runStartMessageIndex);
     await this.processEvents({
-      type: 'turn_end',
+      type: 'step_end',
       message: failureMessage,
       toolResults: [],
     });
@@ -461,9 +461,9 @@ export class Agent {
         this._state.streamingMessage = undefined;
         this._state.pendingToolCalls.length = 0;
         break;
-      case 'turn_start':
+      case 'step_start':
         break;
-      case 'turn_end':
+      case 'step_end':
         if (
           event.message.role === 'assistant' &&
           (event.message.finishReason === 'error' || event.message.finishReason === 'aborted') &&

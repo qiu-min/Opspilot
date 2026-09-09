@@ -43,7 +43,7 @@ AssistantMessage
 ### Runtime 负责
 
 * Agent Loop
-* Turn 生命周期
+* Step 生命周期
 * 消息上下文维护
 * ToolCall 执行
 * Tool 执行策略
@@ -101,7 +101,7 @@ runAgentLoop
     ↓
 runLoop
     ↓
-Turn Start
+Step Start
     ↓
 调用模型
     ↓
@@ -111,37 +111,37 @@ AssistantMessage
     ↓
 写入 ToolResult
     ↓
-Turn End
+Step End
     ↓
 判断是否继续
 ```
 
-一个 Agent Run 可以包含多个 Turn：
+一个 Agent Run 可以包含多个 Step：
 
 ```text
-Turn 1
+Step 1
 LLM
 ↓
 ToolCall
 ↓
 ToolResult
 
-Turn 2
+Step 2
 LLM
 ↓
 ToolCall
 ↓
 ToolResult
 
-Turn 3
+Step 3
 LLM
 ↓
 Final Answer
 ```
 
-Runtime 默认不设置 `maxTurns`、`maxSteps` 等隐式循环上限。
+Runtime 默认不设置 `maxSteps` 等隐式循环上限。
 
-业务层如果需要额外终止策略，可通过 `shouldStopAfterTurn` 注入。
+业务层如果需要额外终止策略，可通过 `shouldStopAfterStep` 注入。
 
 ---
 
@@ -795,7 +795,7 @@ recoverable Tool Error
 ```text
 ToolResult 写入 Context
         ↓
-Turn End
+Step End
         ↓
 再次调用 LLM
 ```
@@ -920,7 +920,7 @@ finishReason = tool_calls
 但没有有效 ToolCall
 ```
 
-Runtime 不再继续下一 Turn。
+Runtime 不再继续下一 Step。
 
 ---
 
@@ -929,7 +929,7 @@ Runtime 不再继续下一 Turn。
 业务层可以提供：
 
 ```ts
-shouldStopAfterTurn
+shouldStopAfterStep
 ```
 
 调用时机：
@@ -941,9 +941,9 @@ Tool batch 完成
         ↓
 ToolResult 提交
         ↓
-turn_end
+step_end
         ↓
-shouldStopAfterTurn
+shouldStopAfterStep
 ```
 
 返回：
@@ -958,7 +958,7 @@ true
 agent_end
 ```
 
-Runtime 不再开始下一 Turn。
+Runtime 不再开始下一 Step。
 
 ---
 
@@ -984,7 +984,7 @@ message_update...
     ↓
 message_end
     ↓
-turn_end
+step_end
     ↓
 agent_end
 ```
@@ -992,8 +992,8 @@ agent_end
 不会继续：
 
 * Tool Execution
-* prepareNextTurn
-* shouldStopAfterTurn
+* prepareNextStep
+* shouldStopAfterStep
 * follow-up
 * 后续 LLM 调用
 
@@ -1059,11 +1059,11 @@ agent_start
 agent_end
 ```
 
-### Turn
+### Step
 
 ```text
-turn_start
-turn_end
+step_start
+step_end
 ```
 
 ### Message
@@ -1284,7 +1284,7 @@ Agent 正在执行任务
         ↓
       steer
         ↓
-下一合适 Turn 边界加入 Context
+下一合适 Step 边界加入 Context
         ↓
 Agent 根据新要求继续
 ```
@@ -1308,7 +1308,7 @@ Follow-up 用于：
     ↓
 Follow-up Message
     ↓
-开始新的后续 Turn
+开始新的后续 Step
 ```
 
 Steering 和 Follow-up 的区别：
@@ -1437,7 +1437,7 @@ Runtime 会将取消收敛为完整的：
 ```text
 ToolResult / AssistantMessage
         ↓
-turn_end
+step_end
         ↓
 agent_end
 ```
@@ -1489,7 +1489,7 @@ ToolResult
   ↓
 Continue / Terminate
   ↓
-Next Turn / Agent End
+Next Step / Agent End
 ```
 
 它负责保证：

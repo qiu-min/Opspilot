@@ -16,7 +16,7 @@ sessions/{sessionId}/
 └── history.jsonl   # append-only durable history
 ```
 
-旧的 `{sessionId}.jsonl` 只在新目录不存在时读取，并在成功 restore 后 lazy migrate；迁移复制原始 history bytes、保留 legacy 文件，新目录优先，不完整新目录不 fallback。`title`、`createdAt`、`updatedAt` 不属于 SessionEntry，也不进入 Agent context。当前范围不实现 Run、RunSnapshot、RunEvent 或数据库 repository。
+旧的 `{sessionId}.jsonl` 只在新目录不存在时读取，并在成功 restore 后 lazy migrate；迁移复制原始 history bytes、保留 legacy 文件，新目录优先，不完整新目录不 fallback。`title`、`createdAt`、`updatedAt` 不属于 SessionEntry，也不进入 Agent context。Application 现在定义独立的 `TurnStore` port；本阶段只建立 Turn snapshot 与 TurnEvent durable log，不实现 resume orchestration 或数据库 repository。
 
 ## 1. 目标
 
