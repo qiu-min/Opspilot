@@ -1,15 +1,15 @@
 # OpsPilot Agent Service
 
-`agent-service/` 是 OpsPilot 的 TypeScript / Node.js Agent Service。当前业务层方向是 Conversation / Session；底层继续提供业务无关的 Agent Runtime、Model Gateway、Tool Gateway 和 Observability 基础设施。
+`agent-service/` 是 OpsPilot 的 TypeScript / Node.js Agent Service。业务层采用 Session / Turn / Step；底层继续提供业务无关的 Agent Runtime、Model Gateway、Tool Gateway 和 Observability 基础设施。
 
 ## Current Direction
 
 ```text
-Conversation / Session
+Session
           ↓
-Application Use Case
+Turn Application Use Case
           ↓
-Agent Runtime
+Agent Runtime Step
           ↓
 Tool Gateway
 ```
@@ -20,7 +20,7 @@ Tool Gateway
 Agent Service
 ├── Infrastructure
 ├── Application
-│   ├── Conversations
+│   ├── Turns
 │   └── Sessions
 ├── Session Domain (`packages/domain`)
 ├── Agent Runtime
@@ -34,9 +34,9 @@ Agent Runtime 必须保持业务无关。Runtime 不允许出现 `FileId`、`Exc
 
 ## Application
 
-Application 当前依赖 `@opspilot/domain` 提供纯内存 `Session` 与 `Turn` aggregate，并提供 `SessionStore`、`TurnStore` port、最小 AgentSession、createAgentSession 及 RunConversationTurn 组合入口。`@opspilot/infrastructure` 提供 filesystem adapter。
+Application 当前依赖 `@opspilot/domain` 提供纯内存 `Session` 与 `Turn` aggregate，并提供 `SessionStore`、`TurnStore` port、最小 AgentSession、createAgentSession 及 `ExecuteTurn` 组合入口。`@opspilot/infrastructure` 提供 filesystem adapter。
 
-Conversation 当前通过 `RunConversationTurn` 编排一次用户 Conversation Turn：接收 `sessionId` 和用户消息，加载或创建 Session，调用 Agent Runtime，接收 Runtime 结果与事件，并通过 `SessionStore` 更新 Session。具体 filesystem JSONL 实现由 `@opspilot/infrastructure` 提供。
+`ExecuteTurn` 编排一次用户 Turn：接收可选 `sessionId` 和用户消息，加载或创建 Session，创建并持久化 Turn，提交用户输入后调用 Agent Runtime，并通过 `SessionStore` 与 `TurnStore` 更新 durable state。具体 filesystem 实现由 `@opspilot/infrastructure` 提供。
 
 Domain Session 负责 metadata、identity、entry、会话树、branch 和 compaction invariants；它不依赖文件系统。Infrastructure 的 FileSystemSessionStore 负责文件创建、加载和 append-only 持久化；Application 不依赖该具体实现。
 
@@ -63,18 +63,20 @@ sessions/{sessionId}/
 
 ## API Boundary
 
-`apps/api` 提供当前 Conversation API；`apps/api-runtime` 负责 composition root 和 bootstrap。Backend 通过 HTTP 调用普通 Conversation endpoint。
+`apps/api` 提供 Session / Turn API；`apps/api-runtime` 负责 composition root 和 bootstrap。Backend 通过 HTTP 调用 Turn endpoint。
 
 当前接口：
 
-- `POST /conversations/turns`：执行一次普通 JSON Conversation Turn。
-- `POST /conversations/turns/stream`：以 SSE 透传 AgentEvent，并发送最终 `done` 事件。
+- `POST /turns`：执行一次普通 JSON Turn，可通过 body 中的 `sessionId` 继续已有 Session。
+- `POST /turns/stream`：以 SSE 透传当前执行 observer 事件，并发送最终 `done` 事件。
+- `POST /sessions/{sessionId}/turns`：在指定 Session 上执行 Turn。
+- `POST /sessions/{sessionId}/turns/stream`：在指定 Session 上以 SSE 执行 Turn。
 - `GET /sessions/{sessionId}/history`：供 Backend 读取当前 active branch 的 UI-safe 历史 projection。
 
-普通 Conversation 请求可以携带相对共享存储根目录的 Excel `storagePath`。`api-runtime` 将其安全解析为 Application 使用的绝对 `filePath`；SSE 和普通入口使用同一请求契约。
+普通 Turn 请求可以携带相对共享存储根目录的 Excel `storagePath`。`api-runtime` 将其安全解析为 Application 使用的绝对 `filePath`；SSE 和普通入口使用同一请求契约。
 
-Session 与 Turn 通过 Infrastructure 的 filesystem adapter 分别持久化；API 通过 Application 的 `RunConversationTurn` 访问，不直接操作 Domain Session、Turn 或 Model Gateway。
-历史恢复使用独立的 `buildConversationHistoryProjection()`，基于 `Session.getBranch()` 读取完整原始消息；它不复用会受 Compaction 影响的 `buildSessionContext()`，也不改变 JSONL persistence format。
+Session 与 Turn 通过 Infrastructure 的 filesystem adapter 分别持久化；API 通过 Application 的 `ExecuteTurn` 访问，不直接操作 Domain Session、Turn 或 Model Gateway。
+历史读取使用独立的 `buildSessionHistoryProjection()`，基于 `Session.getBranch()` 读取完整原始消息；它不复用会受 Compaction 影响的 `buildSessionContext()`，也不改变 JSONL persistence format。
 
 ## Development
 
@@ -100,6 +102,6 @@ pnpm build
 `OPS_PILOT_SHARED_STORAGE_ROOT` 必须指向同一个实际目录；Backend 保存的
 `uploads/<file>.xlsx` 才能被 Agent Service 通过同一相对路径读取。
 
-默认模型由 `DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID` 显式指定。`api-runtime` 会加载 `agent-service/.env`，并装配 Model Gateway、`RunConversationTurn` 和 Infrastructure filesystem SessionStore。
+默认模型由 `DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID` 显式指定。`api-runtime` 会加载 `agent-service/.env`，并装配 Model Gateway、`ExecuteTurn`、FileSystemSessionStore 和 FileSystemTurnStore。
 
 各 package 的具体职责和边界以其源码及 package README 为准。

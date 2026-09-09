@@ -4,8 +4,8 @@ import type { Model } from '@opspilot/model-gateway';
 import type { AgentSessionEvent } from '../agent-session/agent-session.js';
 import type { ExcelResource } from '../tools/excel-resource.js';
 
-/** Input for one application-level conversation turn. */
-export interface RunConversationTurnInput {
+/** Input for one Application-level Turn. */
+export interface ExecuteTurnInput {
   readonly sessionId?: string;
   readonly message: AgentMessage;
   readonly model?: Model;
@@ -13,28 +13,33 @@ export interface RunConversationTurnInput {
   readonly excelResource?: ExcelResource;
 }
 
-/** Optional event listener for one RunConversationTurn execution. */
-export interface RunConversationTurnExecutionOptions {
-  readonly onEvent?: RunConversationTurnEventListener;
+/** Optional observer for one ExecuteTurn execution. */
+export interface ExecuteTurnOptions {
+  readonly onEvent?: TurnExecutionEventListener;
 }
 
-/** Events emitted while the application resolves and executes one conversation turn. */
-export type RunConversationTurnEvent =
+/** Events emitted while the Application resolves and executes one Turn. */
+export type TurnExecutionEvent =
   | {
       readonly type: 'session_ready';
       readonly sessionId: string;
       readonly created: boolean;
     }
+  | {
+      readonly type: 'turn_ready';
+      readonly turnId: string;
+    }
   | AgentSessionEvent;
 
-/** Receives application lifecycle events and AgentSession events in order. */
-export type RunConversationTurnEventListener = (
-  event: RunConversationTurnEvent,
+/** Receives Application lifecycle events and AgentSession events in order. */
+export type TurnExecutionEventListener = (
+  event: TurnExecutionEvent,
 ) => void | Promise<void>;
 
-/** Messages and session identifiers produced by one conversation turn. */
-export interface RunConversationTurnResult {
+/** Result produced by one Application-level Turn. */
+export interface ExecuteTurnResult {
   readonly sessionId: string;
+  readonly turnId: string;
   readonly leafId: string | null;
   readonly messages: readonly AgentMessage[];
 }

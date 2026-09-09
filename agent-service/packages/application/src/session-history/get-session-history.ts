@@ -1,11 +1,11 @@
 import type { SessionStore } from '../session-store/session-store.js';
 import {
-  buildConversationHistoryProjection,
-  type ConversationHistoryProjection,
-} from './conversation-history-projection.js';
+  buildSessionHistoryProjection,
+  type SessionHistoryProjection,
+} from './session-history-projection.js';
 
 /** Reads the active branch history for an existing Agent Service session. */
-export class GetConversationHistory {
+export class GetSessionHistory {
   private readonly sessionStore: SessionStore;
 
   public constructor(sessionStore: SessionStore) {
@@ -13,8 +13,8 @@ export class GetConversationHistory {
   }
 
   /** Loads an existing session without creating one and projects its UI-safe history. */
-  public execute(sessionId: string): ConversationHistoryProjection {
+  public execute(sessionId: string): SessionHistoryProjection {
     const session = this.sessionStore.load(sessionId);
-    return buildConversationHistoryProjection(session.getBranch(), session.getLeafId());
+    return buildSessionHistoryProjection(session.getBranch(), session.getLeafId());
   }
 }

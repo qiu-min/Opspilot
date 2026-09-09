@@ -1,7 +1,7 @@
 import type { AgentMessage } from '@opspilot/agent-runtime';
 import { describe, expect, it } from 'vitest';
 
-import { buildConversationHistoryProjection, Session } from '../src/index.js';
+import { buildSessionHistoryProjection, Session } from '../src/index.js';
 
 function userMessage(text: string): AgentMessage {
   return { role: 'user', content: [{ type: 'text', text }] };
@@ -18,17 +18,17 @@ function assistantMessage(text: string): AgentMessage {
   };
 }
 
-function visibleMessages(items: ReturnType<typeof buildConversationHistoryProjection>['items']) {
+function visibleMessages(items: ReturnType<typeof buildSessionHistoryProjection>['items']) {
   return items.filter(
     (item): item is Extract<(typeof items)[number], { type: 'message' }> => item.type === 'message',
   );
 }
 
-describe('buildConversationHistoryProjection', () => {
+describe('buildSessionHistoryProjection', () => {
   it('returns an empty projection for an empty session branch', () => {
     const session = Session.create();
 
-    expect(buildConversationHistoryProjection(session.getBranch(), session.getLeafId())).toEqual({
+    expect(buildSessionHistoryProjection(session.getBranch(), session.getLeafId())).toEqual({
       leafId: null,
       items: [],
     });
@@ -41,7 +41,7 @@ describe('buildConversationHistoryProjection', () => {
     session.appendMessage(userMessage('user 2'));
     session.appendMessage(assistantMessage('assistant 2'));
 
-    const projection = buildConversationHistoryProjection(session.getBranch(), session.getLeafId());
+    const projection = buildSessionHistoryProjection(session.getBranch(), session.getLeafId());
 
     expect(visibleMessages(projection.items).map((item) => [item.role, item.text])).toEqual([
       ['user', 'user 1'],
@@ -55,7 +55,7 @@ describe('buildConversationHistoryProjection', () => {
     const session = Session.create();
     const entry = session.appendMessage(userMessage('stable'));
 
-    const projection = buildConversationHistoryProjection(session.getBranch());
+    const projection = buildSessionHistoryProjection(session.getBranch());
 
     expect(projection.items[0]?.id).toBe(entry.id);
   });
@@ -67,7 +67,7 @@ describe('buildConversationHistoryProjection', () => {
     session.appendThinkingLevelChange('low');
     session.appendCompaction('summary must not be shown', message.id, 10);
 
-    const projection = buildConversationHistoryProjection(session.getBranch());
+    const projection = buildSessionHistoryProjection(session.getBranch());
 
     expect(visibleMessages(projection.items).map((item) => item.text)).toEqual(['visible']);
   });
@@ -83,7 +83,7 @@ describe('buildConversationHistoryProjection', () => {
       isError: false,
     });
 
-    const projection = buildConversationHistoryProjection(session.getBranch());
+    const projection = buildSessionHistoryProjection(session.getBranch());
 
     expect(projection.items).toEqual([
       expect.objectContaining({ type: 'message', role: 'user', text: 'user' }),
@@ -119,7 +119,7 @@ describe('buildConversationHistoryProjection', () => {
     });
     const finalAssistant = session.appendMessage(assistantMessage('final answer'));
 
-    const projection = buildConversationHistoryProjection(session.getBranch());
+    const projection = buildSessionHistoryProjection(session.getBranch());
 
     expect(projection.items.map((item) => item.type)).toEqual([
       'message',
@@ -159,7 +159,7 @@ describe('buildConversationHistoryProjection', () => {
       finishReason: 'stop',
     });
 
-    const projection = buildConversationHistoryProjection(session.getBranch());
+    const projection = buildSessionHistoryProjection(session.getBranch());
 
     expect(visibleMessages(projection.items)[0]?.text).toBe('public answer');
     expect(JSON.stringify(projection)).not.toContain('private reasoning');
@@ -173,7 +173,7 @@ describe('buildConversationHistoryProjection', () => {
     const newAssistant = session.appendMessage(assistantMessage('new assistant'));
     session.appendCompaction('summary must not replace original messages', newUser.id, 42);
 
-    const projection = buildConversationHistoryProjection(session.getBranch());
+    const projection = buildSessionHistoryProjection(session.getBranch());
 
     expect(projection.items.map((item) => item.id)).toEqual([
       oldUser.id,
@@ -197,7 +197,7 @@ describe('buildConversationHistoryProjection', () => {
     session.branch(b.id);
     const d = session.appendMessage(assistantMessage('D'));
 
-    const projection = buildConversationHistoryProjection(session.getBranch());
+    const projection = buildSessionHistoryProjection(session.getBranch());
 
     expect(visibleMessages(projection.items).map((item) => item.text)).toEqual(['A', 'B', 'D']);
     expect(projection.leafId).toBe(d.id);

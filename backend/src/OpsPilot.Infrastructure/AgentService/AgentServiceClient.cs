@@ -43,7 +43,7 @@ public sealed class AgentServiceClient(HttpClient httpClient) : IAgentConversati
         CancellationToken cancellationToken)
     {
         using HttpResponseMessage response = await httpClient.PostAsJsonAsync(
-            "conversations/turns",
+            GetTurnPath(request.SessionId, stream: false),
             request,
             JsonSerializerOptions,
             cancellationToken);
@@ -69,7 +69,7 @@ public sealed class AgentServiceClient(HttpClient httpClient) : IAgentConversati
     {
         using var httpRequest = new HttpRequestMessage(
             HttpMethod.Post,
-            "conversations/turns/stream")
+            GetTurnPath(request.SessionId, stream: true))
         {
             Content = JsonContent.Create(request, options: JsonSerializerOptions),
         };
@@ -93,5 +93,13 @@ public sealed class AgentServiceClient(HttpClient httpClient) : IAgentConversati
         {
             yield return AgentServiceStreamEventParser.Parse(frame);
         }
+    }
+
+    private static string GetTurnPath(Guid? sessionId, bool stream)
+    {
+        string suffix = stream ? "turns/stream" : "turns";
+        return sessionId is Guid value
+            ? $"sessions/{value:D}/{suffix}"
+            : suffix;
     }
 }

@@ -2,7 +2,7 @@ import type { AgentMessage } from '@opspilot/agent-runtime';
 import type { SessionEntry } from '@opspilot/domain';
 
 /** A UI-safe message item projected from one persisted session message entry. */
-export interface ConversationHistoryMessageItem {
+export interface SessionHistoryMessageItem {
   readonly type: 'message';
   readonly id: string;
   readonly role: 'user' | 'assistant';
@@ -11,7 +11,7 @@ export interface ConversationHistoryMessageItem {
 }
 
 /** A UI-safe tool execution item projected from one persisted tool result entry. */
-export interface ConversationHistoryToolExecutionItem {
+export interface SessionHistoryToolExecutionItem {
   readonly type: 'tool_execution';
   readonly id: string;
   readonly callId: string;
@@ -20,14 +20,13 @@ export interface ConversationHistoryToolExecutionItem {
   readonly createdAt: string;
 }
 
-/** The extensible item union returned to the conversation history boundary. */
-export type ConversationHistoryItem =
-  ConversationHistoryMessageItem | ConversationHistoryToolExecutionItem;
+/** The extensible item union returned to the Session history boundary. */
+export type SessionHistoryItem = SessionHistoryMessageItem | SessionHistoryToolExecutionItem;
 
 /** The durable history projection for the active branch of a session. */
-export interface ConversationHistoryProjection {
+export interface SessionHistoryProjection {
   readonly leafId: string | null;
-  readonly items: readonly ConversationHistoryItem[];
+  readonly items: readonly SessionHistoryItem[];
 }
 
 /**
@@ -37,11 +36,11 @@ export interface ConversationHistoryProjection {
  * intentionally independent from buildSessionContext(), so compaction never removes
  * durable messages from the history shown in the Web UI.
  */
-export function buildConversationHistoryProjection(
+export function buildSessionHistoryProjection(
   branch: readonly SessionEntry[],
   leafId: string | null = branch.at(-1)?.id ?? null,
-): ConversationHistoryProjection {
-  const items: ConversationHistoryItem[] = [];
+): SessionHistoryProjection {
+  const items: SessionHistoryItem[] = [];
   for (const entry of branch) {
     if (entry.type !== 'message') continue;
 

@@ -5,11 +5,10 @@ import {
   type ApplicationBindingsOptions,
 } from './application-bindings.module.js';
 import { CommonModule } from './common/common.module.js';
-import { ConversationsModule } from './conversations/conversations.module.js';
 import { SessionsModule } from './sessions/sessions.module.js';
 
 @Module({
-  imports: [CommonModule, ConversationsModule, SessionsModule],
+  imports: [CommonModule, SessionsModule],
 })
 export class ApiModule {
   static register(bindings: ApplicationBindingsOptions): DynamicModule {
@@ -17,7 +16,6 @@ export class ApiModule {
       module: ApiModule,
       imports: [
         CommonModule,
-        ConversationsModule,
         SessionsModule,
         ApplicationBindingsModule.register(bindings),
       ],

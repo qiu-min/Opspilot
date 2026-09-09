@@ -3,11 +3,11 @@ import {
   createGetSheetProfileTool,
   createGetWorkbookInfoTool,
   buildOpsPilotSystemPrompt,
-  GetConversationHistory,
-  RunConversationTurn,
+  GetSessionHistory,
+  ExecuteTurn,
   type ToolDefinition,
 } from '@opspilot/application';
-import { FileSystemSessionStore } from '@opspilot/infrastructure';
+import { FileSystemSessionStore, FileSystemTurnStore } from '@opspilot/infrastructure';
 import { createModelGateway, loadModelGatewayConfig } from '@opspilot/model-gateway';
 import { ExcelJsDiscoveryAdapter } from '@opspilot/tool-gateway';
 
@@ -41,24 +41,26 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     tools: toolDefinitions,
   });
   const sessionStore = new FileSystemSessionStore(config.sessionDirectory);
+  const turnStore = new FileSystemTurnStore(config.sharedStorageRoot);
   const excelResourcePathResolver = new FileSystemExcelResourcePathResolver(
     config.sharedStorageRoot,
   );
-  const runConversationTurn = new RunConversationTurn({
+  const executeTurn = new ExecuteTurn({
     sessionStore,
+    turnStore,
     modelGateway,
     defaultModel,
     toolDefinitions,
     systemPrompt,
   });
-  const getConversationHistory = new GetConversationHistory(sessionStore);
+  const getSessionHistory = new GetSessionHistory(sessionStore);
 
   return ApiModule.register({
     providers: [
-      { provide: RunConversationTurn, useValue: runConversationTurn },
-      { provide: GetConversationHistory, useValue: getConversationHistory },
+      { provide: ExecuteTurn, useValue: executeTurn },
+      { provide: GetSessionHistory, useValue: getSessionHistory },
       { provide: EXCEL_RESOURCE_PATH_RESOLVER, useValue: excelResourcePathResolver },
     ],
-    exports: [RunConversationTurn, GetConversationHistory, EXCEL_RESOURCE_PATH_RESOLVER],
+    exports: [ExecuteTurn, GetSessionHistory, EXCEL_RESOURCE_PATH_RESOLVER],
   });
 }

@@ -10,7 +10,7 @@ const relativeStoragePathSchema = z
     message: 'storagePath must be relative to the shared storage root.',
   });
 
-export const conversationTurnRequestSchema = z
+export const executeTurnRequestSchema = z
   .object({
     sessionId: z.uuid({ version: 'v4' }).optional(),
     message: z.string().trim().min(1),
@@ -25,6 +25,6 @@ export const conversationTurnRequestSchema = z
   .strict();
 
 export type ExcelResourceRequest = NonNullable<
-  z.infer<typeof conversationTurnRequestSchema>['excelResource']
+  z.infer<typeof executeTurnRequestSchema>['excelResource']
 >;
-export type ConversationTurnRequest = z.infer<typeof conversationTurnRequestSchema>;
+export type ExecuteTurnRequest = z.infer<typeof executeTurnRequestSchema>;

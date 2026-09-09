@@ -1,16 +1,19 @@
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import { EventEmitter } from 'node:events';
 
-import { GetConversationHistory, RunConversationTurn } from '@opspilot/application';
-import type { RunConversationTurnInput, RunConversationTurnResult } from '@opspilot/application';
+import { GetSessionHistory, ExecuteTurn } from '@opspilot/application';
+import type {
+  ExecuteTurnInput,
+  ExecuteTurnResult,
+} from '@opspilot/application';
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiModule, EXCEL_RESOURCE_PATH_RESOLVER } from '../src/index.js';
-import { ConversationsController } from '../src/conversations/conversations.controller.js';
-import type { ExcelResourcePathResolver } from '../src/conversations/excel-resource-path-resolver.js';
+import { TurnsController } from '../src/turns/turns.controller.js';
+import type { ExcelResourcePathResolver } from '../src/sessions/excel-resource-path-resolver.js';
 
 interface HttpResponse {
   readonly statusCode: number;
@@ -51,7 +54,7 @@ const defaultExcelResourcePathResolver: ExcelResourcePathResolver = {
   },
 };
 
-describe('Conversation API', () => {
+describe('Turn API', () => {
   let app: INestApplication | undefined;
 
   afterEach(async () => {
@@ -60,7 +63,7 @@ describe('Conversation API', () => {
   });
 
   it('runs a JSON turn, maps the user string, and returns the public result', async () => {
-    const execute = vi.fn<RunConversationTurn['execute']>(async (input) => {
+    const execute = vi.fn<ExecuteTurn['execute']>(async (input) => {
       expect(input).toEqual({
         message: {
           role: 'user',
@@ -72,13 +75,14 @@ describe('Conversation API', () => {
     const server = await startServer(execute);
     app = server.app;
 
-    const response = await postJson(server.port, '/conversations/turns', {
+    const response = await postJson(server.port, '/turns', {
       message: 'hello',
     });
 
     expect(response.statusCode).toBe(200);
     expect(JSON.parse(response.body)).toEqual({
       sessionId: 'session-1',
+      turnId: 'turn-1',
       leafId: 'leaf-1',
       status: 'completed',
       output: 'hello back',
@@ -88,7 +92,7 @@ describe('Conversation API', () => {
 
   it('resolves an Excel resource without exposing its file path to the request contract', async () => {
     const resolve = vi.fn(() => ({ id: 'file-1', filePath: '/shared/uploads/report.xlsx' }));
-    const execute = vi.fn<RunConversationTurn['execute']>(async (input) => {
+    const execute = vi.fn<ExecuteTurn['execute']>(async (input) => {
       expect(input).toEqual({
         message: {
           role: 'user',
@@ -101,7 +105,7 @@ describe('Conversation API', () => {
     const server = await startServer(execute, { resolve });
     app = server.app;
 
-    const response = await postJson(server.port, '/conversations/turns', {
+    const response = await postJson(server.port, '/turns', {
       message: 'inspect workbook',
       excelResource: { id: 'file-1', storagePath: 'uploads/report.xlsx' },
     });
@@ -138,11 +142,11 @@ describe('Conversation API', () => {
       filePath: '/shared/report.xlsx',
     },
   ])('$message', async ({ excelResource, filePath }) => {
-    const execute = vi.fn<RunConversationTurn['execute']>(async () => turnResult);
+    const execute = vi.fn<ExecuteTurn['execute']>(async () => turnResult);
     const server = await startServer(execute);
     app = server.app;
 
-    const response = await postJson(server.port, '/conversations/turns', {
+    const response = await postJson(server.port, '/turns', {
       message: 'inspect workbook',
       excelResource,
       ...(filePath === undefined ? {} : { filePath }),
@@ -154,11 +158,11 @@ describe('Conversation API', () => {
   });
 
   it('rejects an invalid JSON turn body', async () => {
-    const execute = vi.fn<RunConversationTurn['execute']>(async () => turnResult);
+    const execute = vi.fn<ExecuteTurn['execute']>(async () => turnResult);
     const server = await startServer(execute);
     app = server.app;
 
-    const response = await postBody(server.port, '/conversations/turns', '{not-json');
+    const response = await postBody(server.port, '/turns', '{not-json');
 
     expect(response.statusCode).toBe(400);
     expect(JSON.parse(response.body)).toMatchObject({
@@ -169,11 +173,11 @@ describe('Conversation API', () => {
   });
 
   it('continues an empty body request without hanging', async () => {
-    const execute = vi.fn<RunConversationTurn['execute']>(async () => turnResult);
+    const execute = vi.fn<ExecuteTurn['execute']>(async () => turnResult);
     const server = await startServer(execute);
     app = server.app;
 
-    const response = await postBody(server.port, '/conversations/turns', '');
+    const response = await postBody(server.port, '/turns', '');
 
     expect(response.statusCode).toBe(400);
     expect(JSON.parse(response.body)).toMatchObject({
@@ -188,19 +192,20 @@ describe('Conversation API', () => {
   ] as const)(
     'returns Agent finishReason %s as status %s without leaking errorMessage',
     async (finishReason, status) => {
-      const execute = vi.fn<RunConversationTurn['execute']>(async () =>
+      const execute = vi.fn<ExecuteTurn['execute']>(async () =>
         createTurnResult(finishReason, 'provider secret'),
       );
       const server = await startServer(execute);
       app = server.app;
 
-      const response = await postJson(server.port, '/conversations/turns', {
+      const response = await postJson(server.port, '/turns', {
         message: 'hello',
       });
 
       expect(response.statusCode).toBe(200);
       expect(JSON.parse(response.body)).toEqual({
         sessionId: 'session-1',
+        turnId: 'turn-1',
         leafId: 'leaf-1',
         status,
         output: '',
@@ -210,11 +215,11 @@ describe('Conversation API', () => {
   );
 
   it('rejects a non-v4 sessionId before calling Application', async () => {
-    const execute = vi.fn<RunConversationTurn['execute']>(async () => turnResult);
+    const execute = vi.fn<ExecuteTurn['execute']>(async () => turnResult);
     const server = await startServer(execute);
     app = server.app;
 
-    const response = await postJson(server.port, '/conversations/turns', {
+    const response = await postJson(server.port, '/turns', {
       sessionId: 'abc',
       message: 'hello',
     });
@@ -225,7 +230,7 @@ describe('Conversation API', () => {
   });
 
   it('writes AgentEvents in order, forwards tool events, and sends done', async () => {
-    const execute: RunConversationTurn['execute'] = async (_input, options) => {
+    const execute: ExecuteTurn['execute'] = async (_input, options) => {
       options?.onEvent?.({
         type: 'session_ready',
         sessionId: sessionReadyId,
@@ -239,8 +244,8 @@ describe('Conversation API', () => {
       options?.onEvent?.({ type: 'session_settled' });
       return { ...turnResult, sessionId: sessionReadyId };
     };
-    const controller = new ConversationsController(
-      { execute } as RunConversationTurn,
+    const controller = new TurnsController(
+      { execute } as ExecuteTurn,
       defaultExcelResourcePathResolver,
     );
     const request = new EventEmitter() as Request;
@@ -259,7 +264,7 @@ describe('Conversation API', () => {
         'event: agent_start\ndata: {"type":"agent_start"}\n\n',
         'event: tool_execution_start\ndata: {"type":"tool_execution_start","toolCall":{"callId":"call-1","name":"lookup","arguments":{"query":"hello"}}}\n\n',
         'event: session_settled\ndata: {"type":"session_settled"}\n\n',
-        `event: done\ndata: {"sessionId":"${sessionReadyId}","leafId":"leaf-1","status":"completed"}\n\n`,
+        `event: done\ndata: {"sessionId":"${sessionReadyId}","turnId":"turn-1","leafId":"leaf-1","status":"completed","output":"hello back"}\n\n`,
       ].join(''),
     );
     expect(response.writableEnded).toBe(true);
@@ -268,7 +273,7 @@ describe('Conversation API', () => {
   });
 
   it('serves the stream endpoint with SSE events and headers', async () => {
-    const execute: RunConversationTurn['execute'] = async (_input, options) => {
+    const execute: ExecuteTurn['execute'] = async (_input, options) => {
       options?.onEvent?.({
         type: 'session_ready',
         sessionId: sessionReadyId,
@@ -280,7 +285,7 @@ describe('Conversation API', () => {
     const server = await startServer(execute);
     app = server.app;
 
-    const response = await postJson(server.port, '/conversations/turns/stream', {
+    const response = await postJson(server.port, '/turns/stream', {
       message: 'hello',
     });
 
@@ -290,21 +295,21 @@ describe('Conversation API', () => {
       [
         `event: session_ready\ndata: {"type":"session_ready","sessionId":"${sessionReadyId}","created":true}\n\n`,
         'event: agent_start\ndata: {"type":"agent_start"}\n\n',
-        `event: done\ndata: {"sessionId":"${sessionReadyId}","leafId":"leaf-1","status":"completed"}\n\n`,
+        `event: done\ndata: {"sessionId":"${sessionReadyId}","turnId":"turn-1","leafId":"leaf-1","status":"completed","output":"hello back"}\n\n`,
       ].join(''),
     );
   });
 
   it('resolves an Excel resource for the stream endpoint as well', async () => {
     const resolve = vi.fn(() => ({ id: 'file-2', filePath: '/shared/data/book.xlsx' }));
-    const execute = vi.fn<RunConversationTurn['execute']>(async (input) => {
+    const execute = vi.fn<ExecuteTurn['execute']>(async (input) => {
       expect(input.excelResource).toEqual({ id: 'file-2', filePath: '/shared/data/book.xlsx' });
       return turnResult;
     });
     const server = await startServer(execute, { resolve });
     app = server.app;
 
-    const response = await postJson(server.port, '/conversations/turns/stream', {
+    const response = await postJson(server.port, '/turns/stream', {
       message: 'inspect workbook',
       excelResource: { id: 'file-2', storagePath: 'data/book.xlsx' },
     });
@@ -316,33 +321,33 @@ describe('Conversation API', () => {
 
   it('sanitizes Agent error events and sends done with error status', async () => {
     const errorResult = createTurnResult('error', 'provider secret');
-    const execute: RunConversationTurn['execute'] = async (_input, options) => {
+    const execute: ExecuteTurn['execute'] = async (_input, options) => {
       options?.onEvent?.({ type: 'agent_end', messages: errorResult.messages });
       return errorResult;
     };
     const server = await startServer(execute);
     app = server.app;
 
-    const response = await postJson(server.port, '/conversations/turns/stream', {
+    const response = await postJson(server.port, '/turns/stream', {
       message: 'hello',
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain(
-      'event: done\ndata: {"sessionId":"session-1","leafId":"leaf-1","status":"error"}\n\n',
+      'event: done\ndata: {"sessionId":"session-1","turnId":"turn-1","leafId":"leaf-1","status":"error","output":""}\n\n',
     );
     expect(response.body).not.toContain('errorMessage');
     expect(response.body).not.toContain('provider secret');
   });
 
   it('delegates a stream error before the first event to the API exception filter', async () => {
-    const execute: RunConversationTurn['execute'] = async () => {
+    const execute: ExecuteTurn['execute'] = async () => {
       throw new Error('provider secret');
     };
     const server = await startServer(execute);
     app = server.app;
 
-    const response = await postJson(server.port, '/conversations/turns/stream', {
+    const response = await postJson(server.port, '/turns/stream', {
       message: 'hello',
     });
 
@@ -355,12 +360,12 @@ describe('Conversation API', () => {
   });
 
   it('sends an SSE error after the stream has started', async () => {
-    const execute: RunConversationTurn['execute'] = async (_input, options) => {
+    const execute: ExecuteTurn['execute'] = async (_input, options) => {
       options?.onEvent?.({ type: 'agent_start' });
       throw new Error('provider secret');
     };
-    const controller = new ConversationsController(
-      { execute } as RunConversationTurn,
+    const controller = new TurnsController(
+      { execute } as ExecuteTurn,
       defaultExcelResourcePathResolver,
     );
     const request = new EventEmitter() as Request;
@@ -378,14 +383,14 @@ describe('Conversation API', () => {
   it('does not write more events after the client disconnects', async () => {
     const request = new EventEmitter() as Request;
     const response = new FakeResponse();
-    const execute: RunConversationTurn['execute'] = async (_input, options) => {
+    const execute: ExecuteTurn['execute'] = async (_input, options) => {
       options?.onEvent?.({ type: 'agent_start' });
       request.emit('close');
       options?.onEvent?.({ type: 'agent_end', messages: turnResult.messages });
       return turnResult;
     };
-    const controller = new ConversationsController(
-      { execute } as RunConversationTurn,
+    const controller = new TurnsController(
+      { execute } as ExecuteTurn,
       defaultExcelResourcePathResolver,
     );
 
@@ -397,7 +402,7 @@ describe('Conversation API', () => {
 });
 
 async function startServer(
-  execute: RunConversationTurn['execute'],
+  execute: ExecuteTurn['execute'],
   excelResourcePathResolver: ExcelResourcePathResolver = defaultExcelResourcePathResolver,
 ): Promise<{
   readonly app: INestApplication;
@@ -407,14 +412,14 @@ async function startServer(
     imports: [
       ApiModule.register({
         providers: [
-          { provide: RunConversationTurn, useValue: { execute } },
+          { provide: ExecuteTurn, useValue: { execute } },
           {
-            provide: GetConversationHistory,
+            provide: GetSessionHistory,
             useValue: { execute: () => ({ leafId: null, items: [] }) },
           },
           { provide: EXCEL_RESOURCE_PATH_RESOLVER, useValue: excelResourcePathResolver },
         ],
-        exports: [RunConversationTurn, GetConversationHistory, EXCEL_RESOURCE_PATH_RESOLVER],
+        exports: [ExecuteTurn, GetSessionHistory, EXCEL_RESOURCE_PATH_RESOLVER],
       }),
     ],
   }).compile();
@@ -465,9 +470,10 @@ function postBody(port: number, path: string, body: string): Promise<HttpRespons
 function createTurnResult(
   finishReason: 'stop' | 'error' | 'aborted',
   errorMessage?: string,
-): RunConversationTurnResult {
+): ExecuteTurnResult {
   return {
     sessionId: 'session-1',
+    turnId: 'turn-1',
     leafId: 'leaf-1',
     messages: [
       {

@@ -17,10 +17,10 @@ import { Workbook } from 'exceljs';
 import {
   createGetSheetProfileTool,
   createGetWorkbookInfoTool,
-  RunConversationTurn,
-  type RunConversationTurnEvent,
+  ExecuteTurn,
+  type TurnExecutionEvent,
 } from '@opspilot/application';
-import { FileSystemSessionStore } from '@opspilot/infrastructure';
+import { FileSystemSessionStore, FileSystemTurnStore } from '@opspilot/infrastructure';
 
 const providerId = 'moonshot';
 const modelId = 'kimi-k3';
@@ -50,8 +50,9 @@ async function main(): Promise<void> {
 
     const toolEvents: string[] = [];
     const excelDiscoveryConnector = new ExcelJsDiscoveryAdapter();
-    const runner = new RunConversationTurn({
+    const runner = new ExecuteTurn({
       sessionStore: new FileSystemSessionStore(sessionDirectory),
+      turnStore: new FileSystemTurnStore(directory),
       modelGateway: gateway,
       defaultModel: model,
       toolDefinitions: [
@@ -79,7 +80,7 @@ async function main(): Promise<void> {
   }
 }
 
-function recordToolEvent(event: RunConversationTurnEvent, toolEvents: string[]): void {
+function recordToolEvent(event: TurnExecutionEvent, toolEvents: string[]): void {
   if (event.type !== 'tool_execution_start' && event.type !== 'tool_execution_end') return;
   toolEvents.push(`${event.type}:${event.toolCall.name}`);
   console.info(`[agent-event] ${event.type} tool=${event.toolCall.name}`);

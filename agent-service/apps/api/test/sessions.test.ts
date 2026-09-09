@@ -1,8 +1,8 @@
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 
 import {
-  GetConversationHistory,
-  RunConversationTurn,
+  GetSessionHistory,
+  ExecuteTurn,
   Session,
   type SessionStore,
 } from '@opspilot/application';
@@ -11,7 +11,7 @@ import type { INestApplication } from '@nestjs/common';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ApiModule, EXCEL_RESOURCE_PATH_RESOLVER } from '../src/index.js';
-import type { ExcelResourcePathResolver } from '../src/conversations/excel-resource-path-resolver.js';
+import type { ExcelResourcePathResolver } from '../src/sessions/excel-resource-path-resolver.js';
 
 interface HttpResponse {
   readonly statusCode: number;
@@ -84,7 +84,7 @@ describe('Session history API', () => {
         throw new Error('history endpoint must not save metadata');
       },
     };
-    app = await startServer(new GetConversationHistory(store));
+    app = await startServer(new GetSessionHistory(store));
 
     const response = await getJson(app, `/sessions/${sessionId}/history`);
 
@@ -154,7 +154,7 @@ describe('Session history API', () => {
         throw new Error('history endpoint must not save metadata');
       },
     };
-    app = await startServer(new GetConversationHistory(store));
+    app = await startServer(new GetSessionHistory(store));
 
     const response = await getJson(app, `/sessions/${sessionId}/history`);
     const body = JSON.parse(response.body) as {
@@ -176,21 +176,21 @@ describe('Session history API', () => {
 });
 
 async function startServer(
-  getConversationHistory: GetConversationHistory,
+  getSessionHistory: GetSessionHistory,
 ): Promise<INestApplication> {
   const module = await Test.createTestingModule({
     imports: [
       ApiModule.register({
         providers: [
           {
-            provide: RunConversationTurn,
+            provide: ExecuteTurn,
             useValue: {
               execute: async () => {
                 throw new Error('not used');
               },
             },
           },
-          { provide: GetConversationHistory, useValue: getConversationHistory },
+          { provide: GetSessionHistory, useValue: getSessionHistory },
           {
             provide: EXCEL_RESOURCE_PATH_RESOLVER,
             useValue: {
@@ -198,7 +198,7 @@ async function startServer(
             } satisfies ExcelResourcePathResolver,
           },
         ],
-        exports: [RunConversationTurn, GetConversationHistory, EXCEL_RESOURCE_PATH_RESOLVER],
+        exports: [ExecuteTurn, GetSessionHistory, EXCEL_RESOURCE_PATH_RESOLVER],
       }),
     ],
   }).compile();

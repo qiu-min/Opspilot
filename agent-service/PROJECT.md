@@ -1,6 +1,6 @@
 # OpsPilot Agent Service Project
 
-Agent Service 是 OpsPilot 中独立的 TypeScript / Node.js 服务。当前方向是围绕 Conversation / Session 建立业务应用层，并复用业务无关的 Agent Runtime、Model Gateway、Tool Gateway 和 Observability 能力。
+Agent Service 是 OpsPilot 中独立的 TypeScript / Node.js 服务。当前方向是围绕 Session / Turn / Step 建立业务应用层，并复用业务无关的 Agent Runtime、Model Gateway、Tool Gateway 和 Observability 能力。
 
 ## 1. Positioning
 
@@ -20,7 +20,7 @@ Agent Service 内部当前整理为：
 Agent Service
 ├── Infrastructure
 ├── Application
-│   ├── Conversations
+│   ├── Turns
 │   └── Sessions
 ├── Session Domain (`packages/domain`)
 ├── Agent Runtime
@@ -35,31 +35,31 @@ Session Domain 负责纯内存 Session aggregate；Application 负责用例编�
 Application 位于业务概念和通用 Runtime 之间：
 
 ```text
-Conversation / Session
-        ↓
-Application Use Case
+Session
+          ↓
+Turn Application Use Case
         ↓
 Agent Runtime
         ↓
 Tool Gateway
 ```
 
-Application 可以理解以下 OpsPilot 业务概念：
+Application 当前围绕以下业务概念编排：
 
-- `Conversation`
-- `Session`
-- `FileReference`
+- `Session`：持久化 context aggregate
+- `Turn`：一次完整 Application execution
+- `Step`：Agent Runtime 内部的一次 loop iteration
 
-Conversation 目录未来负责一次用户 Conversation Turn 的编排，包含：
+`turns/` 目录负责一次 Turn 的编排，包含：
 
-- 接收 `sessionId`、user message 和 file references
-- 加载 Session
-- 构建 Agent Context
-- 调用 Agent Runtime
-- 接收 Agent Runtime 结果和事件
-- 更新 Session
+- 接收可选 `sessionId` 和 user message
+- 创建并持久化 Turn
+- 将 user message durable commit 到 Session
+- 从 Session context 构建 AgentSession 并调用 `continue()`
+- 记录 TurnEvent 并推进 TurnCheckpoint
+- 完成、失败或取消 Turn
 
-未来核心用例可命名为 `RunConversationTurn`，但当前没有实现。
+当前核心用例为 `ExecuteTurn`，负责创建 Turn、提交 Session 输入、驱动 AgentSession，并持久化 TurnEvent 与 checkpoint。
 
 Agent Runtime 必须保持业务无关，不出现 `FileId`、`Excel`、`OpsPilot Session`、`Conversation` 等 Application 业务概念。Runtime 只处理通用的 Agent、Model、Message、Tool 和事件契约。
 
@@ -95,14 +95,16 @@ sessions/{sessionId}/
 └── history.jsonl   # append-only history
 ```
 
-旧的 `sessions/{sessionId}.jsonl` 仅在新目录不存在时读取，并在成功 restore 后 lazy migrate；迁移复制原始 history bytes、保留 legacy 文件。新目录优先，不完整的新目录不会 fallback 到 legacy。当前不实现 Run、RunSnapshot、RunEvent 或数据库 repository。
+旧的 `sessions/{sessionId}.jsonl` 仅在新目录不存在时读取，并在成功 restore 后 lazy migrate；迁移复制原始 history bytes、保留 legacy 文件。新目录优先，不完整的新目录不会 fallback 到 legacy。当前不实现 ResumeTurn 或自动恢复执行。
 
 Session 不使用 PostgreSQL 保存消息树。Application 只定义 `SessionStore` port；Infrastructure 的 JSONL/filesystem adapter 负责持久化，Domain Session 不依赖 JSONL、Node fs 或 repository。
 
 当前已实现：
 
 - `@opspilot/domain` Session
+- `@opspilot/domain` Turn / TurnEvent / TurnCheckpoint
 - `@opspilot/infrastructure` FileSystemSessionStore
+- `@opspilot/infrastructure` FileSystemTurnStore
 - Infrastructure JSONL create / load / append
 - Session 读写、分支和 compaction invariants
 
@@ -110,7 +112,7 @@ Session 不使用 PostgreSQL 保存消息树。Application 只定义 `SessionSto
 
 ### Agent Runtime
 
-`packages/agent-runtime` 提供业务无关的 Agent 生命周期、Agent Loop、State、Context、Tool Execution、Streaming、Cancellation 和 Runtime 事件能力。它不依赖 Application 的 Conversation、Session 或文件业务概念。
+`packages/agent-runtime` 提供业务无关的 Agent 生命周期、Agent Loop、State、Context、Tool Execution、Streaming、Cancellation 和 Runtime 事件能力。它不依赖 Application 的 Session、Turn 或文件业务概念。
 
 ### Model Gateway
 
@@ -126,20 +128,17 @@ Session 不使用 PostgreSQL 保存消息树。Application 只定义 `SessionSto
 
 ### Infrastructure
 
-`packages/infrastructure` 实现 Application 的 `SessionStore` port，封装 metadata JSON、append-only JSONL、legacy session migration 和 atomic filesystem writes。它可以依赖 Application contract 与 Domain，但 Application 不反向依赖它。
+`packages/infrastructure` 实现 Application 的 `SessionStore` / `TurnStore` port，封装 metadata JSON、append-only JSONL、legacy session migration 和 atomic filesystem writes。它可以依赖 Application contract 与 Domain，但 Application 不反向依赖它。
 
 ## 5. API Status
 
-`apps/api` 保留为 API 项目和通用 HTTP 基础设施，以便未来接入 Application。当前不实现：
+`apps/api` 提供 Session / Turn HTTP boundary：
 
-- Conversation API
-- Session API
-- Controller 或 Route
-- DTO
-- SSE 或 WebSocket
-- ASP.NET Backend 连接
+- `POST /turns` 与 `POST /turns/stream`
+- `POST /sessions/:sessionId/turns` 与对应 stream endpoint
+- `GET /sessions/:sessionId/history`
 
-API runtime 当前只保留能够构建通用 API 模块的组合根，不绑定数据库或未实现的 Application 用例。
+SSE 仅透传当前执行 observer，不提供 replay、reattach 或 ResumeTurn。
 
 ## 6. Persistence Direction
 
@@ -154,12 +153,14 @@ agent-service/
 │   └── api-runtime/
 ├── packages/
 │   ├── infrastructure/
-│   │   └── src/session/
+│   │   ├── src/session/
+│   │   └── src/turn/
 │   ├── domain/
 │   │   └── src/session/
 │   ├── application/
 │   │   └── src/
-│   │       ├── conversations/
+│   │       ├── turns/
+│   │       ├── session-history/
 │   │       ├── session/
 │   │       └── session-store/
 │   │       └── index.ts

@@ -7,7 +7,7 @@ import type { ToolContext } from '../tool-context.js';
 export function requireExcelResource(context: ToolContext): ExcelResource {
   if (context.excelResource === undefined) {
     throw new AgentToolExecutionError(
-      'No Excel workbook is attached to this conversation turn.',
+      'No Excel workbook is attached to this Turn.',
       'EXCEL_RESOURCE_REQUIRED',
     );
   }

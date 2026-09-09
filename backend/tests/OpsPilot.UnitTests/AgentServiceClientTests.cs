@@ -128,7 +128,7 @@ public sealed class AgentServiceClientTests
             cancellationSource.Token);
 
         Assert.Equal("POST", requestMethod);
-        Assert.Equal("/conversations/turns", requestPath);
+        Assert.Equal($"/sessions/{sessionId:D}/turns", requestPath);
         Assert.NotNull(requestBody);
         using JsonDocument document = JsonDocument.Parse(requestBody!);
         JsonElement body = document.RootElement;
@@ -306,7 +306,7 @@ public sealed class AgentServiceClientTests
             CancellationToken.None);
 
         Assert.Equal("POST", requestMethod);
-        Assert.Equal("/conversations/turns/stream", requestPath);
+        Assert.Equal("/turns/stream", requestPath);
         using (JsonDocument requestDocument = JsonDocument.Parse(requestBody!))
         {
             Assert.False(requestDocument.RootElement.TryGetProperty("sessionId", out _));

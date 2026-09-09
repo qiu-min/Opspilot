@@ -8,8 +8,8 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "smoke:agent-session:kimi": "tsx scripts/smoke-agent-session-kimi.ts",
-    "smoke:conversation:kimi": "tsx scripts/smoke-run-conversation-turn-kimi.ts",
-    "smoke:excel:kimi": "tsx scripts/smoke-excel-conversation-kimi.ts",
+    "smoke:turn:kimi": "tsx scripts/smoke-execute-turn-kimi.ts",
+    "smoke:excel:kimi": "tsx scripts/smoke-excel-turn-kimi.ts",
     "test": "vitest run",
     "test:production": "node test/production-import.mjs",
     "typecheck": "tsc --noEmit"

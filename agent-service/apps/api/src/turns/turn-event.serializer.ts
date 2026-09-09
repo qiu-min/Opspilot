@@ -1,15 +1,15 @@
-export function serializeConversationEvent(event: unknown): string {
-  return JSON.stringify(sanitizeConversationValue(event));
+export function serializeTurnExecutionEvent(event: unknown): string {
+  return JSON.stringify(sanitizeTurnValue(event));
 }
 
-function sanitizeConversationValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map((item) => sanitizeConversationValue(item));
+function sanitizeTurnValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => sanitizeTurnValue(item));
   if (!isRecord(value)) return value;
 
   const sanitized: Record<string, unknown> = {};
   for (const [key, nestedValue] of Object.entries(value)) {
     if (value.role === 'assistant' && key === 'errorMessage') continue;
-    sanitized[key] = sanitizeConversationValue(nestedValue);
+    sanitized[key] = sanitizeTurnValue(nestedValue);
   }
   return sanitized;
 }

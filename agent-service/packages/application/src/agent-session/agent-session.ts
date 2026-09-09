@@ -80,6 +80,17 @@ export class AgentSession {
   public async prompt(
     input: AgentMessage | readonly AgentMessage[],
   ): Promise<readonly AgentMessage[]> {
+    return await this.run(() => this.agent.prompt(input));
+  }
+
+  /** Continues from the current durable Session-derived runtime history without adding a prompt. */
+  public async continue(): Promise<readonly AgentMessage[]> {
+    return await this.run(() => this.agent.continue());
+  }
+
+  private async run(
+    execute: () => Promise<readonly AgentMessage[]>,
+  ): Promise<readonly AgentMessage[]> {
     this.assertNotDisposed();
     if (this.promptActive) {
       throw new Error('AgentSession is already processing a prompt.');
@@ -91,7 +102,7 @@ export class AgentSession {
     try {
       await this.maybeCompactBeforePrompt();
       this.assertNotDisposed();
-      messages.push(...(await this.agent.prompt(input)));
+      messages.push(...(await execute()));
       while (await this.handlePostAgentRun()) {
         messages.push(...(await this.agent.continue()));
       }

@@ -14,12 +14,12 @@ import {
 
 import {
   buildSessionContext,
-  RunConversationTurn,
-  type RunConversationTurnEvent,
-  type RunConversationTurnResult,
+  ExecuteTurn,
+  type TurnExecutionEvent,
+  type ExecuteTurnResult,
   Session,
 } from '@opspilot/application';
-import { FileSystemSessionStore } from '@opspilot/infrastructure';
+import { FileSystemSessionStore, FileSystemTurnStore } from '@opspilot/infrastructure';
 
 const PROVIDER_ID = 'moonshot';
 const MODEL_ID = 'kimi-k3';
@@ -89,7 +89,7 @@ function summarizeMessage(message: AgentMessage | undefined): string {
 /** Records each Application event while keeping high-frequency updates compact. */
 function recordApplicationEvent(
   turn: TurnLabel,
-  event: RunConversationTurnEvent,
+  event: TurnExecutionEvent,
   events: string[],
   setLastEvent: (value: string) => void,
 ): void {
@@ -208,17 +208,17 @@ function logWatchdogDiagnostics(
 
 /** Runs one turn with a diagnostic-only 60-second Promise.race watchdog. */
 async function executeWithWatchdog(
-  operation: Promise<RunConversationTurnResult>,
+  operation: Promise<ExecuteTurnResult>,
   turn: TurnLabel,
   onTimeout: () => void,
-): Promise<RunConversationTurnResult> {
+): Promise<ExecuteTurnResult> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       onTimeout();
       reject(
         new Error(
-          `${turn} RunConversationTurn.execute() did not resolve within ${WATCHDOG_TIMEOUT_MS}ms`,
+          `${turn} ExecuteTurn.execute() did not resolve within ${WATCHDOG_TIMEOUT_MS}ms`,
         ),
       );
     }, WATCHDOG_TIMEOUT_MS);
@@ -285,7 +285,7 @@ function logFailure(
   }
 }
 
-/** Runs two real filesystem-backed conversation turns through the Application boundary. */
+/** Runs two real filesystem-backed Turns through the Application boundary. */
 async function main(): Promise<void> {
   const startedAt = Date.now();
   let tempSessionDirectory: string | undefined;
@@ -311,7 +311,7 @@ async function main(): Promise<void> {
     console.info(`[smoke] model=${MODEL_ID}`);
 
     currentStage = 'creating temp session directory';
-    tempSessionDirectory = await mkdtemp(join(tmpdir(), 'opspilot-conversation-kimi-'));
+    tempSessionDirectory = await mkdtemp(join(tmpdir(), 'opspilot-turn-kimi-'));
     console.info('[smoke] creating temp session directory');
     console.info(`[smoke] temp session directory=${tempSessionDirectory}`);
 
@@ -319,21 +319,22 @@ async function main(): Promise<void> {
     sessionStore = new FileSystemSessionStore(tempSessionDirectory);
     console.info('[smoke] creating FileSystemSessionStore');
 
-    currentStage = 'creating RunConversationTurn';
-    const runConversationTurn = new RunConversationTurn({
+    currentStage = 'creating ExecuteTurn';
+    const executeTurn = new ExecuteTurn({
       sessionStore,
+      turnStore: new FileSystemTurnStore(tempSessionDirectory),
       modelGateway: gateway,
       defaultModel: model,
       toolDefinitions: [],
     });
-    console.info('[smoke] creating RunConversationTurn');
+    console.info('[smoke] creating ExecuteTurn');
 
     const firstPrompt = 'Reply with OK only.';
     currentStage = 'starting first turn';
     console.info('[smoke] starting first turn');
     const firstStartedAt = Date.now();
     const firstResult = await executeWithWatchdog(
-      runConversationTurn.execute(
+      executeTurn.execute(
         { message: createUserMessage(firstPrompt) },
         {
           onEvent: (event) =>
@@ -393,7 +394,7 @@ async function main(): Promise<void> {
     console.info('[smoke] starting second turn');
     const secondStartedAt = Date.now();
     const secondResult = await executeWithWatchdog(
-      runConversationTurn.execute(
+      executeTurn.execute(
         { sessionId: firstResult.sessionId, message: createUserMessage(secondPrompt) },
         {
           onEvent: (event) =>
@@ -461,13 +462,13 @@ async function main(): Promise<void> {
   }
 }
 
-/** Creates the minimal user message expected by RunConversationTurn. */
+/** Creates the minimal user message expected by ExecuteTurn. */
 function createUserMessage(text: string): AgentMessage {
   return { role: 'user', content: [{ type: 'text', text }] };
 }
 
 /** Prints one turn result and its last assistant text. */
-function logTurnResult(turn: TurnLabel, result: RunConversationTurnResult, prompt: string): void {
+function logTurnResult(turn: TurnLabel, result: ExecuteTurnResult, prompt: string): void {
   const assistant = findLastAssistant(result.messages);
   console.info(`[smoke] ${turn} sessionId=${result.sessionId}`);
   console.info(`[smoke] ${turn} leafId=${result.leafId ?? 'none'}`);
@@ -484,7 +485,7 @@ function logTurnResult(turn: TurnLabel, result: RunConversationTurnResult, promp
 
 /** Requires a non-error assistant result before the next filesystem turn proceeds. */
 function requireSuccessfulAssistant(
-  result: RunConversationTurnResult,
+  result: ExecuteTurnResult,
   turn: TurnLabel,
 ): AssistantMessage {
   const assistant = findLastAssistant(result.messages);

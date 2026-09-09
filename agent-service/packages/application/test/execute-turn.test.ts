@@ -16,14 +16,27 @@ import {
   buildSessionContext,
   createCompactionSummaryMessage,
   type ContextManager,
-  RunConversationTurn,
-  type RunConversationTurnEvent,
+  ExecuteTurn,
+  type ExecuteTurnDependencies,
+  type TurnExecutionEvent,
+  type TurnStore,
   Session,
   type SessionStore,
   type ToolContext,
   type ToolDefinition,
 } from '../src/index.js';
 import { InMemorySessionStore } from './support/in-memory-session-store.js';
+import { InMemoryTurnStore } from './support/in-memory-turn-store.js';
+
+class TestExecuteTurn extends ExecuteTurn {
+  public constructor(
+    options: Omit<ExecuteTurnDependencies, 'turnStore'> & { readonly turnStore?: ExecuteTurnDependencies['turnStore'] },
+  ) {
+    super({ ...options, turnStore: options.turnStore ?? new InMemoryTurnStore() });
+  }
+}
+
+type TestTurnExecutionEvent = TurnExecutionEvent;
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -64,8 +77,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function createStore(): { store: InMemorySessionStore } {
-  return { store: new InMemorySessionStore() };
+function createStore(): { store: InMemorySessionStore; turnStore: InMemoryTurnStore } {
+  return { store: new InMemorySessionStore(), turnStore: new InMemoryTurnStore() };
 }
 
 function appendPersisted<T extends Parameters<SessionStore['appendEntry']>[1]>(
@@ -200,11 +213,11 @@ function messageEntries(session: Session): AgentMessage[] {
     .map((entry) => entry.message);
 }
 
-describe('RunConversationTurn', () => {
+describe('ExecuteTurn', () => {
   it('propagates the configured system prompt to the model context', async () => {
     const { store } = createStore();
     const gateway = createGateway([assistantStream(assistantMessage('world'), model)]);
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: gateway,
       toolDefinitions: [],
@@ -222,7 +235,7 @@ describe('RunConversationTurn', () => {
     const inputMessage = userMessage('hello');
     const response = assistantMessage('world');
     const gateway = createGateway([assistantStream(response, model)]);
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: gateway,
       toolDefinitions: [],
@@ -238,10 +251,173 @@ describe('RunConversationTurn', () => {
     expect(messageEntries(loaded)).toEqual([inputMessage, response]);
   });
 
+  it('persists a completed Turn with ordered events and an assistant checkpoint', async () => {
+    const { store, turnStore } = createStore();
+    const runner = new TestExecuteTurn({
+      sessionStore: store,
+      turnStore,
+      modelGateway: createGateway([assistantStream(assistantMessage('done'), model)]),
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+
+    const input = userMessage('hello');
+    const result = await runner.execute({ message: input });
+    const events = turnStore.loadEvents(result.turnId);
+    const turn = turnStore.load(result.turnId);
+    const session = store.load(result.sessionId);
+
+    expect(session.getEntries().filter((entry) => entry.type === 'message').map((entry) => entry.message)).toEqual([
+      input,
+      assistantMessage('done'),
+    ]);
+    expect(events.map((event) => event.type)).toEqual([
+      'turn_started',
+      'input_committed',
+      'model_started',
+      'model_completed',
+      'assistant_message_completed',
+      'turn_completed',
+    ]);
+    expect(events.map((event) => event.sequence)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(turn.getState()).toMatchObject({ status: 'completed', attempt: 1 });
+    expect(turn.getState().checkpoint).toMatchObject({
+      eventSequence: 4,
+      phase: 'assistant_committed',
+      sessionLeafId: session.getLeafId(),
+    });
+  });
+
+  it('persists the input SessionEntry before its TurnEvent and checkpoint snapshot', async () => {
+    const baseSessionStore = new InMemorySessionStore();
+    const baseTurnStore = new InMemoryTurnStore();
+    const operations: string[] = [];
+    const sessionStore: SessionStore = {
+      create: () => baseSessionStore.create(),
+      load: (sessionId) => baseSessionStore.load(sessionId),
+      appendEntry: (sessionId, entry) => {
+        operations.push('session.appendEntry');
+        baseSessionStore.appendEntry(sessionId, entry);
+      },
+      saveMetadata: (sessionId, metadata) => baseSessionStore.saveMetadata(sessionId, metadata),
+    };
+    const turnStore: TurnStore = {
+      create: (turn) => baseTurnStore.create(turn),
+      load: (turnId) => baseTurnStore.load(turnId),
+      save: (turn) => {
+        const phase = turn.getState().checkpoint?.phase ?? 'none';
+        operations.push(`turn.save:${phase}`);
+        baseTurnStore.save(turn);
+      },
+      appendEvent: (turnId, event) => {
+        operations.push(`turn.appendEvent:${event.type}`);
+        baseTurnStore.appendEvent(turnId, event);
+      },
+      loadEvents: (turnId) => baseTurnStore.loadEvents(turnId),
+      listBySession: (sessionId) => baseTurnStore.listBySession(sessionId),
+      listRecoverable: () => baseTurnStore.listRecoverable(),
+    };
+    const runner = new TestExecuteTurn({
+      sessionStore,
+      turnStore,
+      modelGateway: createGateway([assistantStream(assistantMessage('done'), model)]),
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+
+    await runner.execute({ message: userMessage('hello') });
+
+    const inputAppendIndex = operations.indexOf('session.appendEntry');
+    const inputEventIndex = operations.indexOf('turn.appendEvent:input_committed');
+    const inputCheckpointSaveIndex = operations.indexOf('turn.save:input_committed');
+    expect(inputAppendIndex).toBeGreaterThanOrEqual(0);
+    expect(inputEventIndex).toBeGreaterThan(inputAppendIndex);
+    expect(inputCheckpointSaveIndex).toBeGreaterThan(inputEventIndex);
+  });
+
+  it('records tool lifecycle facts only after the ToolResult is durable', async () => {
+    const { store, turnStore } = createStore();
+    const call: ModelToolCall = { callId: 'call-1', name: 'lookup', arguments: {} };
+    const runner = new TestExecuteTurn({
+      sessionStore: store,
+      turnStore,
+      modelGateway: createGateway([
+        assistantStream(assistantMessage('', model, [call]), model),
+        assistantStream(assistantMessage('done'), model),
+      ]),
+      toolDefinitions: [
+        {
+          name: 'lookup',
+          description: 'Lookup',
+          parameters: { type: 'object', properties: {}, additionalProperties: false },
+          execute: async () => ({ content: [{ type: 'text', text: 'result' }] }),
+        },
+      ],
+      defaultModel: model,
+    });
+
+    const result = await runner.execute({ message: userMessage('use tool') });
+    const events = turnStore.loadEvents(result.turnId);
+    const toolEventIndex = events.findIndex((event) => event.type === 'tool_completed');
+    const session = store.load(result.sessionId);
+    const toolEntry = session
+      .getEntries()
+      .find((entry) => entry.type === 'message' && entry.message.role === 'tool');
+
+    expect(events.map((event) => event.type)).toEqual([
+      'turn_started',
+      'input_committed',
+      'model_started',
+      'model_completed',
+      'assistant_message_completed',
+      'tool_requested',
+      'tool_started',
+      'tool_completed',
+      'model_started',
+      'model_completed',
+      'assistant_message_completed',
+      'turn_completed',
+    ]);
+    expect(toolEntry?.type).toBe('message');
+    expect(events[toolEventIndex]).toMatchObject({
+      type: 'tool_completed',
+      resultEntryId: toolEntry?.id,
+      sessionLeafId: toolEntry?.id,
+    });
+    expect(turnStore.load(result.turnId).getState().checkpoint).toMatchObject({
+      phase: 'assistant_committed',
+      sessionLeafId: session.getLeafId(),
+    });
+  });
+
+  it('leaves a failed Turn and durable history when Runtime execution fails', async () => {
+    const { store, turnStore } = createStore();
+    const failedResponse: AssistantMessage = {
+      ...assistantMessage('', model),
+      finishReason: 'error',
+      errorMessage: 'provider failed',
+    };
+    const runner = new TestExecuteTurn({
+      sessionStore: store,
+      turnStore,
+      modelGateway: createGateway([failedAssistantStream(failedResponse, model)]),
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+
+    const result = await runner.execute({ message: userMessage('hello') });
+    const turn = turnStore.load(result.turnId);
+    const events = turnStore.loadEvents(result.turnId);
+
+    expect(turn.getState().status).toBe('failed');
+    expect(events.at(-1)).toMatchObject({ type: 'turn_failed', message: 'provider failed' });
+    expect(messageEntries(store.load(result.sessionId))).toHaveLength(2);
+  });
+
   it('awaits session_ready listeners before creating AgentSession', async () => {
     const { store } = createStore();
     const gateway = createGateway([assistantStream(assistantMessage('done'), model)]);
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: gateway,
       toolDefinitions: [],
@@ -270,7 +446,7 @@ describe('RunConversationTurn', () => {
   });
 
   it('does not emit session_ready when session creation fails', async () => {
-    const events: RunConversationTurnEvent[] = [];
+    const events: TestTurnExecutionEvent[] = [];
     const creationError = new Error('session creation failed');
     const sessionStore: SessionStore = {
       create: () => {
@@ -286,7 +462,7 @@ describe('RunConversationTurn', () => {
         throw new Error('metadata should not be saved');
       },
     };
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore,
       modelGateway: createGateway([]),
       toolDefinitions: [],
@@ -309,7 +485,7 @@ describe('RunConversationTurn', () => {
   it('propagates session_ready listener failures before starting AgentSession', async () => {
     const { store } = createStore();
     const gateway = createGateway([]);
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: gateway,
       toolDefinitions: [],
@@ -334,7 +510,7 @@ describe('RunConversationTurn', () => {
     const { store } = createStore();
     const firstInput = userMessage('first');
     const firstResponse = assistantMessage('first response');
-    const firstRunner = new RunConversationTurn({
+    const firstRunner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: createGateway([assistantStream(firstResponse, model)]),
       toolDefinitions: [],
@@ -345,13 +521,13 @@ describe('RunConversationTurn', () => {
     const secondInput = userMessage('second');
     const secondResponse = assistantMessage('second response');
     const secondGateway = createGateway([assistantStream(secondResponse, model)]);
-    const secondRunner = new RunConversationTurn({
+    const secondRunner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: secondGateway,
       toolDefinitions: [],
       defaultModel: model,
     });
-    const events: RunConversationTurnEvent[] = [];
+    const events: TestTurnExecutionEvent[] = [];
 
     const secondResult = await secondRunner.execute(
       {
@@ -401,7 +577,7 @@ describe('RunConversationTurn', () => {
       undefined,
       summaryResponse,
     );
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: gateway,
       toolDefinitions: [],
@@ -465,7 +641,7 @@ describe('RunConversationTurn', () => {
       undefined,
       summaryResponse,
     );
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: gateway,
       toolDefinitions: [],
@@ -481,7 +657,6 @@ describe('RunConversationTurn', () => {
     expect(gateway.complete).toHaveBeenCalledOnce();
     expect(gateway.requestedContexts[0]?.messages).toEqual([
       createCompactionSummaryMessage('S'),
-      oldResponse,
       newInput,
     ]);
 
@@ -490,7 +665,6 @@ describe('RunConversationTurn', () => {
     expect(messageEntries(loaded)).toEqual([oldInput, oldResponse, newInput, response]);
     expect(buildSessionContext(loaded).messages).toEqual([
       createCompactionSummaryMessage('S'),
-      oldResponse,
       newInput,
       response,
     ]);
@@ -517,7 +691,7 @@ describe('RunConversationTurn', () => {
       finishReason: 'aborted',
       errorMessage: 'Request aborted.',
     };
-    const firstRunner = new RunConversationTurn({
+    const firstRunner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: createGateway(
         [failedAssistantStream(abortedResponse, compactingModel)],
@@ -545,7 +719,7 @@ describe('RunConversationTurn', () => {
       undefined,
       summaryResponse,
     );
-    const secondRunner = new RunConversationTurn({
+    const secondRunner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: secondGateway,
       toolDefinitions: [],
@@ -561,8 +735,6 @@ describe('RunConversationTurn', () => {
     expect(secondGateway.complete).toHaveBeenCalledOnce();
     expect(secondGateway.requestedContexts[0]?.messages).toEqual([
       createCompactionSummaryMessage('recovered summary'),
-      oversizedInput,
-      abortedResponse,
       nextInput,
     ]);
   });
@@ -573,7 +745,7 @@ describe('RunConversationTurn', () => {
     const inputMessage = userMessage('input');
     const response = assistantMessage('response', compactingModel);
     const gateway = createGateway([assistantStream(response, compactingModel)], [compactingModel]);
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: gateway,
       toolDefinitions: [],
@@ -602,7 +774,7 @@ describe('RunConversationTurn', () => {
     const { store } = createStore();
     const firstInput = userMessage('A');
     const firstResponse = assistantMessage('B');
-    const firstRunner = new RunConversationTurn({
+    const firstRunner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: createGateway([assistantStream(firstResponse, model)]),
       toolDefinitions: [],
@@ -620,7 +792,7 @@ describe('RunConversationTurn', () => {
       },
     };
     const secondGateway = createGateway([assistantStream(secondResponse, model)]);
-    const secondRunner = new RunConversationTurn({
+    const secondRunner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: secondGateway,
       toolDefinitions: [],
@@ -677,13 +849,13 @@ describe('RunConversationTurn', () => {
       assistantStream(assistantMessage('', model, [call]), model),
       assistantStream(finalResponse, model),
     ]);
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: gateway,
       toolDefinitions: [definition],
       defaultModel: model,
     });
-    const events: RunConversationTurnEvent[] = [];
+    const events: TestTurnExecutionEvent[] = [];
 
     const result = await runner.execute(
       {
@@ -713,7 +885,7 @@ describe('RunConversationTurn', () => {
     expect(
       events
         .filter(
-          (event): event is Extract<RunConversationTurnEvent, { type: 'tool_execution_start' }> =>
+          (event): event is Extract<TestTurnExecutionEvent, { type: 'tool_execution_start' }> =>
             event.type === 'tool_execution_start',
         )
         .map((event) => event.toolCall.callId),
@@ -721,7 +893,7 @@ describe('RunConversationTurn', () => {
     expect(
       events
         .filter(
-          (event): event is Extract<RunConversationTurnEvent, { type: 'tool_execution_end' }> =>
+          (event): event is Extract<TestTurnExecutionEvent, { type: 'tool_execution_end' }> =>
             event.type === 'tool_execution_end',
         )
         .map((event) => event.toolCall.callId),
@@ -749,7 +921,7 @@ describe('RunConversationTurn', () => {
       assistantStream(assistantMessage('', model, [call]), model),
       assistantStream(assistantMessage('done'), model),
     ]);
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: gateway,
       toolDefinitions: [definition],
@@ -781,7 +953,7 @@ describe('RunConversationTurn', () => {
       assistantStream(assistantMessage('', model, [callTwo]), model),
       assistantStream(assistantMessage('second done'), model),
     ]);
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: gateway,
       toolDefinitions: [definition],
@@ -809,13 +981,13 @@ describe('RunConversationTurn', () => {
   it('emits session_ready before forwarding AgentSession events', async () => {
     const { store } = createStore();
     const gateway = createGateway([assistantStream(assistantMessage('done'), model)]);
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: gateway,
       toolDefinitions: [],
       defaultModel: model,
     });
-    const events: RunConversationTurnEvent[] = [];
+    const events: TestTurnExecutionEvent[] = [];
 
     const result = await runner.execute(
       { message: userMessage('hello') },
@@ -852,7 +1024,7 @@ describe('RunConversationTurn', () => {
   it('awaits an async execution listener before completing the turn', async () => {
     const { store } = createStore();
     const gateway = createGateway([assistantStream(assistantMessage('done'), model)]);
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: gateway,
       toolDefinitions: [],
@@ -893,7 +1065,7 @@ describe('RunConversationTurn', () => {
       [assistantStream(assistantMessage('alternate', alternateModel), alternateModel)],
       [model, alternateModel],
     );
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: gateway,
       toolDefinitions: [],
@@ -911,7 +1083,7 @@ describe('RunConversationTurn', () => {
       [assistantStream(assistantMessage('default', alternateModel), alternateModel)],
       [alternateModel],
     );
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: gateway,
       toolDefinitions: [],
@@ -931,7 +1103,7 @@ describe('RunConversationTurn', () => {
       [assistantStream(assistantMessage('restored', model), model)],
       [model, alternateModel],
     );
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: gateway,
       toolDefinitions: [],
@@ -949,7 +1121,7 @@ describe('RunConversationTurn', () => {
       [assistantStream(assistantMessage('clamped', lowOnlyModel), lowOnlyModel)],
       [lowOnlyModel],
     );
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: gateway,
       toolDefinitions: [],
@@ -969,7 +1141,7 @@ describe('RunConversationTurn', () => {
   it('disposes AgentSession after a successful prompt', async () => {
     const { store } = createStore();
     const dispose = vi.spyOn(AgentSession.prototype, 'dispose');
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: createGateway([assistantStream(assistantMessage('done'), model)]),
       toolDefinitions: [],
@@ -998,7 +1170,7 @@ describe('RunConversationTurn', () => {
     };
     const dispose = vi.spyOn(AgentSession.prototype, 'dispose');
     const gateway = createGateway([assistantStream(assistantMessage('will fail'), model)], [model]);
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore,
       modelGateway: gateway,
       toolDefinitions: [],
@@ -1008,7 +1180,7 @@ describe('RunConversationTurn', () => {
     await expect(runner.execute({ message: userMessage('hello') })).rejects.toThrow(
       'prompt persistence failed',
     );
-    expect(dispose).toHaveBeenCalledOnce();
+    expect(dispose).not.toHaveBeenCalled();
     expect(createdSession).toBeDefined();
     expect(messageEntries(fileStore.load(createdSession!.getHeader().id))).toEqual([]);
   });
@@ -1032,7 +1204,7 @@ describe('RunConversationTurn', () => {
       order.push('dispose');
       originalDispose.call(this);
     });
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: createGateway([assistantStream(assistantMessage('done'), model)]),
       toolDefinitions: [],
@@ -1054,7 +1226,7 @@ describe('RunConversationTurn', () => {
 
   it('serializes concurrent turns for one existing session after loading under the lock', async () => {
     const { store } = createStore();
-    const initialRunner = new RunConversationTurn({
+    const initialRunner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: createGateway([assistantStream(assistantMessage('history response'), model)]),
       toolDefinitions: [],
@@ -1080,7 +1252,7 @@ describe('RunConversationTurn', () => {
       waitingAssistantStream(firstResponse, model, firstStarted, releaseFirst),
       assistantStream(secondResponse, model),
     ]);
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore,
       modelGateway: gateway,
       toolDefinitions: [],
@@ -1144,7 +1316,7 @@ describe('RunConversationTurn', () => {
         secondRelease,
       ),
     ]);
-    const runner = new RunConversationTurn({
+    const runner = new TestExecuteTurn({
       sessionStore: store,
       modelGateway: gateway,
       toolDefinitions: [],

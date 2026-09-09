@@ -21,10 +21,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createGetSheetProfileTool,
   createGetWorkbookInfoTool,
-  RunConversationTurn,
-  type RunConversationTurnEvent,
+  ExecuteTurn,
+  type TurnExecutionEvent,
 } from '@opspilot/application';
-import { FileSystemSessionStore } from '@opspilot/infrastructure';
+import { FileSystemSessionStore, FileSystemTurnStore } from '@opspilot/infrastructure';
 
 const model: Model = {
   provider: 'test-provider',
@@ -50,7 +50,7 @@ afterEach(async () => {
   );
 });
 
-describe('Application Excel discovery conversation integration', () => {
+describe('Application Excel discovery Turn integration', () => {
   it('executes get_workbook_info through Agent Runtime and persists the real ExcelJS result', async () => {
     const { filePath, sessionDirectory } = await createFixture();
     const gateway = createGateway([
@@ -58,13 +58,14 @@ describe('Application Excel discovery conversation integration', () => {
       assistantMessage('The workbook contains Sales and Config.'),
     ]);
     const store = new FileSystemSessionStore(sessionDirectory);
-    const runner = new RunConversationTurn({
+    const runner = new ExecuteTurn({
       sessionStore: store,
+      turnStore: new FileSystemTurnStore(sessionDirectory),
       modelGateway: gateway,
       defaultModel: model,
       toolDefinitions: [createGetWorkbookInfoTool(new ExcelJsDiscoveryAdapter())],
     });
-    const events: RunConversationTurnEvent[] = [];
+    const events: TurnExecutionEvent[] = [];
 
     const result = await runner.execute(
       {
@@ -118,13 +119,14 @@ describe('Application Excel discovery conversation integration', () => {
       assistantMessage('Sales has OrderId, Product, and Quantity columns.'),
     ]);
     const store = new FileSystemSessionStore(sessionDirectory);
-    const runner = new RunConversationTurn({
+    const runner = new ExecuteTurn({
       sessionStore: store,
+      turnStore: new FileSystemTurnStore(sessionDirectory),
       modelGateway: gateway,
       defaultModel: model,
       toolDefinitions: [createGetSheetProfileTool(new ExcelJsDiscoveryAdapter())],
     });
-    const events: RunConversationTurnEvent[] = [];
+    const events: TurnExecutionEvent[] = [];
 
     const result = await runner.execute(
       {
@@ -202,8 +204,9 @@ describe('Application Excel discovery conversation integration', () => {
       assistantMessage('Please attach an Excel workbook before I inspect it.'),
     ]);
     const store = new FileSystemSessionStore(sessionDirectory);
-    const runner = new RunConversationTurn({
+    const runner = new ExecuteTurn({
       sessionStore: store,
+      turnStore: new FileSystemTurnStore(sessionDirectory),
       modelGateway: gateway,
       defaultModel: model,
       toolDefinitions: [createGetWorkbookInfoTool(new ExcelJsDiscoveryAdapter())],
@@ -328,8 +331,8 @@ function lastAssistantText(messages: readonly AgentMessage[]): string {
 }
 
 function eventTypes(
-  events: readonly RunConversationTurnEvent[],
-): readonly RunConversationTurnEvent['type'][] {
+  events: readonly TurnExecutionEvent[],
+): readonly TurnExecutionEvent['type'][] {
   return events.map((event) => event.type);
 }
 

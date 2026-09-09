@@ -14,7 +14,7 @@
 apps/api-runtime (composition root)
 ```
 
-Infrastructure 可以依赖 Application contract 与 Domain aggregate；Application 不依赖 Infrastructure，api-runtime 负责把具体 adapter 注入 `RunConversationTurn` 和 `GetConversationHistory`。
+Infrastructure 可以依赖 Application contract 与 Domain aggregate；Application 不依赖 Infrastructure，api-runtime 负责把具体 adapter 注入 `ExecuteTurn` 和 `GetSessionHistory`。
 
 ## Session filesystem adapter
 

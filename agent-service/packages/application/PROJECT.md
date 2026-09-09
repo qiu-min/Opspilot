@@ -216,19 +216,19 @@ Runtime 不应该知道：
 当前 Application 调用链：
 
 ```text
-RunConversationTurn
-        ↓
 SessionStore
         ↓
-SessionManager
+Session
         ↓
-buildSessionContext()
+Turn.create() / TurnStore
         ↓
 createAgentSession()
         ↓
 AgentSession
         ↓
 Agent Runtime
+        ↓
+Step loop
         ↓
 transformContext
         ↓
@@ -252,9 +252,12 @@ message_end
  ↓
 AgentSession
  ↓
-SessionManager.appendMessage()
+Session.appendMessage()
  ↓
-Session JSONL
+SessionStore.appendEntry()
+
+TurnEventRecorder records durable execution facts and advances Turn checkpoints
+after the corresponding Session boundary is durable.
 ```
 
 因此：
@@ -916,7 +919,7 @@ LLM Context
 - ContextManager 契约
 - DefaultContextManager
 - `createAgentSession()` 接入
-- `RunConversationTurn` 注入
+- `ExecuteTurn` 注入
 - 连接 Runtime `transformContext`
 - 测试 ContextManager 变换不会修改 Session History
 - 测试新的消息仍正常持久化

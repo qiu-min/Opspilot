@@ -1,27 +1,30 @@
 import type {
+  ExecuteTurnInput,
+  ExecuteTurnResult,
   ExcelResource,
-  RunConversationTurnInput,
-  RunConversationTurnResult,
 } from '@opspilot/application';
 
-import type { ConversationTurnRequest } from './conversation.schemas.js';
+import type { ExecuteTurnRequest } from './turn.schemas.js';
 
-export interface ConversationTurnResponse {
+export interface ExecuteTurnResponse {
   readonly sessionId: string;
+  readonly turnId: string;
   readonly leafId: string | null;
-  readonly status: ConversationTurnStatus;
+  readonly status: ExecuteTurnStatus;
   readonly output: string;
 }
 
-export type ConversationTurnStatus = 'completed' | 'error' | 'aborted';
+export type ExecuteTurnStatus = 'completed' | 'error' | 'aborted';
 
-export function mapConversationTurnRequest(
-  request: ConversationTurnRequest,
+export function mapExecuteTurnRequest(
+  request: ExecuteTurnRequest,
   excelResource?: ExcelResource,
-): RunConversationTurnInput {
-  
+  sessionId?: string,
+): ExecuteTurnInput {
   return {
-    ...(request.sessionId === undefined ? {} : { sessionId: request.sessionId }),
+    ...(sessionId === undefined && request.sessionId === undefined
+      ? {}
+      : { sessionId: sessionId ?? request.sessionId }),
     message: {
       role: 'user',
       content: [{ type: 'text', text: request.message }],
@@ -30,33 +33,31 @@ export function mapConversationTurnRequest(
   };
 }
 
-export function mapConversationTurnResult(
-  result: RunConversationTurnResult,
-): ConversationTurnResponse {
+export function mapExecuteTurnResult(result: ExecuteTurnResult): ExecuteTurnResponse {
   const assistantMessage = getFinalAssistantMessage(result);
   return {
     sessionId: result.sessionId,
+    turnId: result.turnId,
     leafId: result.leafId,
-    status: getConversationTurnStatus(assistantMessage?.finishReason),
+    status: getExecuteTurnStatus(assistantMessage?.finishReason),
     output: getAssistantText(assistantMessage),
   };
 }
 
 type AssistantMessage = Extract<
-  RunConversationTurnResult['messages'][number],
+  ExecuteTurnResult['messages'][number],
   { readonly role: 'assistant' }
 >;
 
-function getFinalAssistantMessage(result: RunConversationTurnResult): AssistantMessage | undefined {
+function getFinalAssistantMessage(result: ExecuteTurnResult): AssistantMessage | undefined {
   for (let index = result.messages.length - 1; index >= 0; index -= 1) {
     const message = result.messages[index];
     if (message?.role === 'assistant') return message;
   }
-
   return undefined;
 }
 
-function getConversationTurnStatus(finishReason: string | undefined): ConversationTurnStatus {
+function getExecuteTurnStatus(finishReason: string | undefined): ExecuteTurnStatus {
   if (finishReason === 'error') return 'error';
   if (finishReason === 'aborted') return 'aborted';
   return 'completed';
@@ -64,7 +65,6 @@ function getConversationTurnStatus(finishReason: string | undefined): Conversati
 
 function getAssistantText(message: AssistantMessage | undefined): string {
   if (message === undefined) return '';
-
   return message.content
     .filter((content) => content.type === 'text')
     .map((content) => content.text)

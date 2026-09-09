@@ -4,7 +4,7 @@ import { join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { ApiModule, EXCEL_RESOURCE_PATH_RESOLVER } from '@opspilot/api';
-import { RunConversationTurn } from '@opspilot/application';
+import { ExecuteTurn } from '@opspilot/application';
 import { describe, expect, it } from 'vitest';
 
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -45,14 +45,14 @@ describe('API runtime composition root', () => {
     });
   });
 
-  it('creates the composition root and resolves RunConversationTurn', async () => {
+  it('creates the composition root and resolves ExecuteTurn', async () => {
     await withModelConfig(async (config) => {
       const runtimeModule = await createApiRuntimeModule(config);
       const module: TestingModule = await Test.createTestingModule({
         imports: [runtimeModule],
       }).compile();
 
-      expect(module.get(RunConversationTurn)).toBeInstanceOf(RunConversationTurn);
+      expect(module.get(ExecuteTurn)).toBeInstanceOf(ExecuteTurn);
       expect(module.get(EXCEL_RESOURCE_PATH_RESOLVER)).toBeInstanceOf(
         FileSystemExcelResourcePathResolver,
       );
@@ -154,12 +154,12 @@ describe('API runtime composition root', () => {
     expect(packageJson.scripts?.start).toContain('dist/main.js');
   });
 
-  it('requires RunConversationTurn when compiling the API module', async () => {
+  it('requires ExecuteTurn when compiling the API module', async () => {
     await expect(
       Test.createTestingModule({
         imports: [ApiModule.register({ providers: [], exports: [] })],
       }).compile(),
-    ).rejects.toThrow(/RunConversationTurn|ConversationsController/);
+    ).rejects.toThrow(/GetSessionHistory|SessionsController/);
   });
 });
 
