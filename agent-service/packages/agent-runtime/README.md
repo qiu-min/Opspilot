@@ -151,6 +151,11 @@ Runtime 默认不设置 `maxSteps` 等隐式循环上限。
 它与 `prompt(message)` 共用相同的 lifecycle、Agent Loop、Tool 执行和并发保护；由于没有新增 prompt，
 不会产生新的 user message lifecycle 事件。返回值只包含这次 continue 新增的 Assistant / Tool messages。
 
+`Agent.continueFromToolCalls(assistantMessage, toolCalls)` 用于已有 assistant tool-call message
+已在 Runtime history、但只有部分 ToolResult 已 durable 的场景。它只执行传入的缺失 calls，
+复用现有 tool executor 和生命周期事件，然后进入下一次 model step；不会再次 emit 或持久化原
+assistant message。该 API 不知道 Turn、Session 或 recovery policy。
+
 ---
 
 ## Agent Context

@@ -12,13 +12,19 @@ import type { SessionStore } from '../session-store/session-store.js';
 import type { ToolDefinition } from '../tools/tool-definition.js';
 import { wrapToolDefinitions } from '../tools/wrap-tool-definition.js';
 import type { TurnStore } from '../turn-store/turn-store.js';
-import { TurnStreamProjector, type TurnStreamHub } from '../turn-stream/index.js';
+import type { TurnExecutionContextStore } from '../turn-execution/index.js';
+import {
+  TurnStreamProjector,
+  TurnStreamSessionConflictError,
+  type TurnStreamHub,
+} from '../turn-stream/index.js';
 import { TurnEventRecorder } from './turn-event-recorder.js';
 import type { ExecuteTurnInput, ExecuteTurnOptions, ExecuteTurnResult } from './turn-types.js';
 import {
   InMemorySessionRunCoordinator,
   type SessionRunCoordinator,
 } from './session-run-coordinator.js';
+import { SessionRecoverableTurnConflictError } from './turn-errors.js';
 
 const SAFE_TURN_FAILURE_MESSAGE = 'Turn failed.';
 
@@ -26,6 +32,7 @@ const SAFE_TURN_FAILURE_MESSAGE = 'Turn failed.';
 export interface ExecuteTurnDependencies {
   readonly sessionStore: SessionStore;
   readonly turnStore: TurnStore;
+  readonly turnExecutionContextStore?: TurnExecutionContextStore;
   readonly modelGateway: ModelGateway;
   readonly toolDefinitions: readonly ToolDefinition[];
   readonly defaultModel?: Model;
@@ -41,6 +48,7 @@ export interface ExecuteTurnDependencies {
 export class ExecuteTurn {
   private readonly sessionStore: SessionStore;
   private readonly turnStore: TurnStore;
+  private readonly turnExecutionContextStore?: TurnExecutionContextStore;
   private readonly modelGateway: ModelGateway;
   private readonly toolDefinitions: readonly ToolDefinition[];
   private readonly defaultModel?: Model;
@@ -54,6 +62,7 @@ export class ExecuteTurn {
   public constructor(options: ExecuteTurnDependencies) {
     this.sessionStore = options.sessionStore;
     this.turnStore = options.turnStore;
+    this.turnExecutionContextStore = options.turnExecutionContextStore;
     this.modelGateway = options.modelGateway;
     this.toolDefinitions = [...options.toolDefinitions];
     this.defaultModel = options.defaultModel;
@@ -93,8 +102,23 @@ export class ExecuteTurn {
     const sessionId = session.getId();
     await options?.onEvent?.({ type: 'session_ready', sessionId, created });
 
+    const activeTurn = this.turnStreamHub?.getActiveTurn(sessionId);
+    if (activeTurn !== null && activeTurn !== undefined) {
+      throw new TurnStreamSessionConflictError(sessionId, activeTurn.turnId);
+    }
+    const recoverableTurn = this.turnStore
+      .listRecoverable()
+      .find((candidate) => candidate.getSessionId() === sessionId);
+    if (recoverableTurn !== undefined) {
+      throw new SessionRecoverableTurnConflictError(sessionId, recoverableTurn.getId());
+    }
+
     const turn = Turn.create({ sessionId, baseLeafId: session.getLeafId() });
     this.turnStore.create(turn);
+    this.turnExecutionContextStore?.save(turn.getId(), {
+      version: 1,
+      ...(input.excelResource === undefined ? {} : { excelResource: input.excelResource }),
+    });
     turn.start();
     this.turnStore.save(turn);
 

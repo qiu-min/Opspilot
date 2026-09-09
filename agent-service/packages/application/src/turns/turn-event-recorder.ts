@@ -26,6 +26,11 @@ export class TurnEventRecorder {
     this.append({ type: 'turn_started' });
   }
 
+  /** Records the start of a new attempt on the existing Turn identity. */
+  public recordTurnResumed(): void {
+    this.append({ type: 'turn_resumed' });
+  }
+
   /** Commits the user input checkpoint after Session append has succeeded. */
   public recordInputCommitted(entryId: string, sessionLeafId: string): void {
     this.turn.recordInput(entryId);
@@ -100,7 +105,9 @@ export class TurnEventRecorder {
   public recordCompactionCompleted(): void {
     const entry = this.session.getEntry(this.session.getLeafId() ?? '');
     if (entry?.type !== 'compaction') {
-      throw new Error('compaction_completed requires a durable CompactionEntry at the Session leaf.');
+      throw new Error(
+        'compaction_completed requires a durable CompactionEntry at the Session leaf.',
+      );
     }
     this.append({
       type: 'compaction_completed',

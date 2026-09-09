@@ -43,6 +43,12 @@ export interface AgentContext {
   readonly tools?: readonly AgentTool[];
 }
 
+/** Existing assistant context plus the subset of its calls that still needs execution. */
+export interface AgentToolCallContinuation {
+  readonly assistantMessage: AssistantMessage;
+  readonly toolCalls: readonly ModelToolCall[];
+}
+
 /** beforeToolCall 收到的已完成模型消息、已校验参数和当前 Agent 上下文。 */
 export interface BeforeToolCallContext {
   readonly assistantMessage: AssistantMessage;

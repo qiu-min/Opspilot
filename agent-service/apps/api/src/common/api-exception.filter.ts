@@ -12,6 +12,7 @@ import {
   TurnStreamNotFoundError,
   TurnStreamReplayGapError,
   TurnStreamSessionConflictError,
+  SessionRecoverableTurnConflictError,
 } from '@opspilot/application';
 
 import type { ApiErrorCode, ApiErrorResponse } from './api-error.js';
@@ -67,6 +68,13 @@ function mapException(exception: unknown): MappedError {
       statusCode: 409,
       code: 'SESSION_ACTIVE_TURN_CONFLICT',
       message: 'Session already has an active Turn.',
+    };
+  }
+  if (exception instanceof SessionRecoverableTurnConflictError) {
+    return {
+      statusCode: 409,
+      code: 'SESSION_RECOVERABLE_TURN_EXISTS',
+      message: 'Session has a recoverable Turn that must finish recovery first.',
     };
   }
   if (exception instanceof RequestValidationError) {

@@ -9,6 +9,7 @@ import type {
   AgentEventListener,
   AgentErrorInfo,
   AgentLoopConfig,
+  AgentToolCallContinuation,
   AgentMessage,
   AgentOptions,
   AgentState,
@@ -133,6 +134,22 @@ export class Agent {
   /** Starts a new Agent Run from the current history without appending a prompt message. */
   public async continue(): Promise<readonly AgentMessage[]> {
     return await this.runPromptMessages([]);
+  }
+
+  /** Executes only missing calls from an already durable assistant tool-call message, then resumes the model loop. */
+  public async continueFromToolCalls(
+    assistantMessage: AssistantMessage,
+    toolCalls: readonly ModelToolCall[],
+  ): Promise<readonly AgentMessage[]> {
+    const assistantIsPresent = this._state.messages.some(
+      (message) => message === assistantMessage || sameAssistantMessage(message, assistantMessage),
+    );
+    if (!assistantIsPresent) {
+      throw new Error(
+        'continueFromToolCalls requires the assistant message in the current history.',
+      );
+    }
+    return await this.runPromptMessages([], { assistantMessage, toolCalls });
   }
 
   /** 请求当前模型或工具调用通过已有 AbortSignal 结束。
@@ -272,6 +289,7 @@ export class Agent {
    */
   private async runPromptMessages(
     prompts: readonly AgentMessage[],
+    continuation?: AgentToolCallContinuation,
   ): Promise<readonly AgentMessage[]> {
     const runStartMessageIndex = this._state.messages.length;
     return await this.runWithLifecycle(async (signal) => {
@@ -289,6 +307,7 @@ export class Agent {
           await this.processEvents(event);
         },
         signal,
+        continuation,
       );
 
       return outcome;
@@ -489,4 +508,15 @@ export class Agent {
       throw new AgentEventListenerError(error);
     }
   }
+}
+
+function sameAssistantMessage(left: AgentMessage | undefined, right: AssistantMessage): boolean {
+  if (left === undefined || left.role !== 'assistant') return false;
+  return (
+    left.api === right.api &&
+    left.provider === right.provider &&
+    left.model === right.model &&
+    left.finishReason === right.finishReason &&
+    JSON.stringify(left.toolCalls ?? []) === JSON.stringify(right.toolCalls ?? [])
+  );
 }

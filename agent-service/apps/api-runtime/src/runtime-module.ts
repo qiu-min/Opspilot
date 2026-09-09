@@ -7,12 +7,17 @@ import {
   CreateSession,
   GetSessionHistory,
   ExecuteTurn,
+  InMemorySessionRunCoordinator,
+  RecoverTurnsOnStartup,
+  ResumeTurn,
+  type SessionRunCoordinator,
   SubscribeTurnStream,
   type ToolDefinition,
 } from '@opspilot/application';
 import {
   FileSystemSessionStore,
   FileSystemTurnStore,
+  FileSystemTurnExecutionContextStore,
   InMemoryTurnStreamHub,
 } from '@opspilot/infrastructure';
 import { createModelGateway, loadModelGatewayConfig } from '@opspilot/model-gateway';
@@ -49,19 +54,34 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
   });
   const sessionStore = new FileSystemSessionStore(config.sessionDirectory);
   const turnStore = new FileSystemTurnStore(config.turnStorageRoot);
+  const turnExecutionContextStore = new FileSystemTurnExecutionContextStore(config.turnStorageRoot);
   const turnStreamHub = new InMemoryTurnStreamHub();
+  const sessionRunCoordinator: SessionRunCoordinator = new InMemorySessionRunCoordinator();
   const excelResourcePathResolver = new FileSystemExcelResourcePathResolver(
     config.sharedStorageRoot,
   );
   const executeTurn = new ExecuteTurn({
     sessionStore,
     turnStore,
+    turnExecutionContextStore,
     modelGateway,
     defaultModel,
     toolDefinitions,
     systemPrompt,
     turnStreamHub,
+    sessionRunCoordinator,
   });
+  const resumeTurn = new ResumeTurn({
+    sessionStore,
+    turnStore,
+    turnExecutionContextStore,
+    modelGateway,
+    toolDefinitions,
+    systemPrompt,
+    sessionRunCoordinator,
+    turnStreamHub,
+  });
+  const recoverTurnsOnStartup = new RecoverTurnsOnStartup({ turnStore, resumeTurn });
   const getSessionHistory = new GetSessionHistory(sessionStore);
   const createSession = new CreateSession(sessionStore);
   const getActiveTurn = new GetActiveTurn(turnStreamHub);
@@ -70,6 +90,8 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
   return ApiModule.register({
     providers: [
       { provide: ExecuteTurn, useValue: executeTurn },
+      { provide: ResumeTurn, useValue: resumeTurn },
+      { provide: RecoverTurnsOnStartup, useValue: recoverTurnsOnStartup },
       { provide: GetSessionHistory, useValue: getSessionHistory },
       { provide: CreateSession, useValue: createSession },
       { provide: GetActiveTurn, useValue: getActiveTurn },
@@ -82,6 +104,8 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
       CreateSession,
       GetActiveTurn,
       SubscribeTurnStream,
+      ResumeTurn,
+      RecoverTurnsOnStartup,
       EXCEL_RESOURCE_PATH_RESOLVER,
     ],
   });

@@ -74,9 +74,8 @@ export class FileSystemTurnStore implements TurnStore {
     const state = this.loadState(paths);
     const events = this.readEvents(paths);
     this.validateEventLog(turnId, state, events);
-    const reconciledState = reconcileTerminalState(state, events);
     try {
-      return Turn.restore(reconciledState);
+      return Turn.restore(state);
     } catch (error) {
       throw new TurnStoreError(`Turn metadata violates domain invariants: ${turnId}.`, {
         cause: error,
@@ -169,7 +168,8 @@ export class FileSystemTurnStore implements TurnStore {
       .filter((entry) => entry.isDirectory() && isSafeId(entry.name))
       .map((entry) => this.load(entry.name));
     return entries.sort((left, right) => {
-      const timestampOrder = Date.parse(left.getState().createdAt) - Date.parse(right.getState().createdAt);
+      const timestampOrder =
+        Date.parse(left.getState().createdAt) - Date.parse(right.getState().createdAt);
       return timestampOrder !== 0 ? timestampOrder : left.getId().localeCompare(right.getId());
     });
   }
@@ -178,7 +178,9 @@ export class FileSystemTurnStore implements TurnStore {
     try {
       return loadTurnMetadata(paths.metadata);
     } catch (error) {
-      throw new TurnStoreError(`Unable to load Turn metadata: ${paths.metadata}.`, { cause: error });
+      throw new TurnStoreError(`Unable to load Turn metadata: ${paths.metadata}.`, {
+        cause: error,
+      });
     }
   }
 
@@ -190,7 +192,11 @@ export class FileSystemTurnStore implements TurnStore {
     }
   }
 
-  private validateEventLog(turnId: string, state: TurnState, events: readonly TurnEvent[]): TurnEvent[] {
+  private validateEventLog(
+    turnId: string,
+    state: TurnState,
+    events: readonly TurnEvent[],
+  ): TurnEvent[] {
     const eventIds = new Set<string>();
     let previousAttempt: number | undefined;
     events.forEach((event, index) => {
@@ -225,11 +231,6 @@ export class FileSystemTurnStore implements TurnStore {
         if (event.attempt < previousAttempt) {
           throw new TurnStoreError(
             `TurnEvent attempt moves backwards for Turn ${turnId}: ${previousAttempt} -> ${event.attempt}.`,
-          );
-        }
-        if (event.attempt - previousAttempt > 1) {
-          throw new TurnStoreError(
-            `TurnEvent attempt skips a value for Turn ${turnId}: ${previousAttempt} -> ${event.attempt}.`,
           );
         }
       }
@@ -306,33 +307,6 @@ type TerminalTurnEvent = Extract<
   { type: 'turn_completed' | 'turn_failed' | 'turn_cancelled' }
 >;
 
-function reconcileTerminalState(state: TurnState, events: readonly TurnEvent[]): TurnState {
-  if (state.status !== 'running' && state.status !== 'interrupted') return state;
-
-  const terminalEvent = findTerminalEventForAttempt(events, state.attempt);
-  if (terminalEvent === undefined) return state;
-
-  return {
-    ...state,
-    status: terminalStatus(terminalEvent),
-    completedAt: terminalEvent.timestamp,
-    ...(terminalEvent.type === 'turn_completed'
-      ? { resultLeafId: terminalEvent.resultLeafId }
-      : {}),
-  };
-}
-
-function findTerminalEventForAttempt(
-  events: readonly TurnEvent[],
-  attempt: number,
-): TerminalTurnEvent | undefined {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index];
-    if (event?.attempt === attempt && isTerminalTurnEvent(event)) return event;
-  }
-  return undefined;
-}
-
 function validateTerminalEvents(turnId: string, events: readonly TurnEvent[]): void {
   const terminalByAttempt = new Map<number, { event: TerminalTurnEvent; index: number }>();
 
@@ -350,13 +324,26 @@ function validateTerminalEvents(turnId: string, events: readonly TurnEvent[]): v
   });
 
   for (const { event, index } of terminalByAttempt.values()) {
-    const laterSameAttempt = events.slice(index + 1).some((candidate) => candidate.attempt === event.attempt);
+    const laterSameAttempt = events
+      .slice(index + 1)
+      .some((candidate) => candidate.attempt === event.attempt);
     if (laterSameAttempt) {
       throw new TurnStoreError(
         `Turn ${turnId} attempt ${event.attempt} contains events after terminal event ${event.type}.`,
       );
     }
   }
+}
+
+function findTerminalEventForAttempt(
+  events: readonly TurnEvent[],
+  attempt: number,
+): TerminalTurnEvent | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.attempt === attempt && isTerminalTurnEvent(event)) return event;
+  }
+  return undefined;
 }
 
 function isTerminalTurnEvent(event: TurnEvent): event is TerminalTurnEvent {
@@ -367,7 +354,9 @@ function isTerminalTurnEvent(event: TurnEvent): event is TerminalTurnEvent {
   );
 }
 
-function terminalStatus(event: TerminalTurnEvent): Extract<TurnState['status'], 'completed' | 'failed' | 'cancelled'> {
+function terminalStatus(
+  event: TerminalTurnEvent,
+): Extract<TurnState['status'], 'completed' | 'failed' | 'cancelled'> {
   switch (event.type) {
     case 'turn_completed':
       return 'completed';

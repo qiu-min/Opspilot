@@ -18,6 +18,8 @@ export function createGetWorkbookInfoTool(
     name: 'get_workbook_info',
     description: 'Inspect the workbook structure and worksheet summaries.',
     parameters: GET_WORKBOOK_INFO_PARAMETERS,
+    recoveryPolicy: 'retry_safe',
+    requiresExcelResource: true,
     async execute(_callId, _args, signal, context) {
       const excelResource = requireExcelResource(context);
       const result = await discoveryConnector.getWorkbookInfo(

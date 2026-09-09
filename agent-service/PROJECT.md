@@ -95,7 +95,7 @@ sessions/{sessionId}/
 └── history.jsonl   # append-only history
 ```
 
-旧的 `sessions/{sessionId}.jsonl` 仅在新目录不存在时读取，并在成功 restore 后 lazy migrate；迁移复制原始 history bytes、保留 legacy 文件。新目录优先，不完整的新目录不会 fallback 到 legacy。当前不实现 ResumeTurn 或自动恢复执行。
+旧的 `sessions/{sessionId}.jsonl` 仅在新目录不存在时读取，并在成功 restore 后 lazy migrate；迁移复制原始 history bytes、保留 legacy 文件。新目录优先，不完整的新目录不会 fallback 到 legacy。应用层通过 `ResumeTurn` 从 durable checkpoint 恢复执行，`RecoverTurnsOnStartup` 在 API runtime listen 前串行扫描；blocked/unrecoverable Turn 保持 `interrupted`，不会阻止服务启动。
 
 Session 不使用 PostgreSQL 保存消息树。Application 只定义 `SessionStore` port；Infrastructure 的 JSONL/filesystem adapter 负责持久化，Domain Session 不依赖 JSONL、Node fs 或 repository。
 
@@ -104,7 +104,7 @@ Session 不使用 PostgreSQL 保存消息树。Application 只定义 `SessionSto
 - `@opspilot/domain` Session
 - `@opspilot/domain` Turn / TurnEvent / TurnCheckpoint
 - `@opspilot/infrastructure` FileSystemSessionStore
-- `@opspilot/infrastructure` FileSystemTurnStore
+- `@opspilot/infrastructure` FileSystemTurnStore / FileSystemTurnExecutionContextStore
 - Infrastructure JSONL create / load / append
 - Session 读写、分支和 compaction invariants
 

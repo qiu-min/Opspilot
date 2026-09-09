@@ -28,20 +28,26 @@ Agent Service
 └── Tool Gateway
 ```
 
-Application 是业务编排边界，可以理解 OpsPilot 的 `Session`、`Turn` 和 `FileReference` 等概念，并负责把这些概念转换为 Runtime 可消费的输入。它定义 `SessionStore` 与 `TurnStore` port；filesystem adapter 位于 `packages/infrastructure`，由 `apps/api-runtime` 组合。
+Application 是业务编排边界，可以理解 OpsPilot 的 `Session`、`Turn` 和 `FileReference` 等概念，并负责把这些概念转换为 Runtime 可消费的输入。它定义 `SessionStore`、`TurnStore` 与 `TurnExecutionContextStore` port；filesystem adapter 位于 `packages/infrastructure`，由 `apps/api-runtime` 组合。
 
 Live UI recovery 使用独立的 Application `TurnStreamEvent`、`TurnStreamProjection` 和
 `TurnStreamHub`。`TurnEvent` 是 durable execution fact；`TurnStreamEvent` 与 projection
 是进程内 ephemeral UI state，reattach 只是恢复观看，不会 resume 执行。Hub 的 replay
 buffer 与 projection 在进程重启后允许丢失。
 
+进程 crash recovery 与 live stream reattach 是两条独立路径。`ResumeTurn` 从 durable
+`Session`、`Turn`、`TurnEvent` 和 checkpoint 规划安全恢复点，继续同一个 Turn 并递增
+`attempt`；`RecoverTurnsOnStartup` 在服务 listen 前串行扫描。部分模型输出不落盘，
+`TurnExecutionContext` 只保存恢复所需的最小输入，例如 `execution.json` 中的 Excel
+resource 引用。
+
 Agent Runtime 必须保持业务无关。Runtime 不允许出现 `FileId`、`Excel`、`OpsPilot Session`、`Conversation` 等业务概念，也不直接依赖 Application 的业务模型。Model Gateway 负责模型 Provider 边界，Tool Gateway 负责 Tool Contract、输入校验和外部能力适配。
 
 ## Application
 
-Application 当前依赖 `@opspilot/domain` 提供纯内存 `Session` 与 `Turn` aggregate，并提供 `SessionStore`、`TurnStore` port、最小 AgentSession、createAgentSession 及 `ExecuteTurn` 组合入口。`@opspilot/infrastructure` 提供 filesystem adapter。
+Application 当前依赖 `@opspilot/domain` 提供纯内存 `Session` 与 `Turn` aggregate，并提供 `SessionStore`、`TurnStore`、`TurnExecutionContextStore` port、最小 AgentSession、createAgentSession、`ExecuteTurn`、`ResumeTurn` 和 `RecoverTurnsOnStartup` 组合入口。`@opspilot/infrastructure` 提供 filesystem adapter。
 
-`ExecuteTurn` 编排一次用户 Turn：接收可选 `sessionId` 和用户消息，加载或创建 Session，创建并持久化 Turn，提交用户输入后调用 Agent Runtime，并通过 `SessionStore` 与 `TurnStore` 更新 durable state。具体 filesystem 实现由 `@opspilot/infrastructure` 提供。
+`ExecuteTurn` 编排一次用户 Turn：接收可选 `sessionId` 和用户消息，加载或创建 Session，创建并持久化 Turn 及最小 execution context，提交用户输入后调用 Agent Runtime，并通过 `SessionStore` 与 `TurnStore` 更新 durable state。`ResumeTurn` 从 checkpoint branch 恢复同一个 Turn；`RecoverTurnsOnStartup` 在 listen 前串行扫描 recoverable Turns。具体 filesystem 实现由 `@opspilot/infrastructure` 提供。
 
 Domain Session 负责 metadata、identity、entry、会话树、branch 和 compaction invariants；它不依赖文件系统。Infrastructure 的 FileSystemSessionStore 负责文件创建、加载和 append-only 持久化；Application 不依赖该具体实现。
 
@@ -81,7 +87,7 @@ sessions/{sessionId}/
 - `GET /sessions/{sessionId}/active-turn`：读取当前进程中可 reattach 的 live Turn 及 projection。
 - `GET /turns/{turnId}/stream?after=N`：订阅已有 Turn 的 live stream；不会创建或重新执行 Turn。
 
-Backend Session.Id 与 Agent Service Session.Id 使用同一个 identity。`reattach` 只恢复观看，不恢复执行；Agent Service process crash recovery、ResumeTurn 和 TurnStream 持久化不在当前范围。
+Backend Session.Id 与 Agent Service Session.Id 使用同一个 identity。`reattach` 只恢复观看，不恢复执行；进程重启后的执行恢复由 Agent Service 的 `ResumeTurn` 负责，TurnStream projection 仍不持久化。
 
 三个 SSE endpoint 统一发送 `TurnStreamEvent`，格式为 `id: sequence`、`event: type`、
 `data: JSON event`；不再发送 AgentEvent、`session_settled` 或 `done` 作为 live protocol。

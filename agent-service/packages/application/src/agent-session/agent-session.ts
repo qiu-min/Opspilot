@@ -5,6 +5,7 @@ import {
   type Message,
 } from '@opspilot/model-gateway';
 import type { Agent, AgentEvent, AgentMessage, AgentState } from '@opspilot/agent-runtime';
+import type { ModelToolCall } from '@opspilot/model-gateway';
 
 import {
   estimateSessionContextTokens,
@@ -86,6 +87,14 @@ export class AgentSession {
   /** Continues from the current durable Session-derived runtime history without adding a prompt. */
   public async continue(): Promise<readonly AgentMessage[]> {
     return await this.run(() => this.agent.continue());
+  }
+
+  /** Executes pending calls from an already durable assistant message before the next model step. */
+  public async continueFromToolCalls(
+    assistantMessage: AssistantMessage,
+    toolCalls: readonly ModelToolCall[],
+  ): Promise<readonly AgentMessage[]> {
+    return await this.run(() => this.agent.continueFromToolCalls(assistantMessage, toolCalls));
   }
 
   private async run(

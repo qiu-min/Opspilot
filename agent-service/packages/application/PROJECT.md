@@ -4,7 +4,7 @@
 
 当前 Session 已是用户可见长期会话的 Domain aggregate，而不是 Application 内部的 SessionManager。它由 `SessionMetadata` 与 history tree 组成；Application 通过 `SessionStore` port 访问 persistence，filesystem adapter 位于 `@opspilot/infrastructure`。
 
-Application 的持久化边界包含 `SessionStore` 与 `TurnStore` interface。Application 不导出或依赖 `FileSystemSessionStore`、`FileSystemTurnStore`、JSONL parser、metadata JSON helper、filesystem error 或 Node fs；这些具体实现属于 Infrastructure。Application unit tests 使用 in-memory fake，真实 filesystem behavior 在 Infrastructure / api-runtime integration tests 中验证。
+Application 的持久化边界包含 `SessionStore`、`TurnStore` 与 `TurnExecutionContextStore` interface。Application 不导出或依赖 `FileSystemSessionStore`、`FileSystemTurnStore`、`FileSystemTurnExecutionContextStore`、JSONL parser、metadata JSON helper、filesystem error 或 Node fs；这些具体实现属于 Infrastructure。Application unit tests 使用 in-memory fake，真实 filesystem behavior 在 Infrastructure / api-runtime integration tests 中验证。
 
 ```text
 Session
@@ -16,7 +16,7 @@ sessions/{sessionId}/
 └── history.jsonl   # append-only durable history
 ```
 
-旧的 `{sessionId}.jsonl` 只在新目录不存在时读取，并在成功 restore 后 lazy migrate；迁移复制原始 history bytes、保留 legacy 文件，新目录优先，不完整新目录不 fallback。`title`、`createdAt`、`updatedAt` 不属于 SessionEntry，也不进入 Agent context。Application 现在定义独立的 `TurnStore` port；本阶段只建立 Turn snapshot 与 TurnEvent durable log，不实现 resume orchestration 或数据库 repository。Live UI recovery 另有独立的 `TurnStreamEvent` / `TurnStreamProjection` / `TurnStreamHub` 边界，不写入 `TurnStore`。
+旧的 `{sessionId}.jsonl` 只在新目录不存在时读取，并在成功 restore 后 lazy migrate；迁移复制原始 history bytes、保留 legacy 文件，新目录优先，不完整新目录不 fallback。`title`、`createdAt`、`updatedAt` 不属于 SessionEntry，也不进入 Agent context。Application 定义独立的 `TurnStore` 与 `TurnExecutionContextStore` port；Turn snapshot、TurnEvent durable log 和最小 execution input 由 `TurnRecoveryPlanner`、`ResumeTurn` 与 `RecoverTurnsOnStartup` 用于 crash recovery，不引入数据库 repository。Live UI recovery 另有独立的 `TurnStreamEvent` / `TurnStreamProjection` / `TurnStreamHub` 边界，不写入 `TurnStore`。
 
 ## 1. 目标
 
@@ -292,7 +292,7 @@ assistant text、thinking/tool/compaction 状态、usage 和 live sequence。`ap
 调用方伪造。Hub 支持无 subscriber 的执行、多个 subscriber、有限 replay 和明确的
 `TurnStreamReplayGapError`。SSE disconnect 只 unsubscribe，不等同于 Turn cancel；terminal
 stream event 发送后 subscriber 结束并清除 Session active mapping。该能力是 reattach（恢复
-观看），不实现 resume（恢复执行）。
+观看）；resume（恢复执行）由 Application 的 TurnRecoveryPlanner / ResumeTurn 负责。
 
 ---
 

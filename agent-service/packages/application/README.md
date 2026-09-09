@@ -20,7 +20,7 @@ sessions/{sessionId}/
 
 `SessionStore.appendEntry()` 先追加 history，再原子更新 `metadata.updatedAt`；metadata update 失败会明确抛错，下一次 load 会根据 durable history reconciliation。`saveMetadata()` 通过 temp file + rename 原子替换整个 metadata snapshot。
 
-Application 同时定义 `TurnStore` port。Turn snapshot 与 append-only `TurnEvent` history 是独立的 durable execution boundary，不写入 Session JSONL；本阶段只提供 Domain model、port 和 filesystem adapter，不实现 Turn resume orchestration。
+Application 同时定义 `TurnStore` 与 `TurnExecutionContextStore` port。Turn snapshot、append-only `TurnEvent` history 和最小执行输入是独立的 durable execution boundary，不写入 Session JSONL；`TurnRecoveryPlanner`、`ResumeTurn` 与 `RecoverTurnsOnStartup` 负责进程 crash 后的执行恢复。
 
 ## Live Turn stream
 
@@ -37,7 +37,8 @@ Application 还定义独立的 `TurnStreamEvent` presentation contract、纯 red
 
 SSE disconnect 只取消当前 subscriber，不会调用 `AgentSession.abort()` 或取消
 `ExecuteTurn`。terminal stream event 发送后 subscriber 正常结束，live Session mapping
-被移除。reattach 与 resume 是不同语义：本阶段只支持对现有执行恢复观看。
+被移除。reattach 与 resume 是不同语义：reattach 只恢复观看，resume 使用 durable
+checkpoint 恢复同一个 Turn 的执行。
 
 ## 职责
 

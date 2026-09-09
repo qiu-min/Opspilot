@@ -28,11 +28,7 @@ function eventId(sequence: number, attempt: number): string {
   return `event-${attempt}-${sequence}`;
 }
 
-function turnStartedEvent(
-  turn: Turn,
-  sequence = 0,
-  attempt = turn.getState().attempt,
-): TurnEvent {
+function turnStartedEvent(turn: Turn, sequence = 0, attempt = turn.getState().attempt): TurnEvent {
   return {
     version: 1,
     id: eventId(sequence, attempt),
@@ -176,11 +172,7 @@ function turnCompletedEvent(
   };
 }
 
-function turnFailedEvent(
-  turn: Turn,
-  sequence = 1,
-  attempt = turn.getState().attempt,
-): TurnEvent {
+function turnFailedEvent(turn: Turn, sequence = 1, attempt = turn.getState().attempt): TurnEvent {
   return {
     version: 1,
     id: eventId(sequence, attempt),
@@ -219,11 +211,7 @@ function writeEvents(root: string, turnId: string, events: readonly TurnEvent[])
   );
 }
 
-function overwriteCheckpoint(
-  root: string,
-  turnId: string,
-  checkpoint: TurnCheckpoint,
-): void {
+function overwriteCheckpoint(root: string, turnId: string, checkpoint: TurnCheckpoint): void {
   const metadataPath = join(root, 'turns', turnId, 'metadata.json');
   const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as Record<string, unknown>;
   metadata.checkpoint = checkpoint;
@@ -278,7 +266,10 @@ describe('FileSystemTurnStore', () => {
     expect(initial.store.load(initialTurn.getId()).getState().attempt).toBe(1);
 
     const resumed = createStore();
-    const resumedTurn = Turn.restore({ ...createStartedTurn('turn-resumed').getState(), attempt: 2 });
+    const resumedTurn = Turn.restore({
+      ...createStartedTurn('turn-resumed').getState(),
+      attempt: 2,
+    });
     resumed.store.create(resumedTurn);
     writeEvents(resumed.root, resumedTurn.getId(), [
       turnStartedEvent(resumedTurn, 0, 1),
@@ -302,22 +293,19 @@ describe('FileSystemTurnStore', () => {
     ['completed', turnCompletedEvent, 'completed'],
     ['failed', turnFailedEvent, 'failed'],
     ['cancelled', turnCancelledEvent, 'cancelled'],
-  ] as const)('reconciles a %s terminal event over running metadata', (_name, createEvent, status) => {
-    const { store } = createStore();
-    const turn = createStartedTurn();
-    store.create(turn);
-    store.appendEvent(turn.getId(), turnStartedEvent(turn));
-    store.appendEvent(turn.getId(), createEvent(turn));
+  ] as const)(
+    'keeps a %s terminal event visible to the recovery layer',
+    (_name, createEvent, status) => {
+      const { store } = createStore();
+      const turn = createStartedTurn();
+      store.create(turn);
+      store.appendEvent(turn.getId(), turnStartedEvent(turn));
+      store.appendEvent(turn.getId(), createEvent(turn));
 
-    expect(store.load(turn.getId()).getState()).toMatchObject({ status });
-    expect(store.listRecoverable().map((candidate) => candidate.getId())).not.toContain(turn.getId());
-    if (status === 'completed') {
-      expect(store.load(turn.getId()).getState()).toMatchObject({
-        resultLeafId: 'leaf-final',
-        completedAt: '2026-01-01T00:00:03.000Z',
-      });
-    }
-  });
+      expect(store.load(turn.getId()).getState()).toMatchObject({ status: 'running' });
+      expect(store.listRecoverable().map((candidate) => candidate.getId())).toContain(turn.getId());
+    },
+  );
 
   it('loads a synchronized terminal snapshot and event normally', () => {
     const { store } = createStore();
@@ -329,10 +317,12 @@ describe('FileSystemTurnStore', () => {
     store.save(turn);
 
     expect(store.load(turn.getId()).getState()).toEqual(turn.getState());
-    expect(store.listRecoverable().map((candidate) => candidate.getId())).not.toContain(turn.getId());
+    expect(store.listRecoverable().map((candidate) => candidate.getId())).not.toContain(
+      turn.getId(),
+    );
   });
 
-  it('preserves the last checkpoint while reconciling a terminal event', () => {
+  it('preserves the last checkpoint while exposing a terminal event for recovery', () => {
     const { root, store } = createStore();
     const turn = createStartedTurn();
     store.create(turn);
@@ -346,7 +336,7 @@ describe('FileSystemTurnStore', () => {
     });
 
     expect(store.load(turn.getId()).getState()).toMatchObject({
-      status: 'completed',
+      status: 'running',
       checkpoint: {
         eventSequence: 1,
         sessionLeafId: 'leaf-1',
@@ -369,7 +359,6 @@ describe('FileSystemTurnStore', () => {
 
   it.each([
     ['backwards', 2, [1, 2, 1]],
-    ['jump', 3, [1, 3]],
     ['future attempt', 2, [3]],
     ['first event after attempt one', 2, [2]],
   ] as const)('rejects %s attempt history', (_case, metadataAttempt, attempts) => {
@@ -383,6 +372,19 @@ describe('FileSystemTurnStore', () => {
     );
 
     expect(() => store.load(turn.getId())).toThrow(TurnStoreError);
+  });
+
+  it('allows multiple resume snapshot-before-event gaps while preserving monotonic attempts', () => {
+    const { root, store } = createStore();
+    const turn = Turn.restore({ ...createStartedTurn().getState(), attempt: 3 });
+    store.create(turn);
+    writeEvents(root, turn.getId(), [
+      turnStartedEvent(turn, 0, 1),
+      modelStartedEvent(turn, 1, 1),
+      modelStartedEvent(turn, 2, 3),
+    ]);
+
+    expect(store.load(turn.getId()).getState().attempt).toBe(3);
   });
 
   it.each([
@@ -422,7 +424,10 @@ describe('FileSystemTurnStore', () => {
     ['duplicate sequence', (turn: Turn) => turnStartedEvent(turn, 0)],
     ['skipped sequence', (turn: Turn) => modelCompletedEvent(turn, 2)],
     ['wrong turn id', (turn: Turn) => ({ ...turnStartedEvent(turn), turnId: 'other-turn' })],
-    ['wrong session id', (turn: Turn) => ({ ...turnStartedEvent(turn), sessionId: 'other-session' })],
+    [
+      'wrong session id',
+      (turn: Turn) => ({ ...turnStartedEvent(turn), sessionId: 'other-session' }),
+    ],
     ['wrong attempt', (turn: Turn) => ({ ...turnStartedEvent(turn), attempt: 2 })],
   ] as const)('rejects %s', (_case, buildEvent) => {
     const { store } = createStore();

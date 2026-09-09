@@ -4,6 +4,7 @@ export const apiErrorCodes = [
   'CONFLICT',
   'TURN_STREAM_REPLAY_GAP',
   'SESSION_ACTIVE_TURN_CONFLICT',
+  'SESSION_RECOVERABLE_TURN_EXISTS',
   'INTERNAL_ERROR',
 ] as const;
 

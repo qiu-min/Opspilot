@@ -1,15 +1,15 @@
 # @opspilot/infrastructure Project
 
-`@opspilot/infrastructure` 提供 Agent Service 的具体外部系统 adapter。当前范围是实现 Application 的 `SessionStore` 与 `TurnStore` port，并将 Session history、Turn metadata snapshot 和 append-only TurnEvent history 持久化到 filesystem；同时提供 `InMemoryTurnStreamHub` 作为 Application live stream port 的单进程实现。
+`@opspilot/infrastructure` 提供 Agent Service 的具体外部系统 adapter。当前范围是实现 Application 的 `SessionStore`、`TurnStore` 与 `TurnExecutionContextStore` port，并将 Session history、Turn metadata snapshot、append-only TurnEvent history 和最小 Turn execution context 持久化到 filesystem；同时提供 `InMemoryTurnStreamHub` 作为 Application live stream port 的单进程实现。
 
 ## Boundary
 
 ```text
 @opspilot/domain
         ↑
-@opspilot/application  (SessionStore / TurnStore ports)
+@opspilot/application  (SessionStore / TurnStore / TurnExecutionContextStore ports)
         ↑
-@opspilot/infrastructure (FileSystemSessionStore / FileSystemTurnStore)
+@opspilot/infrastructure (FileSystemSessionStore / FileSystemTurnStore / FileSystemTurnExecutionContextStore)
         ↑
 apps/api-runtime (composition root)
 ```
@@ -49,9 +49,9 @@ turns/{turnId}/
 └── events.jsonl
 ```
 
-`metadata.json` 保存当前 Turn snapshot 并使用 atomic replacement；`events.jsonl` 保存严格连续 sequence 的 append-only `TurnEvent`。本阶段不实现自动恢复执行。
+`metadata.json` 保存当前 Turn snapshot 并使用 atomic replacement；`events.jsonl` 保存严格连续 sequence 的 append-only `TurnEvent`；可选的 `execution.json` 只保存恢复所需的最小输入，并使用 version validation、safe turnId path 和 atomic temp-file rename。
 
-加载 Turn 时，Infrastructure 会检查当前 attempt 的 terminal event。若 metadata 仍为 running/interrupted 但 events 已经持久化 `turn_completed`、`turn_failed` 或 `turn_cancelled`，会在内存中 reconciliation 为对应 terminal state；不会覆盖 checkpoint，也不会把 terminal event 当成 checkpoint。相同 attempt 的冲突 terminal conclusion 会被拒绝。
+加载 Turn 时，Infrastructure 只校验并返回 metadata snapshot 与 event log；即使当前 attempt 已有 terminal event 而 metadata 仍为 running/interrupted，也不会在 adapter 内提前过滤该 Turn。`TurnRecoveryPlanner` / `ResumeTurn` 负责把这种 append-before-snapshot crash window reconciliation 为 terminal state，不增加 attempt、不写 `turn_resumed`、不调用模型。Infrastructure 仍会拒绝相同 attempt 的冲突 terminal conclusion。
 
 ## Verification
 

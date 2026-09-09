@@ -27,6 +27,8 @@ export function createGetSheetProfileTool(
     name: 'get_sheet_profile',
     description: 'Inspect one worksheet range, header, and inferred column types.',
     parameters: GET_SHEET_PROFILE_PARAMETERS,
+    recoveryPolicy: 'retry_safe',
+    requiresExcelResource: true,
     async execute(_callId, args, signal, context) {
       const { sheetName, sampleSize } = narrowArguments(args);
       const excelResource = requireExcelResource(context);

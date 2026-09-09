@@ -3,10 +3,17 @@ import type {
   AgentEventSink,
   AgentLoopConfig,
   AgentMessage,
+  AgentToolCallContinuation,
   AgentTool,
   StreamFn,
 } from './types.js';
-import type { AssistantMessage, Context, Tool, ToolResultMessage } from '@opspilot/model-gateway';
+import type {
+  AssistantMessage,
+  Context,
+  ModelToolCall,
+  Tool,
+  ToolResultMessage,
+} from '@opspilot/model-gateway';
 import type { Options } from '@opspilot/model-gateway';
 import { executeToolCalls } from './tool-executor.js';
 import { defaultConvertToLlm } from './convert-to-llm.js';
@@ -63,6 +70,7 @@ export async function runAgentLoopWithOutcome(
   streamFn: StreamFn,
   emit: AgentEventSink,
   signal?: AbortSignal,
+  continuation?: AgentToolCallContinuation,
 ): Promise<AgentLoopOutcome> {
   const newMessages: AgentMessage[] = [...prompts];
   const currentContext: AgentContext = {
@@ -71,6 +79,38 @@ export async function runAgentLoopWithOutcome(
   };
 
   await emit({ type: 'agent_start' });
+
+  if (continuation !== undefined) {
+    const outcome = await executeToolCalls({
+      toolCalls: continuation.toolCalls,
+      tools: currentContext.tools ?? [],
+      assistantMessage: continuation.assistantMessage,
+      context: currentContext,
+      beforeToolCall: config.beforeToolCall,
+      afterToolCall: config.afterToolCall,
+      toolExecution: config.toolExecution,
+      signal,
+      emit,
+    });
+    for (const result of outcome.messages) {
+      currentContext.messages.push(result);
+      newMessages.push(result);
+    }
+    if (outcome.stopReason !== undefined) {
+      return {
+        messages: newMessages,
+        termination: {
+          reason: outcome.stopReason,
+          message:
+            outcome.stopReason === 'aborted'
+              ? 'Tool execution was aborted.'
+              : 'Tool execution failed due to an internal error.',
+          ...(outcome.cause === undefined ? {} : { cause: outcome.cause }),
+          toolResults: outcome.messages,
+        },
+      };
+    }
+  }
 
   await emit({ type: 'step_start' });
 

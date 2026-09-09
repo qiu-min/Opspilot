@@ -157,6 +157,28 @@ export class Turn {
     };
   }
 
+  /** Reconciles a durable terminal event that was appended before the snapshot save. */
+  public reconcileTerminal(
+    status: Extract<TurnStatus, 'completed' | 'failed' | 'cancelled'>,
+    resultLeafId: string | null = this.state.resultLeafId,
+    timestamp = new Date().toISOString(),
+  ): void {
+    if (this.state.status !== 'running' && this.state.status !== 'interrupted') {
+      if (this.state.status === status) return;
+      throw new TurnStateError(
+        `Cannot reconcile terminal Turn in status ${this.state.status}.`,
+      );
+    }
+    assertNullableId(resultLeafId, 'resultLeafId');
+    this.assertStartedTimestamp(timestamp, 'completedAt');
+    this.state = {
+      ...this.state,
+      status,
+      resultLeafId: status === 'completed' ? resultLeafId : this.state.resultLeafId,
+      completedAt: timestamp,
+    };
+  }
+
   /** Completes a running Turn and optionally records its final Session leaf. */
   public complete(resultLeafId: string | null = this.state.resultLeafId, timestamp = new Date().toISOString()): void {
     this.assertStatus('running', 'complete');
