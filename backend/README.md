@@ -54,6 +54,8 @@ GET  /api/sessions/{sessionId}/turns/{turnId}/stream?after=N
 
 Backend stream adapter 原样转发 Agent Service PR2 `TurnStreamEvent`，保留 `turnId`、`sessionId`、`sequence`、`timestamp`，SSE `id` 等于 `sequence`。Backend 只负责 ownership、文件资源解析、错误映射和 SSE transport，不再次推断 thinking、assistant、tool 或 compaction semantics。
 
+Agent Service stream conflicts 的 machine-readable `code` 会继续透传到 Backend ProblemDetails；`TURN_STREAM_REPLAY_GAP` 与 `SESSION_ACTIVE_TURN_CONFLICT` 不会被折叠成同一种 Web 语义。
+
 `GET /api/sessions/{sessionId}/active-turn` 直接读取 Agent Service live Hub projection。reattach 先验证 Session ownership，再确认 active Turn 的 `turnId` 与 route 一致，随后只调用 Agent Service reattach endpoint，不创建新 Turn。reattach 是恢复观看，不是 resume 执行。
 
 SSE subscriber 断开只取消该 subscriber 的 HTTP/Agent stream connection，不调用 Turn cancel 或 Agent abort；执行状态不变。

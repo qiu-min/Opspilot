@@ -17,7 +17,7 @@ GET /api/sessions/{sessionId}/active-turn
 GET /api/sessions/{sessionId}/turns/{turnId}/stream?after=N
 ```
 
-SSE 意外断开不等于 Turn failed。Web 会重新读取 active-turn；仍 active 时 hydrate/reconcile 后最多重新观看一次，active-turn 为 null 时重新读取 durable Session history。Replay gap 409 也走同一 projection refetch/retry 路径。
+SSE 意外断开不等于 Turn failed。Web 会重新读取 active-turn；仍 active 时 hydrate/reconcile 后最多重新观看一次，active-turn 为 null 时重新读取 durable Session history。只有 `TURN_STREAM_REPLAY_GAP` 会走 projection refetch/retry 路径；`SESSION_ACTIVE_TURN_CONFLICT` 会回滚本次 optimistic message 后恢复真实 active Turn，其他 409 不会被误判为 replay gap。
 
 同一个 SPA 内切换 Session 不会 abort 其他 Session 的 Turn。live state 按 `turnId` 管理，`activeTurnIdBySessionId` 只保存 Session 到 active Turn 的映射；如果已有该 Turn 的 subscriber，不重复建立第二条 SSE。
 

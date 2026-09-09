@@ -50,7 +50,7 @@ function mapException(exception: unknown): MappedError {
   if (exception instanceof TurnStreamReplayGapError) {
     return {
       statusCode: 409,
-      code: 'CONFLICT',
+      code: 'TURN_STREAM_REPLAY_GAP',
       message: 'Turn stream replay gap.',
       details: {
         requestedAfter: [String(exception.requestedAfter)],
@@ -63,7 +63,11 @@ function mapException(exception: unknown): MappedError {
     return { statusCode: 404, code: 'NOT_FOUND', message: 'Turn stream not found.' };
   }
   if (exception instanceof TurnStreamSessionConflictError) {
-    return { statusCode: 409, code: 'CONFLICT', message: 'Session already has an active Turn.' };
+    return {
+      statusCode: 409,
+      code: 'SESSION_ACTIVE_TURN_CONFLICT',
+      message: 'Session already has an active Turn.',
+    };
   }
   if (exception instanceof RequestValidationError) {
     return {

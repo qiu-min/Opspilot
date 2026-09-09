@@ -195,7 +195,7 @@ describe('Turn stream HTTP integration', () => {
     const response = await getJson(server.port, `/turns/${identity.turnId}/stream?after=0`);
     expect(response.statusCode).toBe(409);
     expect(JSON.parse(response.body)).toMatchObject({
-      code: 'CONFLICT',
+      code: 'TURN_STREAM_REPLAY_GAP',
       details: {
         requestedAfter: ['0'],
         oldestAvailable: ['2'],

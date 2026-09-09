@@ -132,8 +132,11 @@ public sealed class JwtBearerIntegrationTests : IClassFixture<RegisterTestFactor
     public async Task ProtectedTestEndpoint_WithTokenSignedByDifferentKeyReturnsUnauthorized()
     {
         LoginResponse login = await RegisterAndLoginAsync();
-        string invalidToken = login.AccessToken[..^1] +
-            (login.AccessToken[^1] == 'a' ? 'b' : 'a');
+        string[] tokenParts = login.AccessToken.Split('.');
+        Assert.Equal(3, tokenParts.Length);
+        string signature = tokenParts[2];
+        tokenParts[2] = (signature[0] == 'a' ? 'b' : 'a') + signature[1..];
+        string invalidToken = string.Join('.', tokenParts);
 
         using HttpRequestMessage request = CreateAuthenticatedRequest(invalidToken);
         using HttpResponseMessage response = await httpClient.SendAsync(request);

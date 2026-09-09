@@ -53,7 +53,7 @@ export class TurnStreamNotFoundError extends Error {
 
 /** Raised when two live executions try to own the same Session. */
 export class TurnStreamSessionConflictError extends Error {
-  public readonly code = 'TURN_STREAM_SESSION_CONFLICT';
+  public readonly code = 'SESSION_ACTIVE_TURN_CONFLICT';
 
   public constructor(
     public readonly sessionId: string,

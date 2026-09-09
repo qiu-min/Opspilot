@@ -2,6 +2,7 @@ export type ApiProblemDetails = {
   status?: number;
   title?: string;
   detail?: string;
+  code?: string;
 };
 
 export type ApiRequestOptions = {
@@ -14,13 +15,15 @@ export type ApiRequestOptions = {
 
 export class ApiError extends Error {
   readonly status: number;
+  readonly code?: string;
   readonly title: string;
   readonly detail: string;
 
-  constructor(status: number, title: string, detail: string) {
+  constructor(status: number, title: string, detail: string, code?: string) {
     super(detail || title);
     this.name = "ApiError";
     this.status = status;
+    this.code = code;
     this.title = title;
     this.detail = detail;
   }
@@ -81,6 +84,7 @@ async function createApiError(response: Response): Promise<ApiError> {
     response.status,
     problemDetails?.title ?? fallbackTitle,
     problemDetails?.detail ?? fallbackDetail,
+    problemDetails?.code,
   );
 }
 
@@ -118,6 +122,7 @@ function parseProblemDetails(bodyText: string): ApiProblemDetails | undefined {
       status: typeof parsed.status === "number" ? parsed.status : undefined,
       title: typeof parsed.title === "string" ? parsed.title : undefined,
       detail: typeof parsed.detail === "string" ? parsed.detail : undefined,
+      code: typeof parsed.code === "string" ? parsed.code : undefined,
     };
   } catch (error: unknown) {
     return undefined;

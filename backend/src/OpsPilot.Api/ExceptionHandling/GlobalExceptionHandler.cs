@@ -53,24 +53,28 @@ public sealed class GlobalExceptionHandler(
 
         httpContext.Response.StatusCode = statusCode;
 
+        ProblemDetails problemDetails = new()
+        {
+            Status = statusCode,
+            Title =
+                isValidationException
+                    ? "The request is invalid."
+                    : isUnauthorizedException
+                        ? "Authentication failed."
+                        : isConflictException
+                            ? "The request conflicts with existing data."
+                            : isNotFoundException
+                                ? "The requested resource was not found."
+                                : "An unexpected error occurred.",
+            Detail = isSafeBusinessException ? exception.Message : null,
+        };
+        if (exception is ApplicationConflictException conflict)
+            problemDetails.Extensions["code"] = conflict.Code;
+
         await problemDetailsService.WriteAsync(new ProblemDetailsContext
         {
             HttpContext = httpContext,
-            ProblemDetails = new ProblemDetails
-            {
-                Status = statusCode,
-                Title =
-                    isValidationException
-                        ? "The request is invalid."
-                        : isUnauthorizedException
-                            ? "Authentication failed."
-                            : isConflictException
-                                ? "The request conflicts with existing data."
-                                : isNotFoundException
-                                    ? "The requested resource was not found."
-                                    : "An unexpected error occurred.",
-                Detail = isSafeBusinessException ? exception.Message : null
-            }
+            ProblemDetails = problemDetails,
         });
 
         return true;

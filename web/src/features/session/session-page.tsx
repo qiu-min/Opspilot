@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "../../api/client";
 import { createSession, getActiveSessionTurn, getSession, listSessions, reattachSessionTurnStream, startSessionTurnStream } from "../../api/sessions/session-api";
 import type { ActiveTurnResponse } from "../../api/sessions/session-contracts";
-import { TurnStreamProtocolError, type TurnStreamEvent } from "../../api/sessions/turn-stream-contracts";
+import type { TurnStreamEvent } from "../../api/sessions/turn-stream-contracts";
 import { uploadFile } from "../../api/files/files-api";
 import { useAuth } from "../auth/auth-provider";
 import { Composer, type ComposerSubmitPayload } from "./components/composer";
@@ -15,6 +15,7 @@ import { demoAgentName, demoConnectedTools, demoContextFiles, demoContextStatus,
 import { isXlsxFile, replacePendingAttachment, uploadPendingAttachment, SessionAttachmentValidationError } from "./session-attachments";
 import { formatMessageCreatedAt, mergeLiveTurnResponse, toSessionItems, toSessionSummary } from "./session-mappers";
 import { projectTurnStream } from "./turn-stream-projection";
+import { classifyTurnStreamError, isSessionTurnProcessing, planActiveTurnRecovery, removeOptimisticMessage, shouldHydrateTurnProjection, shouldStartTurnSubscription } from "./turn-recovery";
 import { createInitialTurnStreamState, hydrateTurnStreamStateFromProjection, reduceTurnStreamEvent, TurnStreamStateError, type TurnStreamState } from "./turn-stream-state";
 import type { ChatMessage, PendingAttachment, SessionItem, SessionSummary } from "./types";
 
@@ -30,12 +31,14 @@ export function SessionPage() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [timelinesBySessionId, setTimelinesBySessionId] = useState<Record<string, SessionItem[]>>({});
   const [activeTurnIdBySessionId, setActiveTurnIdBySessionId] = useState<Record<string, string | undefined>>({});
+  const activeTurnIdsRef = useRef<Record<string, string | undefined>>({});
   const [turnStreamStatesByTurnId, setTurnStreamStatesByTurnId] = useState<Record<string, TurnStreamState | undefined>>({});
   const turnStreamStatesRef = useRef<Record<string, TurnStreamState | undefined>>({});
   const turnStreamControllersByTurnId = useRef(new Map<string, AbortController>());
+  const pendingStartControllersBySessionId = useRef(new Map<string, AbortController>());
   const [attachmentsBySessionId, setAttachmentsBySessionId] = useState<Record<string, PendingAttachment[]>>({});
-  const [processingSessionIds, setProcessingSessionIds] = useState<Set<string>>(new Set());
-  const processingSessionIdsRef = useRef(new Set<string>());
+  const [pendingTurnStartSessionIds, setPendingTurnStartSessionIds] = useState<Set<string>>(new Set());
+  const pendingTurnStartSessionIdsRef = useRef(new Set<string>());
   const [statusBySessionId, setStatusBySessionId] = useState<Record<string, string | undefined>>({});
   const [errorsBySessionId, setErrorsBySessionId] = useState<Record<string, string | undefined>>({});
   const [loadingSessionIds, setLoadingSessionIds] = useState<Record<string, boolean>>({});
@@ -51,6 +54,15 @@ export function SessionPage() {
   const sessionController = useRef<AbortController | null>(null);
 
   const setSessionStatus = useCallback((sessionId: string, status: string) => setStatusBySessionId((current) => ({ ...current, [sessionId]: status })), []);
+  const setActiveTurnId = useCallback((sessionId: string, turnId: string | undefined) => {
+    activeTurnIdsRef.current = { ...activeTurnIdsRef.current, [sessionId]: turnId };
+    setActiveTurnIdBySessionId((current) => ({ ...current, [sessionId]: turnId }));
+  }, []);
+  const setPendingTurnStart = useCallback((sessionId: string, pending: boolean) => {
+    if (pending) pendingTurnStartSessionIdsRef.current.add(sessionId);
+    else pendingTurnStartSessionIdsRef.current.delete(sessionId);
+    setPendingTurnStartSessionIds(new Set(pendingTurnStartSessionIdsRef.current));
+  }, []);
   const setTurnState = useCallback((turnId: string, state: TurnStreamState) => {
     turnStreamStatesRef.current = { ...turnStreamStatesRef.current, [turnId]: state };
     setTurnStreamStatesByTurnId((current) => ({ ...current, [turnId]: state }));
@@ -78,32 +90,86 @@ export function SessionPage() {
       const [detail, active] = await Promise.all([getSession(sessionId, accessToken, controller.signal), getActiveSessionTurn(sessionId, accessToken, controller.signal)]);
       if (controller.signal.aborted) return;
       const durableItems = toSessionItems(detail); setTimelinesBySessionId((current) => ({ ...current, [sessionId]: durableItems }));
-      await hydrateAndReattach(sessionId, active, false);
+      const hydrated = hydrateActiveTurnProjection(sessionId, active);
+      if (hydrated !== undefined) {
+        startTurnSubscription(
+          sessionId,
+          hydrated.turnId,
+          (signal) => reattachSessionTurnStream(sessionId, hydrated.turnId, hydrated.afterSequence, accessToken, signal),
+          true,
+        );
+      }
     } catch (error: unknown) { if (!controller.signal.aborted) setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "Unable to load this session. Try selecting it again.") })); }
     finally { if (sessionController.current === controller) { sessionController.current = null; setLoadingSessionIds((current) => ({ ...current, [sessionId]: false })); } }
   }, [accessToken]);
 
   useEffect(() => { if (activeSessionId) void loadSession(activeSessionId); return () => sessionController.current?.abort(); }, [activeSessionId, loadSession]);
 
-  async function hydrateAndReattach(sessionId: string, active: ActiveTurnResponse, retry: boolean) {
-    if (active.activeTurn === null) { setActiveTurnIdBySessionId((current) => ({ ...current, [sessionId]: undefined })); return; }
-    const { turnId, projection } = active.activeTurn; setActiveTurnIdBySessionId((current) => ({ ...current, [sessionId]: turnId }));
-    const existing = turnStreamStatesRef.current[turnId]; if (existing === undefined) setTurnState(turnId, hydrateTurnStreamStateFromProjection(projection));
-    if (!turnStreamControllersByTurnId.current.has(turnId)) {
-      const controller = new AbortController(); turnStreamControllersByTurnId.current.set(turnId, controller);
-      await consumeTurnStream(sessionId, turnId, reattachSessionTurnStream(sessionId, turnId, projection.lastSequence, accessToken!, controller.signal), controller, !retry);
+  function hydrateActiveTurnProjection(sessionId: string, active: ActiveTurnResponse, expectedTurnId?: string): { turnId: string; afterSequence: number } | undefined {
+    if (active.activeTurn === null) {
+      setActiveTurnId(sessionId, undefined);
+      setPendingTurnStart(sessionId, false);
+      return undefined;
     }
+    const { turnId, projection } = active.activeTurn;
+    if (expectedTurnId !== undefined && expectedTurnId !== turnId) {
+      throw new TurnStreamStateError("Active Turn identity changed during recovery.");
+    }
+    setActiveTurnId(sessionId, turnId);
+    setPendingTurnStart(sessionId, false);
+    const local = turnStreamStatesRef.current[turnId];
+    if (shouldHydrateTurnProjection(local?.lastSequence, projection.lastSequence)) {
+      setTurnState(turnId, hydrateTurnStreamStateFromProjection(projection));
+    }
+    return { turnId, afterSequence: projection.lastSequence };
   }
 
-  async function consumeTurnStream(sessionId: string, expectedTurnId: string | undefined, stream: AsyncGenerator<TurnStreamEvent>, controller: AbortController, allowRecovery: boolean) {
+  function startTurnSubscription(
+    sessionId: string,
+    expectedTurnId: string | undefined,
+    openStream: (signal: AbortSignal) => AsyncGenerator<TurnStreamEvent>,
+    allowRecovery: boolean,
+    optimisticMessageId?: string,
+  ) {
+    if (expectedTurnId !== undefined) {
+      if (pendingStartControllersBySessionId.current.has(sessionId)) return;
+      if (!shouldStartTurnSubscription(turnStreamControllersByTurnId.current.has(expectedTurnId))) return;
+    } else if (pendingStartControllersBySessionId.current.has(sessionId)) {
+      return;
+    }
+
+    const controller = new AbortController();
+    if (expectedTurnId === undefined) pendingStartControllersBySessionId.current.set(sessionId, controller);
+    else turnStreamControllersByTurnId.current.set(expectedTurnId, controller);
+
+    let stream: AsyncGenerator<TurnStreamEvent>;
+    try {
+      stream = openStream(controller.signal);
+    } catch (error: unknown) {
+      releaseTurnStreamController(sessionId, expectedTurnId, controller);
+      handleSubscriptionFailure(sessionId, error, optimisticMessageId);
+      return;
+    }
+
+    void consumeTurnStream(sessionId, expectedTurnId, stream, controller, allowRecovery, optimisticMessageId).catch((error: unknown) => {
+      releaseTurnStreamController(sessionId, expectedTurnId, controller);
+      handleSubscriptionFailure(sessionId, error, optimisticMessageId);
+    });
+  }
+
+  async function consumeTurnStream(sessionId: string, expectedTurnId: string | undefined, stream: AsyncGenerator<TurnStreamEvent>, controller: AbortController, allowRecovery: boolean, optimisticMessageId?: string) {
     let turnId = expectedTurnId; let terminal = false;
     try {
       for await (const event of stream) {
         if (turnId !== undefined && event.turnId !== turnId) throw new TurnStreamStateError("Turn stream changed Turn identity.");
         turnId ??= event.turnId;
-        if (!turnStreamControllersByTurnId.current.has(turnId)) turnStreamControllersByTurnId.current.set(turnId, controller);
+        const existingController = turnStreamControllersByTurnId.current.get(turnId);
+        if (existingController !== undefined && existingController !== controller) throw new TurnStreamStateError("A second subscriber attempted to own the same Turn.");
+        turnStreamControllersByTurnId.current.set(turnId, controller);
+        setActiveTurnId(sessionId, turnId);
+        setPendingTurnStart(sessionId, false);
         const current = turnStreamStatesRef.current[turnId] ?? createInitialTurnStreamState(turnId, sessionId);
-        const next = reduceTurnStreamEvent(current, event); setTurnState(turnId, next); setActiveTurnIdBySessionId((value) => ({ ...value, [sessionId]: turnId }));
+        const next = reduceTurnStreamEvent(current, event); setTurnState(turnId, next);
         if (event.type === "turn_started") setSessionStatus(sessionId, "Processing your request");
         if (event.type === "assistant_thinking_started") setSessionStatus(sessionId, "Assistant is thinking");
         if (event.type === "assistant_text_delta") setSessionStatus(sessionId, "Assistant is responding");
@@ -112,39 +178,107 @@ export function SessionPage() {
         if (event.type === "turn_completed" || event.type === "turn_failed" || event.type === "turn_cancelled") { terminal = true; await reconcileTerminalSession(sessionId, turnId); break; }
       }
       if (!terminal && !controller.signal.aborted && allowRecovery) {
-        releaseTurnStreamController(turnId, controller);
-        await recoverDisconnectedTurn(sessionId, turnId);
+        releaseTurnStreamController(sessionId, turnId, controller);
+        await recoverDisconnectedTurn(sessionId, turnId, optimisticMessageId);
       }
     } catch (error: unknown) {
       if (controller.signal.aborted) return;
-      if (error instanceof ApiError && error.status === 409 && allowRecovery) {
-        releaseTurnStreamController(turnId, controller);
+      const conflictKind = classifyTurnStreamError(error);
+      if (conflictKind === "session_active_turn") {
+        rollbackOptimisticMessage(sessionId, optimisticMessageId);
+        releaseTurnStreamController(sessionId, turnId, controller);
         await recoverDisconnectedTurn(sessionId, turnId);
+        return;
+      }
+      if (conflictKind === "replay_gap" && allowRecovery) {
+        releaseTurnStreamController(sessionId, turnId, controller);
+        await recoverDisconnectedTurn(sessionId, turnId, optimisticMessageId);
+        return;
+      }
+      if (conflictKind === "other_conflict") {
+        rollbackOptimisticMessage(sessionId, optimisticMessageId);
+        setPendingTurnStart(sessionId, false);
+        setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "The request conflicts with an active Turn.") }));
+        return;
+      }
+      if (optimisticMessageId !== undefined && error instanceof ApiError) {
+        rollbackOptimisticMessage(sessionId, optimisticMessageId);
+        setPendingTurnStart(sessionId, false);
+        setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "The request failed. Try again.") }));
         return;
       }
       if (allowRecovery) {
-        releaseTurnStreamController(turnId, controller);
-        await recoverDisconnectedTurn(sessionId, turnId);
+        releaseTurnStreamController(sessionId, turnId, controller);
+        await recoverDisconnectedTurn(sessionId, turnId, optimisticMessageId);
         return;
       }
       setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "The live stream could not be restored.") }));
-    } finally { releaseTurnStreamController(turnId, controller); }
+    } finally { releaseTurnStreamController(sessionId, turnId, controller); }
   }
 
-  async function recoverDisconnectedTurn(sessionId: string, turnId: string | undefined) {
-    if (!accessToken || turnId === undefined) return;
-    try { const active = await getActiveSessionTurn(sessionId, accessToken); await hydrateAndReattach(sessionId, active, true); if (active.activeTurn === null) await loadSession(sessionId); }
-    catch (error: unknown) { setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "Unable to reattach the active Turn.") })); }
+  async function recoverDisconnectedTurn(sessionId: string, expectedTurnId?: string, optimisticMessageId?: string) {
+    if (!accessToken) return;
+    try {
+      const active = await getActiveSessionTurn(sessionId, accessToken);
+      const recoveryPlan = planActiveTurnRecovery(active, expectedTurnId);
+      if (recoveryPlan.kind === "reload_history") {
+        clearTurnState(expectedTurnId);
+        await loadSession(sessionId);
+        return;
+      }
+      hydrateActiveTurnProjection(sessionId, active, expectedTurnId);
+      startTurnSubscription(
+        sessionId,
+        recoveryPlan.turnId,
+        (signal) => reattachSessionTurnStream(sessionId, recoveryPlan.turnId, recoveryPlan.afterSequence, accessToken, signal),
+        false,
+        optimisticMessageId,
+      );
+    } catch (error: unknown) {
+      setPendingTurnStart(sessionId, false);
+      setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "Unable to reattach the active Turn.") }));
+    }
   }
 
-  function releaseTurnStreamController(turnId: string | undefined, controller: AbortController) {
+  function releaseTurnStreamController(sessionId: string, turnId: string | undefined, controller: AbortController) {
     if (turnId !== undefined && turnStreamControllersByTurnId.current.get(turnId) === controller) turnStreamControllersByTurnId.current.delete(turnId);
+    if (pendingStartControllersBySessionId.current.get(sessionId) === controller) pendingStartControllersBySessionId.current.delete(sessionId);
+  }
+
+  function clearTurnState(turnId: string | undefined) {
+    if (turnId === undefined) return;
+    turnStreamStatesRef.current = Object.fromEntries(Object.entries(turnStreamStatesRef.current).filter(([id]) => id !== turnId));
+    setTurnStreamStatesByTurnId((current) => { const next = { ...current }; delete next[turnId]; return next; });
+  }
+
+  function rollbackOptimisticMessage(sessionId: string, messageId: string | undefined) {
+    if (messageId === undefined) return;
+    setTimelinesBySessionId((current) => ({
+      ...current,
+      [sessionId]: removeOptimisticMessage(current[sessionId] ?? [], messageId),
+    }));
+  }
+
+  function handleSubscriptionFailure(sessionId: string, error: unknown, optimisticMessageId?: string) {
+    rollbackOptimisticMessage(sessionId, optimisticMessageId);
+    setPendingTurnStart(sessionId, false);
+    setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "The live stream could not be restored.") }));
   }
 
   async function reconcileTerminalSession(sessionId: string, turnId: string) {
     if (!accessToken) return;
-    try { const detail = await getSession(sessionId, accessToken); setTimelinesBySessionId((current) => ({ ...current, [sessionId]: toSessionItems(detail) })); setActiveTurnIdBySessionId((current) => ({ ...current, [sessionId]: undefined })); turnStreamStatesRef.current = Object.fromEntries(Object.entries(turnStreamStatesRef.current).filter(([id]) => id !== turnId)); setTurnStreamStatesByTurnId((current) => { const next = { ...current }; delete next[turnId]; return next; }); await refreshSessions(); setSessionStatus(sessionId, "Response completed"); }
-    catch (error: unknown) { setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "Unable to refresh the completed Session.") })); }
+    try {
+      const detail = await getSession(sessionId, accessToken);
+      setTimelinesBySessionId((current) => ({ ...current, [sessionId]: toSessionItems(detail) }));
+      await refreshSessions();
+      setSessionStatus(sessionId, "Response completed");
+    } catch (error: unknown) {
+      setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "Unable to refresh the completed Session.") }));
+    } finally {
+      setActiveTurnId(sessionId, undefined);
+      setPendingTurnStart(sessionId, false);
+      clearTurnState(turnId);
+    }
   }
 
   async function handleNewSession() {
@@ -155,17 +289,28 @@ export function SessionPage() {
   }
 
   async function handleSubmit({ body, attachments }: ComposerSubmitPayload) {
-    const sessionId = activeSessionId; if (!sessionId || !accessToken || processingSessionIdsRef.current.has(sessionId)) return;
+    const sessionId = activeSessionId; if (!sessionId || !accessToken || activeTurnIdsRef.current[sessionId] !== undefined || pendingTurnStartSessionIdsRef.current.has(sessionId)) return;
     if (!body.trim()) return;
     if (attachments.length > 1 || attachments.some((attachment) => !isXlsxFile(attachment.file))) { setErrorsBySessionId((current) => ({ ...current, [sessionId]: "Only one .xlsx file can be sent per message." })); return; }
-    processingSessionIdsRef.current.add(sessionId); setProcessingSessionIds(new Set(processingSessionIdsRef.current)); const controller = new AbortController();
     let optimisticId: string | undefined;
     try {
-      const uploaded = await uploadPendingAttachment(attachments, accessToken, controller.signal, uploadFile); const message: ChatMessage = { id: temporaryMessageId(), role: "user", body: body.trim(), createdAt: formatMessageCreatedAt(), ...(uploaded.attachment === undefined ? {} : { attachments: [uploaded.attachment] }) }; optimisticId = message.id;
+      const uploadController = new AbortController();
+      const uploaded = await uploadPendingAttachment(attachments, accessToken, uploadController.signal, uploadFile); const message: ChatMessage = { id: temporaryMessageId(), role: "user", body: body.trim(), createdAt: formatMessageCreatedAt(), ...(uploaded.attachment === undefined ? {} : { attachments: [uploaded.attachment] }) }; optimisticId = message.id;
       setTimelinesBySessionId((current) => ({ ...current, [sessionId]: [...(current[sessionId] ?? []), { type: "message", id: message.id, message }] })); setDraft(""); setAttachmentsBySessionId((current) => ({ ...current, [sessionId]: [] })); setSessionStatus(sessionId, "Processing your request");
-      const stream = startSessionTurnStream(sessionId, { message: body.trim(), fileId: uploaded.fileId }, accessToken, controller.signal); await consumeTurnStream(sessionId, undefined, stream, controller, true);
-    } catch (error: unknown) { if (!controller.signal.aborted) setErrorsBySessionId((current) => ({ ...current, [sessionId]: error instanceof SessionAttachmentValidationError ? error.message : errorMessage(error, "The request failed. Try again.") })); }
-    finally { if (optimisticId !== undefined) setTimelinesBySessionId((current) => current); processingSessionIdsRef.current.delete(sessionId); setProcessingSessionIds(new Set(processingSessionIdsRef.current)); }
+      setPendingTurnStart(sessionId, true);
+      startTurnSubscription(
+        sessionId,
+        undefined,
+        (signal) => startSessionTurnStream(sessionId, { message: body.trim(), fileId: uploaded.fileId }, accessToken, signal),
+        true,
+        optimisticId,
+      );
+    } catch (error: unknown) {
+      rollbackOptimisticMessage(sessionId, optimisticId);
+      setPendingTurnStart(sessionId, false);
+      if (error instanceof SessionAttachmentValidationError) setErrorsBySessionId((current) => ({ ...current, [sessionId]: error.message }));
+      else setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "The request failed. Try again.") }));
+    }
   }
 
   function handleSessionSelect(sessionId: string) { if (!sessions.some((item) => item.id === sessionId)) return; setActiveSessionId(sessionId); setDraft(""); setIsMobileNavVisible(false); }
@@ -178,7 +323,7 @@ export function SessionPage() {
   const activeState = activeTurnId ? turnStreamStatesByTurnId[activeTurnId] : undefined;
   const liveResponse = activeState ? projectTurnStream(activeState, `turn-${activeState.turnId}`) : undefined;
   const timeline = mergeLiveTurnResponse(durableTimeline, liveResponse, liveResponse?.id);
-  const isProcessing = activeSessionId !== null && processingSessionIds.has(activeSessionId);
+  const isProcessing = activeSessionId !== null && isSessionTurnProcessing(activeTurnId, pendingTurnStartSessionIds.has(activeSessionId));
   const attachments = activeSessionId ? attachmentsBySessionId[activeSessionId] ?? [] : [];
   const sessionError = activeSessionId ? errorsBySessionId[activeSessionId] : undefined;
   const visibleError = sessionError ?? pageError;

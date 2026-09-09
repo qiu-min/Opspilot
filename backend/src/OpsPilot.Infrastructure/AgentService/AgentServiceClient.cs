@@ -108,13 +108,41 @@ public sealed class AgentServiceClient(HttpClient httpClient) : IAgentSessionCli
             yield return AgentServiceStreamEventParser.Parse(frame);
     }
 
-    private static Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    private static async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
-        if (response.IsSuccessStatusCode) return Task.CompletedTask;
+        if (response.IsSuccessStatusCode) return;
         if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
-            throw new ApplicationConflictException("Agent Service reported a Turn stream replay conflict.");
+        {
+            string responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            (string code, string message) = ParseConflict(responseBody);
+            throw new ApplicationConflictException(message, code);
+        }
         if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             throw new ApplicationNotFoundException("Agent Service resource was not found.");
         throw new HttpRequestException($"Agent Service returned HTTP {(int)response.StatusCode}.", null, response.StatusCode);
+    }
+
+    private static (string Code, string Message) ParseConflict(string responseBody)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(responseBody);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                return ("CONFLICT", "Agent Service reported a conflict.");
+            string code = root.TryGetProperty("code", out JsonElement codeElement) && codeElement.ValueKind == JsonValueKind.String
+                ? codeElement.GetString() ?? "CONFLICT"
+                : "CONFLICT";
+            string message = root.TryGetProperty("detail", out JsonElement detailElement) && detailElement.ValueKind == JsonValueKind.String
+                ? detailElement.GetString() ?? "Agent Service reported a conflict."
+                : root.TryGetProperty("message", out JsonElement messageElement) && messageElement.ValueKind == JsonValueKind.String
+                    ? messageElement.GetString() ?? "Agent Service reported a conflict."
+                    : "Agent Service reported a conflict.";
+            return (string.IsNullOrWhiteSpace(code) ? "CONFLICT" : code, message);
+        }
+        catch (JsonException)
+        {
+            return ("CONFLICT", "Agent Service reported a conflict.");
+        }
     }
 }

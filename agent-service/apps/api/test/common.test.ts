@@ -7,6 +7,10 @@ import { ApiExceptionFilter } from '../src/common/api-exception.filter.js';
 import { RequestValidationError, ZodValidationPipe } from '../src/common/zod-validation.pipe.js';
 import { RequestContextMiddleware } from '../src/common/request-context.middleware.js';
 import { RequestLoggingMiddleware } from '../src/common/request-logging.middleware.js';
+import {
+  TurnStreamReplayGapError,
+  TurnStreamSessionConflictError,
+} from '@opspilot/application';
 
 describe('ZodValidationPipe', () => {
   const pipe = new ZodValidationPipe(z.object({ id: z.uuid(), page: z.coerce.number().int() }));
@@ -116,6 +120,28 @@ describe('ApiExceptionFilter', () => {
     }
     if (exception instanceof RequestValidationError) {
       expect(captured?.body.details).toEqual({ title: ['Required'] });
+    }
+  });
+
+  it('keeps live stream conflicts machine-readable', () => {
+    const cases = [
+      [new TurnStreamReplayGapError(2, 5, 8), 'TURN_STREAM_REPLAY_GAP'],
+      [new TurnStreamSessionConflictError('session-1', 'turn-1'), 'SESSION_ACTIVE_TURN_CONFLICT'],
+    ] as const;
+
+    for (const [exception, code] of cases) {
+      let captured: { status: number; body: Record<string, unknown> } | undefined;
+      const response = {
+        status(status: number) {
+          return { json(body: Record<string, unknown>) { captured = { status, body }; } };
+        },
+      };
+
+      new ApiExceptionFilter().catch(exception, {
+        switchToHttp: () => ({ getRequest: () => ({}), getResponse: () => response }),
+      } as never);
+
+      expect(captured).toMatchObject({ status: 409, body: { code } });
     }
   });
 });

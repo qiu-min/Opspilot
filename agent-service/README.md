@@ -86,6 +86,8 @@ Backend Session.Id 与 Agent Service Session.Id 使用同一个 identity。`reat
 三个 SSE endpoint 统一发送 `TurnStreamEvent`，格式为 `id: sequence`、`event: type`、
 `data: JSON event`；不再发送 AgentEvent、`session_settled` 或 `done` 作为 live protocol。
 
+Live stream 的 HTTP 409 使用稳定 code：`TURN_STREAM_REPLAY_GAP` 表示 replay buffer 不足，`SESSION_ACTIVE_TURN_CONFLICT` 表示 Session 已有 active Turn；普通冲突继续使用 `CONFLICT`。
+
 普通 Turn 请求可以携带相对共享存储根目录的 Excel `storagePath`。`api-runtime` 将其安全解析为 Application 使用的绝对 `filePath`；SSE 和普通入口使用同一请求契约。
 
 Session 与 Turn 通过 Infrastructure 的 filesystem adapter 分别持久化；API 通过 Application 的 `ExecuteTurn` 访问，不直接操作 Domain Session、Turn 或 Model Gateway。

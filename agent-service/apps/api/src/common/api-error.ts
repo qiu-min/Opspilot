@@ -2,6 +2,8 @@ export const apiErrorCodes = [
   'VALIDATION_ERROR',
   'NOT_FOUND',
   'CONFLICT',
+  'TURN_STREAM_REPLAY_GAP',
+  'SESSION_ACTIVE_TURN_CONFLICT',
   'INTERNAL_ERROR',
 ] as const;
 
