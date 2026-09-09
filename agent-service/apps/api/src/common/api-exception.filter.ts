@@ -8,6 +8,11 @@ import {
 } from '@nestjs/common';
 import type { ExceptionFilter } from '@nestjs/common';
 import type { Response } from 'express';
+import {
+  TurnStreamNotFoundError,
+  TurnStreamReplayGapError,
+  TurnStreamSessionConflictError,
+} from '@opspilot/application';
 
 import type { ApiErrorCode, ApiErrorResponse } from './api-error.js';
 import { ensureRequestId, type RequestWithContext } from './request-context.middleware.js';
@@ -42,6 +47,24 @@ export class ApiExceptionFilter implements ExceptionFilter {
 }
 
 function mapException(exception: unknown): MappedError {
+  if (exception instanceof TurnStreamReplayGapError) {
+    return {
+      statusCode: 409,
+      code: 'CONFLICT',
+      message: 'Turn stream replay gap.',
+      details: {
+        requestedAfter: [String(exception.requestedAfter)],
+        oldestAvailable: [String(exception.oldestAvailable)],
+        latestAvailable: [String(exception.latestAvailable)],
+      },
+    };
+  }
+  if (exception instanceof TurnStreamNotFoundError) {
+    return { statusCode: 404, code: 'NOT_FOUND', message: 'Turn stream not found.' };
+  }
+  if (exception instanceof TurnStreamSessionConflictError) {
+    return { statusCode: 409, code: 'CONFLICT', message: 'Session already has an active Turn.' };
+  }
   if (exception instanceof RequestValidationError) {
     return {
       statusCode: 400,

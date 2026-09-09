@@ -3,11 +3,17 @@ import {
   createGetSheetProfileTool,
   createGetWorkbookInfoTool,
   buildOpsPilotSystemPrompt,
+  GetActiveTurn,
   GetSessionHistory,
   ExecuteTurn,
+  SubscribeTurnStream,
   type ToolDefinition,
 } from '@opspilot/application';
-import { FileSystemSessionStore, FileSystemTurnStore } from '@opspilot/infrastructure';
+import {
+  FileSystemSessionStore,
+  FileSystemTurnStore,
+  InMemoryTurnStreamHub,
+} from '@opspilot/infrastructure';
 import { createModelGateway, loadModelGatewayConfig } from '@opspilot/model-gateway';
 import { ExcelJsDiscoveryAdapter } from '@opspilot/tool-gateway';
 
@@ -42,6 +48,7 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
   });
   const sessionStore = new FileSystemSessionStore(config.sessionDirectory);
   const turnStore = new FileSystemTurnStore(config.turnStorageRoot);
+  const turnStreamHub = new InMemoryTurnStreamHub();
   const excelResourcePathResolver = new FileSystemExcelResourcePathResolver(
     config.sharedStorageRoot,
   );
@@ -52,15 +59,26 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     defaultModel,
     toolDefinitions,
     systemPrompt,
+    turnStreamHub,
   });
   const getSessionHistory = new GetSessionHistory(sessionStore);
+  const getActiveTurn = new GetActiveTurn(turnStreamHub);
+  const subscribeTurnStream = new SubscribeTurnStream(turnStreamHub);
 
   return ApiModule.register({
     providers: [
       { provide: ExecuteTurn, useValue: executeTurn },
       { provide: GetSessionHistory, useValue: getSessionHistory },
+      { provide: GetActiveTurn, useValue: getActiveTurn },
+      { provide: SubscribeTurnStream, useValue: subscribeTurnStream },
       { provide: EXCEL_RESOURCE_PATH_RESOLVER, useValue: excelResourcePathResolver },
     ],
-    exports: [ExecuteTurn, GetSessionHistory, EXCEL_RESOURCE_PATH_RESOLVER],
+    exports: [
+      ExecuteTurn,
+      GetSessionHistory,
+      GetActiveTurn,
+      SubscribeTurnStream,
+      EXCEL_RESOURCE_PATH_RESOLVER,
+    ],
   });
 }

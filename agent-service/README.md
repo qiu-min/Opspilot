@@ -30,6 +30,11 @@ Agent Service
 
 Application 是业务编排边界，可以理解 OpsPilot 的 `Session`、`Turn` 和 `FileReference` 等概念，并负责把这些概念转换为 Runtime 可消费的输入。它定义 `SessionStore` 与 `TurnStore` port；filesystem adapter 位于 `packages/infrastructure`，由 `apps/api-runtime` 组合。
 
+Live UI recovery 使用独立的 Application `TurnStreamEvent`、`TurnStreamProjection` 和
+`TurnStreamHub`。`TurnEvent` 是 durable execution fact；`TurnStreamEvent` 与 projection
+是进程内 ephemeral UI state，reattach 只是恢复观看，不会 resume 执行。Hub 的 replay
+buffer 与 projection 在进程重启后允许丢失。
+
 Agent Runtime 必须保持业务无关。Runtime 不允许出现 `FileId`、`Excel`、`OpsPilot Session`、`Conversation` 等业务概念，也不直接依赖 Application 的业务模型。Model Gateway 负责模型 Provider 边界，Tool Gateway 负责 Tool Contract、输入校验和外部能力适配。
 
 ## Application
@@ -68,10 +73,12 @@ sessions/{sessionId}/
 当前接口：
 
 - `POST /turns`：执行一次普通 JSON Turn，可通过 body 中的 `sessionId` 继续已有 Session。
-- `POST /turns/stream`：以 SSE 透传当前执行 observer 事件，并发送最终 `done` 事件。
+- `POST /turns/stream`：启动 Turn 并连接首个 live SSE subscriber（旧调用方仍可使用）。
 - `POST /sessions/{sessionId}/turns`：在指定 Session 上执行 Turn。
-- `POST /sessions/{sessionId}/turns/stream`：在指定 Session 上以 SSE 执行 Turn。
+- `POST /sessions/{sessionId}/turns/stream`：在指定 Session 上启动 Turn 并连接首个 live SSE subscriber。
 - `GET /sessions/{sessionId}/history`：供 Backend 读取当前 active branch 的 UI-safe 历史 projection。
+- `GET /sessions/{sessionId}/active-turn`：读取当前进程中可 reattach 的 live Turn 及 projection。
+- `GET /turns/{turnId}/stream?after=N`：订阅已有 Turn 的 live stream；不会创建或重新执行 Turn。
 
 普通 Turn 请求可以携带相对共享存储根目录的 Excel `storagePath`。`api-runtime` 将其安全解析为 Application 使用的绝对 `filePath`；SSE 和普通入口使用同一请求契约。
 
@@ -102,6 +109,6 @@ pnpm build
 `OPS_PILOT_SHARED_STORAGE_ROOT` 必须指向同一个实际目录；Backend 保存的
 `uploads/<file>.xlsx` 才能被 Agent Service 通过同一相对路径读取。
 
-默认模型由 `DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID` 显式指定。`api-runtime` 会加载 `agent-service/.env`，并装配 Model Gateway、`ExecuteTurn`、FileSystemSessionStore 和 FileSystemTurnStore。Session 默认写入 `data/sessions`，Turn 默认写入 `data/turns`；`OPS_PILOT_SHARED_STORAGE_ROOT` 仅用于 Backend 共享文件和 Excel uploads。
+默认模型由 `DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID` 显式指定。`api-runtime` 会加载 `agent-service/.env`，并装配 Model Gateway、`ExecuteTurn`、FileSystemSessionStore、FileSystemTurnStore 和共享的 `InMemoryTurnStreamHub`。Session 默认写入 `data/sessions`，Turn 默认写入 `data/turns`；`OPS_PILOT_SHARED_STORAGE_ROOT` 仅用于 Backend 共享文件和 Excel uploads。
 
 各 package 的具体职责和边界以其源码及 package README 为准。

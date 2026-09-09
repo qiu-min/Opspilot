@@ -16,7 +16,7 @@ sessions/{sessionId}/
 └── history.jsonl   # append-only durable history
 ```
 
-旧的 `{sessionId}.jsonl` 只在新目录不存在时读取，并在成功 restore 后 lazy migrate；迁移复制原始 history bytes、保留 legacy 文件，新目录优先，不完整新目录不 fallback。`title`、`createdAt`、`updatedAt` 不属于 SessionEntry，也不进入 Agent context。Application 现在定义独立的 `TurnStore` port；本阶段只建立 Turn snapshot 与 TurnEvent durable log，不实现 resume orchestration 或数据库 repository。
+旧的 `{sessionId}.jsonl` 只在新目录不存在时读取，并在成功 restore 后 lazy migrate；迁移复制原始 history bytes、保留 legacy 文件，新目录优先，不完整新目录不 fallback。`title`、`createdAt`、`updatedAt` 不属于 SessionEntry，也不进入 Agent context。Application 现在定义独立的 `TurnStore` port；本阶段只建立 Turn snapshot 与 TurnEvent durable log，不实现 resume orchestration 或数据库 repository。Live UI recovery 另有独立的 `TurnStreamEvent` / `TurnStreamProjection` / `TurnStreamHub` 边界，不写入 `TurnStore`。
 
 ## 1. 目标
 
@@ -274,6 +274,25 @@ Session History
 本次 LLM Context
 已经解耦。
 ```
+
+## Live UI reattach boundary
+
+```text
+AgentSessionEvent
+      ├──> TurnEventRecorder -> TurnEvent -> TurnStore
+      └──> TurnStreamProjector -> TurnStreamEvent -> TurnStreamHub
+                                                       ├── Projection
+                                                       ├── Replay buffer
+                                                       └── Subscribers
+```
+
+`TurnStreamProjection` 是当前 active Turn 的 ephemeral UI-safe snapshot，只保存 partial
+assistant text、thinking/tool/compaction 状态、usage 和 live sequence。`applyTurnStreamEvent`
+是 deterministic pure reducer；`TurnStreamEvent.sequence` 由 Hub 独立从 0 分配，不能由
+调用方伪造。Hub 支持无 subscriber 的执行、多个 subscriber、有限 replay 和明确的
+`TurnStreamReplayGapError`。SSE disconnect 只 unsubscribe，不等同于 Turn cancel；terminal
+stream event 发送后 subscriber 结束并清除 Session active mapping。该能力是 reattach（恢复
+观看），不实现 resume（恢复执行）。
 
 ---
 

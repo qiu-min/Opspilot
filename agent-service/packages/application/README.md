@@ -22,6 +22,23 @@ sessions/{sessionId}/
 
 Application 同时定义 `TurnStore` port。Turn snapshot 与 append-only `TurnEvent` history 是独立的 durable execution boundary，不写入 Session JSONL；本阶段只提供 Domain model、port 和 filesystem adapter，不实现 Turn resume orchestration。
 
+## Live Turn stream
+
+Application 还定义独立的 `TurnStreamEvent` presentation contract、纯 reducer
+`applyTurnStreamEvent()`、`TurnStreamProjector` 和 `TurnStreamHub` port。Projector 将
+`AgentSessionEvent` 转成 UI-safe live facts；reasoning/thinking delta 只会变成
+`assistant_thinking_started` / `assistant_thinking_completed`，不会传输隐藏 reasoning 文本。
+
+`TurnStreamProjection` 只保存当前 Turn 的 partial assistant text、thinking 状态、tool
+状态、compaction 状态、usage 和 `lastSequence`，不替代 Session history，也不暴露
+`MutableAgentState`。`TurnStreamEvent.sequence` 由 Hub 从 0 开始独立分配，和 durable
+`TurnEvent.sequence` 无关。Hub 在内存保留有限 replay buffer（默认 256）；丢失范围会以
+`TurnStreamReplayGapError` 明确报告。
+
+SSE disconnect 只取消当前 subscriber，不会调用 `AgentSession.abort()` 或取消
+`ExecuteTurn`。terminal stream event 发送后 subscriber 正常结束，live Session mapping
+被移除。reattach 与 resume 是不同语义：本阶段只支持对现有执行恢复观看。
+
 ## 职责
 
 本包主要负责：

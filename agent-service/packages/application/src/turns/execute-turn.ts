@@ -12,9 +12,15 @@ import type { SessionStore } from '../session-store/session-store.js';
 import type { ToolDefinition } from '../tools/tool-definition.js';
 import { wrapToolDefinitions } from '../tools/wrap-tool-definition.js';
 import type { TurnStore } from '../turn-store/turn-store.js';
+import { TurnStreamProjector, type TurnStreamHub } from '../turn-stream/index.js';
 import { TurnEventRecorder } from './turn-event-recorder.js';
 import type { ExecuteTurnInput, ExecuteTurnOptions, ExecuteTurnResult } from './turn-types.js';
-import { InMemorySessionRunCoordinator, type SessionRunCoordinator } from './session-run-coordinator.js';
+import {
+  InMemorySessionRunCoordinator,
+  type SessionRunCoordinator,
+} from './session-run-coordinator.js';
+
+const SAFE_TURN_FAILURE_MESSAGE = 'Turn failed.';
 
 /** Dependencies used to execute one application-level Turn. */
 export interface ExecuteTurnDependencies {
@@ -28,6 +34,7 @@ export interface ExecuteTurnDependencies {
   readonly compactionService?: CompactionService;
   readonly compactionSettings?: CompactionSettings;
   readonly sessionRunCoordinator?: SessionRunCoordinator;
+  readonly turnStreamHub?: TurnStreamHub;
 }
 
 /** Orchestrates Session input commit, Agent Runtime execution, and Turn durability. */
@@ -42,6 +49,7 @@ export class ExecuteTurn {
   private readonly compactionService?: CompactionService;
   private readonly compactionSettings?: CompactionSettings;
   private readonly sessionRunCoordinator: SessionRunCoordinator;
+  private readonly turnStreamHub?: TurnStreamHub;
 
   public constructor(options: ExecuteTurnDependencies) {
     this.sessionStore = options.sessionStore;
@@ -55,6 +63,7 @@ export class ExecuteTurn {
     this.compactionSettings = options.compactionSettings;
     this.sessionRunCoordinator =
       options.sessionRunCoordinator ?? new InMemorySessionRunCoordinator();
+    this.turnStreamHub = options.turnStreamHub;
   }
 
   /** Executes one Turn. Existing Sessions are loaded only after their queue is acquired. */
@@ -94,7 +103,16 @@ export class ExecuteTurn {
 
     let agentSession: AgentSession | undefined;
     let unsubscribe: (() => void) | undefined;
+    let streamTerminalPublished = false;
+    let streamChannelOpened = false;
     try {
+      this.turnStreamHub?.openTurn({ turnId: turn.getId(), sessionId });
+      streamChannelOpened = this.turnStreamHub !== undefined;
+      this.turnStreamHub?.publish({
+        type: 'turn_started',
+        turnId: turn.getId(),
+        sessionId,
+      });
       await options?.onEvent?.({ type: 'turn_ready', turnId: turn.getId() });
       const executionConfig = prepareSessionExecutionConfig({
         session,
@@ -126,8 +144,12 @@ export class ExecuteTurn {
         compactionSettings: this.compactionSettings,
       });
 
+      const projector = new TurnStreamProjector({ turnId: turn.getId(), sessionId });
       unsubscribe = agentSession.subscribe(async (event) => {
         recorder.recordAgentSessionEvent(event);
+        for (const streamEvent of projector.project(event)) {
+          this.turnStreamHub?.publish(streamEvent);
+        }
         await options?.onEvent?.(event);
       });
 
@@ -135,11 +157,21 @@ export class ExecuteTurn {
       const errorInfo = agentSession.state.errorInfo;
       if (errorInfo === undefined) {
         recorder.recordTurnCompleted(session.getLeafId());
+        this.publishTurnTerminal(turn.getId(), sessionId, {
+          type: 'turn_completed',
+          resultLeafId: session.getLeafId(),
+        });
       } else if (errorInfo.reason === 'aborted') {
         recorder.recordTurnCancelled();
+        this.publishTurnTerminal(turn.getId(), sessionId, { type: 'turn_cancelled' });
       } else {
         recorder.recordTurnFailed(errorInfo.message);
+        this.publishTurnTerminal(turn.getId(), sessionId, {
+          type: 'turn_failed',
+          message: SAFE_TURN_FAILURE_MESSAGE,
+        });
       }
+      streamTerminalPublished = true;
 
       return {
         sessionId,
@@ -149,6 +181,12 @@ export class ExecuteTurn {
       };
     } catch (error: unknown) {
       this.recordFailureBestEffort(turn, recorder, error);
+      if (streamChannelOpened && !streamTerminalPublished && turn.getState().status === 'failed') {
+        this.publishTurnTerminal(turn.getId(), sessionId, {
+          type: 'turn_failed',
+          message: SAFE_TURN_FAILURE_MESSAGE,
+        });
+      }
       throw error;
     } finally {
       unsubscribe?.();
@@ -156,11 +194,23 @@ export class ExecuteTurn {
     }
   }
 
-  private recordFailureBestEffort(
-    turn: Turn,
-    recorder: TurnEventRecorder,
-    error: unknown,
+  private publishTurnTerminal(
+    turnId: string,
+    sessionId: string,
+    event:
+      | { readonly type: 'turn_completed'; readonly resultLeafId: string | null }
+      | { readonly type: 'turn_failed'; readonly message: string }
+      | { readonly type: 'turn_cancelled' },
   ): void {
+    const turnStreamHub = this.turnStreamHub;
+    if (turnStreamHub === undefined) return;
+    turnStreamHub.publish({ turnId, sessionId, ...event });
+    // The concrete in-memory Hub closes terminal channels during publish; keeping this
+    // explicit makes terminal ownership part of the Application orchestration contract.
+    turnStreamHub.closeTurn(turnId);
+  }
+
+  private recordFailureBestEffort(turn: Turn, recorder: TurnEventRecorder, error: unknown): void {
     if (turn.getState().status !== 'running') return;
     const message = error instanceof Error ? error.message : String(error);
     try {
