@@ -140,6 +140,8 @@ Session 不使用 PostgreSQL 保存消息树。Application 只定义 `SessionSto
 
 SSE 仅透传当前执行 observer，不提供 replay、reattach 或 ResumeTurn。
 
+Runtime durable state 使用独立的 Agent Service storage root：`SESSION_DIRECTORY` 默认指向 `data/sessions`，`TURN_STORAGE_ROOT` 默认指向 `data`，因此 Turn 位于 `data/turns`。`OPS_PILOT_SHARED_STORAGE_ROOT` 只用于 Backend 共享文件和 Excel uploads，不承担 Session / Turn execution state。
+
 ## 6. Persistence Direction
 
 当前 Application 不创建数据库表。Session 消息树使用 Application 的 `SessionStore` 抽象和 Infrastructure 的 JSONL / filesystem 实现；后续可以在不修改 Domain Session 的前提下加入其他 repository。

@@ -93,8 +93,8 @@ pnpm build
 1. `pnpm install`
 2. 复制 `.env.example` 为 `.env`
 3. 在 `.env` 中配置 `MOONSHOT_API_KEY`
-4. 配置 `OPS_PILOT_SHARED_STORAGE_ROOT` 为 Backend 共享文件存储根目录
-5. 根据需要设置 `DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID`
+4. 配置 `OPS_PILOT_SHARED_STORAGE_ROOT` 为 Backend 共享文件存储根目录；Turn/Session durable state 不写入此目录
+5. 根据需要设置 `SESSION_DIRECTORY`、`TURN_STORAGE_ROOT`、`DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID`
 6. 执行 `pnpm dev:api`
 7. 手动验证真实 Excel Tool Calling 可执行 `pnpm --filter @opspilot/api-runtime smoke:excel:kimi`
 
@@ -102,6 +102,6 @@ pnpm build
 `OPS_PILOT_SHARED_STORAGE_ROOT` 必须指向同一个实际目录；Backend 保存的
 `uploads/<file>.xlsx` 才能被 Agent Service 通过同一相对路径读取。
 
-默认模型由 `DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID` 显式指定。`api-runtime` 会加载 `agent-service/.env`，并装配 Model Gateway、`ExecuteTurn`、FileSystemSessionStore 和 FileSystemTurnStore。
+默认模型由 `DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID` 显式指定。`api-runtime` 会加载 `agent-service/.env`，并装配 Model Gateway、`ExecuteTurn`、FileSystemSessionStore 和 FileSystemTurnStore。Session 默认写入 `data/sessions`，Turn 默认写入 `data/turns`；`OPS_PILOT_SHARED_STORAGE_ROOT` 仅用于 Backend 共享文件和 Excel uploads。
 
 各 package 的具体职责和边界以其源码及 package README 为准。

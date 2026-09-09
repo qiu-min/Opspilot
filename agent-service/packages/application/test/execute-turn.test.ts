@@ -335,6 +335,128 @@ describe('ExecuteTurn', () => {
     expect(inputCheckpointSaveIndex).toBeGreaterThan(inputEventIndex);
   });
 
+  it('persists initial model and thinking configuration before the input checkpoint', async () => {
+    const { store, turnStore } = createStore();
+    const runner = new TestExecuteTurn({
+      sessionStore: store,
+      turnStore,
+      modelGateway: createGateway([assistantStream(assistantMessage('done'), model)]),
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+
+    const result = await runner.execute({ message: userMessage('hello'), thinkingLevel: 'high' });
+    const session = store.load(result.sessionId);
+    const entries = session.getEntries();
+    const inputEntry = entries.find(
+      (entry) => entry.type === 'message' && entry.message.role === 'user',
+    );
+    const events = turnStore.loadEvents(result.turnId);
+    const inputEvent = events.find((event) => event.type === 'input_committed');
+    const modelStartedEvent = events.find((event) => event.type === 'model_started');
+
+    expect(entries.slice(0, 3).map((entry) => entry.type)).toEqual([
+      'model_change',
+      'thinking_level_change',
+      'message',
+    ]);
+    expect(inputEntry).toBeDefined();
+    expect(inputEvent).toMatchObject({ sessionLeafId: inputEntry?.id });
+    expect(modelStartedEvent?.sequence).toBeGreaterThan(inputEvent?.sequence ?? -1);
+  });
+
+  it('persists an explicit model override before the input checkpoint', async () => {
+    const { store, turnStore } = createStore();
+    const gateway = createGateway(
+      [assistantStream(assistantMessage('done', alternateModel), alternateModel)],
+      [model, alternateModel],
+    );
+    const runner = new TestExecuteTurn({
+      sessionStore: store,
+      turnStore,
+      modelGateway: gateway,
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+
+    const result = await runner.execute({ message: userMessage('hello'), model: alternateModel });
+    const session = store.load(result.sessionId);
+    const entries = session.getEntries();
+    const modelEntry = entries.find((entry) => entry.type === 'model_change');
+    const inputEntry = entries.find(
+      (entry) => entry.type === 'message' && entry.message.role === 'user',
+    );
+
+    expect(modelEntry).toMatchObject({
+      provider: alternateModel.provider,
+      modelId: alternateModel.id,
+    });
+    expect(entries.indexOf(modelEntry!)).toBeLessThan(entries.indexOf(inputEntry!));
+  });
+
+  it('persists a clamped thinking override before the input checkpoint', async () => {
+    const { store, turnStore } = createStore();
+    const runner = new TestExecuteTurn({
+      sessionStore: store,
+      turnStore,
+      modelGateway: createGateway(
+        [assistantStream(assistantMessage('done', lowOnlyModel), lowOnlyModel)],
+        [lowOnlyModel],
+      ),
+      toolDefinitions: [],
+      defaultModel: lowOnlyModel,
+    });
+
+    const result = await runner.execute({ message: userMessage('hello'), thinkingLevel: 'high' });
+    const entries = store.load(result.sessionId).getEntries();
+    const inputIndex = entries.findIndex(
+      (entry) => entry.type === 'message' && entry.message.role === 'user',
+    );
+
+    expect(entries.slice(0, inputIndex).map((entry) => entry.type)).toEqual([
+      'model_change',
+      'thinking_level_change',
+    ]);
+    expect(entries[1]).toMatchObject({ type: 'thinking_level_change', thinkingLevel: 'low' });
+  });
+
+  it('persists an existing Session model override before the next input', async () => {
+    const { store, turnStore } = createStore();
+    const existing = store.create();
+    appendPersisted(store, existing, () => existing.appendModelChange(model.provider, model.id));
+    const gateway = createGateway(
+      [assistantStream(assistantMessage('done', alternateModel), alternateModel)],
+      [model, alternateModel],
+    );
+    const runner = new TestExecuteTurn({
+      sessionStore: store,
+      turnStore,
+      modelGateway: gateway,
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+
+    const result = await runner.execute({
+      sessionId: existing.getId(),
+      message: userMessage('switch model'),
+      model: alternateModel,
+    });
+    const session = store.load(result.sessionId);
+    const entries = session.getEntries();
+    const inputIndex = entries.findIndex(
+      (entry) => entry.type === 'message' && entry.message.role === 'user',
+    );
+    const overrideIndex = entries.findIndex(
+      (entry) =>
+        entry.type === 'model_change' &&
+        entry.provider === alternateModel.provider &&
+        entry.modelId === alternateModel.id,
+    );
+
+    expect(overrideIndex).toBeGreaterThan(-1);
+    expect(overrideIndex).toBeLessThan(inputIndex);
+  });
+
   it('records tool lifecycle facts only after the ToolResult is durable', async () => {
     const { store, turnStore } = createStore();
     const call: ModelToolCall = { callId: 'call-1', name: 'lookup', arguments: {} };

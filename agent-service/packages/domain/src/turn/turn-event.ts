@@ -56,8 +56,8 @@ export interface ToolCompletedEvent extends TurnEventBase {
   readonly callId: string;
   readonly name: string;
   readonly isError: boolean;
-  readonly resultEntryId?: string;
-  readonly sessionLeafId?: string | null;
+  readonly resultEntryId: string;
+  readonly sessionLeafId: string;
 }
 
 export interface CompactionStartedEvent extends TurnEventBase {
@@ -164,12 +164,8 @@ export function validateTurnEvent(event: unknown): asserts event is TurnEvent {
       if (typeof event.isError !== 'boolean') {
         throw new TurnEventError('tool_completed isError must be boolean.');
       }
-      if (event.resultEntryId !== undefined) {
-        assertEntryId(event.resultEntryId, 'tool_completed resultEntryId');
-      }
-      if (event.sessionLeafId !== undefined) {
-        assertNullableId(event.sessionLeafId, 'tool_completed sessionLeafId');
-      }
+      assertEntryId(event.resultEntryId, 'tool_completed resultEntryId');
+      assertEntryId(event.sessionLeafId, 'tool_completed sessionLeafId');
       return;
     case 'compaction_completed':
       if (event.entryId !== undefined) assertEntryId(event.entryId, 'compaction_completed entryId');

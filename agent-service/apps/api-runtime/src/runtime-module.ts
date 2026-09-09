@@ -41,7 +41,7 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     tools: toolDefinitions,
   });
   const sessionStore = new FileSystemSessionStore(config.sessionDirectory);
-  const turnStore = new FileSystemTurnStore(config.sharedStorageRoot);
+  const turnStore = new FileSystemTurnStore(config.turnStorageRoot);
   const excelResourcePathResolver = new FileSystemExcelResourcePathResolver(
     config.sharedStorageRoot,
   );

@@ -158,6 +158,59 @@ function toolCompletedEvent(
   };
 }
 
+function turnCompletedEvent(
+  turn: Turn,
+  sequence = 1,
+  attempt = turn.getState().attempt,
+): TurnEvent {
+  return {
+    version: 1,
+    id: eventId(sequence, attempt),
+    turnId: turn.getId(),
+    sessionId: turn.getSessionId(),
+    sequence,
+    attempt,
+    timestamp: '2026-01-01T00:00:03.000Z',
+    type: 'turn_completed',
+    resultLeafId: 'leaf-final',
+  };
+}
+
+function turnFailedEvent(
+  turn: Turn,
+  sequence = 1,
+  attempt = turn.getState().attempt,
+): TurnEvent {
+  return {
+    version: 1,
+    id: eventId(sequence, attempt),
+    turnId: turn.getId(),
+    sessionId: turn.getSessionId(),
+    sequence,
+    attempt,
+    timestamp: '2026-01-01T00:00:03.000Z',
+    type: 'turn_failed',
+    message: 'provider failed',
+  };
+}
+
+function turnCancelledEvent(
+  turn: Turn,
+  sequence = 1,
+  attempt = turn.getState().attempt,
+): TurnEvent {
+  return {
+    version: 1,
+    id: eventId(sequence, attempt),
+    turnId: turn.getId(),
+    sessionId: turn.getSessionId(),
+    sequence,
+    attempt,
+    timestamp: '2026-01-01T00:00:03.000Z',
+    type: 'turn_cancelled',
+  };
+}
+
 function writeEvents(root: string, turnId: string, events: readonly TurnEvent[]): void {
   writeFileSync(
     join(root, 'turns', turnId, 'events.jsonl'),
@@ -243,6 +296,75 @@ describe('FileSystemTurnStore', () => {
       modelStartedEvent(crashTurn, 1, 1),
     ]);
     expect(crashWindow.store.load(crashTurn.getId()).getState().attempt).toBe(2);
+  });
+
+  it.each([
+    ['completed', turnCompletedEvent, 'completed'],
+    ['failed', turnFailedEvent, 'failed'],
+    ['cancelled', turnCancelledEvent, 'cancelled'],
+  ] as const)('reconciles a %s terminal event over running metadata', (_name, createEvent, status) => {
+    const { store } = createStore();
+    const turn = createStartedTurn();
+    store.create(turn);
+    store.appendEvent(turn.getId(), turnStartedEvent(turn));
+    store.appendEvent(turn.getId(), createEvent(turn));
+
+    expect(store.load(turn.getId()).getState()).toMatchObject({ status });
+    expect(store.listRecoverable().map((candidate) => candidate.getId())).not.toContain(turn.getId());
+    if (status === 'completed') {
+      expect(store.load(turn.getId()).getState()).toMatchObject({
+        resultLeafId: 'leaf-final',
+        completedAt: '2026-01-01T00:00:03.000Z',
+      });
+    }
+  });
+
+  it('loads a synchronized terminal snapshot and event normally', () => {
+    const { store } = createStore();
+    const turn = createStartedTurn();
+    store.create(turn);
+    store.appendEvent(turn.getId(), turnStartedEvent(turn));
+    store.appendEvent(turn.getId(), turnCompletedEvent(turn));
+    turn.complete('leaf-final', '2026-01-01T00:00:03.000Z');
+    store.save(turn);
+
+    expect(store.load(turn.getId()).getState()).toEqual(turn.getState());
+    expect(store.listRecoverable().map((candidate) => candidate.getId())).not.toContain(turn.getId());
+  });
+
+  it('preserves the last checkpoint while reconciling a terminal event', () => {
+    const { root, store } = createStore();
+    const turn = createStartedTurn();
+    store.create(turn);
+    store.appendEvent(turn.getId(), turnStartedEvent(turn));
+    store.appendEvent(turn.getId(), inputCommittedEvent(turn, 1));
+    store.appendEvent(turn.getId(), turnCompletedEvent(turn, 2));
+    overwriteCheckpoint(root, turn.getId(), {
+      eventSequence: 1,
+      sessionLeafId: 'leaf-1',
+      phase: 'input_committed',
+    });
+
+    expect(store.load(turn.getId()).getState()).toMatchObject({
+      status: 'completed',
+      checkpoint: {
+        eventSequence: 1,
+        sessionLeafId: 'leaf-1',
+        phase: 'input_committed',
+      },
+    });
+  });
+
+  it('rejects conflicting terminal conclusions in one attempt', () => {
+    const { store } = createStore();
+    const turn = createStartedTurn();
+    store.create(turn);
+    store.appendEvent(turn.getId(), turnStartedEvent(turn));
+    store.appendEvent(turn.getId(), turnCompletedEvent(turn));
+
+    expect(() => store.appendEvent(turn.getId(), turnFailedEvent(turn, 2))).toThrow(
+      /multiple terminal events/,
+    );
   });
 
   it.each([

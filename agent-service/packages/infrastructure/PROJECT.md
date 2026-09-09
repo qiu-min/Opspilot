@@ -42,6 +42,8 @@ turns/{turnId}/
 
 `metadata.json` 保存当前 Turn snapshot 并使用 atomic replacement；`events.jsonl` 保存严格连续 sequence 的 append-only `TurnEvent`。本阶段不实现自动恢复执行。
 
+加载 Turn 时，Infrastructure 会检查当前 attempt 的 terminal event。若 metadata 仍为 running/interrupted 但 events 已经持久化 `turn_completed`、`turn_failed` 或 `turn_cancelled`，会在内存中 reconciliation 为对应 terminal state；不会覆盖 checkpoint，也不会把 terminal event 当成 checkpoint。相同 attempt 的冲突 terminal conclusion 会被拒绝。
+
 ## Verification
 
 在 `agent-service/` 目录运行：

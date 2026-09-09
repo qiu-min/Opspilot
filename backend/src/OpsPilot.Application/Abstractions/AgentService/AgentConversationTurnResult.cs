@@ -4,4 +4,5 @@ public sealed record AgentConversationTurnResult(
     Guid SessionId,
     string? LeafId,
     string Status,
-    string Output);
+    string Output,
+    Guid? TurnId = null);

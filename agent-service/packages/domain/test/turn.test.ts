@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   Turn,
+  TurnEventError,
   TurnStateError,
   type TurnCheckpoint,
   type TurnState,
+  validateTurnEvent,
   validateTurnCheckpoint,
 } from '../src/index.js';
 
@@ -158,6 +160,50 @@ describe('Turn', () => {
         phase: 'model_completed',
       } as unknown as TurnCheckpoint),
     ).toThrow();
+  });
+
+  it.each(['resultEntryId', 'sessionLeafId'] as const)(
+    'requires %s on tool_completed events',
+    (field) => {
+      const event: Record<string, unknown> = {
+        version: 1,
+        id: 'event-1',
+        turnId: 'turn-1',
+        sessionId: 'session-1',
+        sequence: 0,
+        attempt: 1,
+        timestamp: startedAt,
+        type: 'tool_completed',
+        callId: 'call-1',
+        name: 'lookup',
+        isError: false,
+        resultEntryId: 'entry-1',
+        sessionLeafId: 'entry-1',
+      };
+      delete event[field];
+
+      expect(() => validateTurnEvent(event)).toThrow(TurnEventError);
+    },
+  );
+
+  it('accepts tool_completed only with durable result identity', () => {
+    expect(() =>
+      validateTurnEvent({
+        version: 1,
+        id: 'event-1',
+        turnId: 'turn-1',
+        sessionId: 'session-1',
+        sequence: 0,
+        attempt: 1,
+        timestamp: startedAt,
+        type: 'tool_completed',
+        callId: 'call-1',
+        name: 'lookup',
+        isError: false,
+        resultEntryId: 'entry-1',
+        sessionLeafId: 'entry-1',
+      }),
+    ).not.toThrow();
   });
 
   it('rejects checkpoint changes after a terminal transition', () => {

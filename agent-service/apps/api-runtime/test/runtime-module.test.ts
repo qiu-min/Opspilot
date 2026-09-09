@@ -99,6 +99,7 @@ describe('API runtime composition root', () => {
         }),
       ).toMatchObject({
         sessionDirectory: fileURLToPath(new URL('../../../data/sessions', import.meta.url)),
+        turnStorageRoot: fileURLToPath(new URL('../../../data', import.meta.url)),
         modelConfigPath: fileURLToPath(
           new URL('../../../config/model-providers.json', import.meta.url),
         ),
@@ -114,6 +115,7 @@ describe('API runtime composition root', () => {
     expect(
       loadRuntimeConfig({
         SESSION_DIRECTORY: 'custom/sessions',
+        TURN_STORAGE_ROOT: 'custom/agent-state',
         MODEL_CONFIG_PATH: 'custom/models.json',
         OPS_PILOT_SHARED_STORAGE_ROOT: 'custom/storage',
         DEFAULT_MODEL_PROVIDER: testProviderId,
@@ -121,6 +123,7 @@ describe('API runtime composition root', () => {
       }),
     ).toMatchObject({
       sessionDirectory: 'custom/sessions',
+      turnStorageRoot: resolvePath('custom/agent-state'),
       modelConfigPath: 'custom/models.json',
       sharedStorageRoot: resolvePath('custom/storage'),
     });
@@ -195,6 +198,7 @@ function createRuntimeConfig(modelConfigPath: string, sessionDirectory: string):
     port: 3000,
     host: '127.0.0.1',
     sessionDirectory,
+    turnStorageRoot: sessionDirectory,
     modelConfigPath,
     sharedStorageRoot: sessionDirectory,
     defaultProviderId: testProviderId,

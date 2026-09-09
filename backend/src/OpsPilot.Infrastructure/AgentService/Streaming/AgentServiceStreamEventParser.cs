@@ -22,6 +22,7 @@ internal static class AgentServiceStreamEventParser
             "agent_end" => new AgentServiceStreamEvent.AgentEnded(),
             "turn_start" or "step_start" => new AgentServiceStreamEvent.TurnStarted(),
             "turn_end" or "step_end" => new AgentServiceStreamEvent.TurnEnded(),
+            "turn_ready" => ParseTurnReady(data, frame),
             "message_start" => ParseMessageStarted(data, frame),
             "message_update" => ParseMessageUpdate(data, frame),
             "message_end" => ParseMessageCompleted(data, frame),
@@ -45,6 +46,7 @@ internal static class AgentServiceStreamEventParser
         "turn_end",
         "step_start",
         "step_end",
+        "turn_ready",
         "message_start",
         "message_update",
         "message_end",
@@ -65,6 +67,11 @@ internal static class AgentServiceStreamEventParser
         bool created = RequireBoolean(data, "created", frame);
         return new AgentServiceStreamEvent.SessionReady(sessionId, created);
     }
+
+    private static AgentServiceStreamEvent.TurnReady ParseTurnReady(
+        JsonElement data,
+        SseFrame frame) =>
+        new(RequireGuid(data, "turnId", frame));
 
     private static AgentServiceStreamEvent.MessageStarted ParseMessageStarted(
         JsonElement data,

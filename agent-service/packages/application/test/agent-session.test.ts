@@ -13,6 +13,7 @@ import type { AgentMessage, AgentTool } from '@opspilot/agent-runtime';
 import {
   buildSessionContext,
   createAgentSession,
+  prepareSessionExecutionConfig,
   createCompactionSummaryMessage,
   DefaultContextManager,
   prepareCompaction,
@@ -156,7 +157,7 @@ describe('AgentSession composition and persistence', () => {
     const gateway = createGateway([]);
 
     expect(() => createAgentSession({ session: newSession, modelGateway: gateway })).toThrow(
-      'createAgentSession requires a model for a new session',
+      'createAgentSession requires a model for the current session',
     );
 
     const savedModelSession = Session.create();
@@ -177,7 +178,7 @@ describe('AgentSession composition and persistence', () => {
     expect(sessionState.getEntries()).toEqual([]);
   });
 
-  it('uses the gateway canonical model for explicit model input', () => {
+  it('uses the gateway canonical model without persisting Session configuration', () => {
     const sessionState = Session.create();
     const callerModel = { ...model, api: 'caller-api', baseUrl: 'https://caller.example.test' };
     const session = createAgentSession({
@@ -187,13 +188,7 @@ describe('AgentSession composition and persistence', () => {
     });
 
     expect(session.state.model).toBe(model);
-    expect(sessionState.getEntries()).toContainEqual(
-      expect.objectContaining({
-        type: 'model_change',
-        provider: model.provider,
-        modelId: model.id,
-      }),
-    );
+    expect(sessionState.getEntries()).toEqual([]);
     session.dispose();
   });
 
@@ -201,6 +196,14 @@ describe('AgentSession composition and persistence', () => {
     const sessionStore = new InMemorySessionStore();
     const session = sessionStore.create();
     const firstGateway = createGateway([assistantStream(assistantMessage('B'))]);
+    prepareSessionExecutionConfig({
+      session,
+      sessionStore,
+      modelGateway: firstGateway,
+      model,
+      thinkingLevel: 'high',
+      created: true,
+    });
     const firstSession = createAgentSession({
       session,
       sessionStore,
@@ -1482,18 +1485,36 @@ describe('AgentSession composition and persistence', () => {
   });
 
   it('persists the effective thinking level when a model override clamps it', () => {
-    const session = Session.create();
+    const sessionStore = new InMemorySessionStore();
+    const session = sessionStore.create();
+    const initialGateway = createGateway([]);
+    prepareSessionExecutionConfig({
+      session,
+      sessionStore,
+      modelGateway: initialGateway,
+      model,
+      thinkingLevel: 'high',
+      created: true,
+    });
     const initial = createAgentSession({
       session,
-      modelGateway: createGateway([]),
+      modelGateway: initialGateway,
       model,
       thinkingLevel: 'high',
     });
     initial.dispose();
 
+    const overrideGateway = createGateway([], [lowOnlyModel]);
+    prepareSessionExecutionConfig({
+      session,
+      sessionStore,
+      modelGateway: overrideGateway,
+      model: lowOnlyModel,
+      created: false,
+    });
     const resumed = createAgentSession({
       session,
-      modelGateway: createGateway([], [lowOnlyModel]),
+      modelGateway: overrideGateway,
       model: lowOnlyModel,
     });
 
@@ -1514,19 +1535,37 @@ describe('AgentSession composition and persistence', () => {
   });
 
   it('does not append a duplicate thinking entry when the override preserves the level', () => {
-    const session = Session.create();
+    const sessionStore = new InMemorySessionStore();
+    const session = sessionStore.create();
+    const initialGateway = createGateway([]);
+    prepareSessionExecutionConfig({
+      session,
+      sessionStore,
+      modelGateway: initialGateway,
+      model,
+      thinkingLevel: 'high',
+      created: true,
+    });
     const initial = createAgentSession({
       session,
-      modelGateway: createGateway([]),
+      modelGateway: initialGateway,
       model,
       thinkingLevel: 'high',
     });
     initial.dispose();
     const entryCountBeforeResume = session.getEntries().length;
 
+    const overrideGateway = createGateway([], [alternateHighModel]);
+    prepareSessionExecutionConfig({
+      session,
+      sessionStore,
+      modelGateway: overrideGateway,
+      model: alternateHighModel,
+      created: false,
+    });
     const resumed = createAgentSession({
       session,
-      modelGateway: createGateway([], [alternateHighModel]),
+      modelGateway: overrideGateway,
       model: alternateHighModel,
     });
 

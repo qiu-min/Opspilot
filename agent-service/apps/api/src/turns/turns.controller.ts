@@ -1,4 +1,15 @@
-import { Body, Controller, HttpCode, Inject, Param, ParseUUIDPipe, Post, Req, Res } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  HttpCode,
+  Inject,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Req,
+  Res,
+} from '@nestjs/common';
 import { ExecuteTurn, type ExcelResource, type TurnExecutionEvent } from '@opspilot/application';
 import type { Request, Response } from 'express';
 
@@ -65,6 +76,7 @@ export class TurnsController {
     request: ExecuteTurnRequest,
     sessionId?: string,
   ): Promise<ExecuteTurnResponse> {
+    this.assertRouteSessionIdentity(request, sessionId);
     const result = await this.executeTurn.execute(this.mapRequest(request, sessionId));
     return mapExecuteTurnResult(result);
   }
@@ -75,6 +87,7 @@ export class TurnsController {
     response: Response,
     sessionId?: string,
   ): Promise<void> {
+    this.assertRouteSessionIdentity(request, sessionId);
     response.setHeader('Content-Type', 'text/event-stream');
     response.setHeader('Cache-Control', 'no-cache, no-transform');
     response.setHeader('Connection', 'keep-alive');
@@ -121,6 +134,15 @@ export class TurnsController {
         ? undefined
         : this.excelResourcePathResolver.resolve(request.excelResource);
     return mapExecuteTurnRequest(request, excelResource, sessionId);
+  }
+
+  private assertRouteSessionIdentity(
+    request: ExecuteTurnRequest,
+    sessionId: string | undefined,
+  ): void {
+    if (sessionId !== undefined && request.sessionId !== undefined && request.sessionId !== sessionId) {
+      throw new BadRequestException('Route sessionId must match body sessionId.');
+    }
   }
 }
 

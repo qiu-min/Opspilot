@@ -105,6 +105,7 @@ public sealed class AgentServiceClientTests
             return JsonResponse(new
             {
                 sessionId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+                turnId = Guid.Parse("33333333-3333-4333-8333-333333333333"),
                 leafId = "leaf-1",
                 status = "completed",
                 output = "Workbook inspected.",
@@ -143,6 +144,7 @@ public sealed class AgentServiceClientTests
         Assert.Equal(
             Guid.Parse("11111111-1111-1111-1111-111111111111"),
             result.SessionId);
+        Assert.Equal(Guid.Parse("33333333-3333-4333-8333-333333333333"), result.TurnId);
         Assert.Equal("leaf-1", result.LeafId);
         Assert.Equal("completed", result.Status);
         Assert.Equal("Workbook inspected.", result.Output);
@@ -244,6 +246,9 @@ public sealed class AgentServiceClientTests
                 event: agent_start
                 data: {"type":"agent_start"}
 
+                event: turn_ready
+                data: {"type":"turn_ready","turnId":"22222222-2222-4222-8222-222222222222"}
+
                 event: turn_start
                 data: {"type":"turn_start"}
 
@@ -319,6 +324,8 @@ public sealed class AgentServiceClientTests
                 Guid.Parse(sessionId),
                 true), item),
             item => Assert.IsType<AgentServiceStreamEvent.AgentStarted>(item),
+            item => Assert.Equal(new AgentServiceStreamEvent.TurnReady(
+                Guid.Parse("22222222-2222-4222-8222-222222222222")), item),
             item => Assert.IsType<AgentServiceStreamEvent.TurnStarted>(item),
             item => Assert.Equal(new AgentServiceStreamEvent.MessageStarted("assistant"), item),
             item => Assert.Equal(new AgentServiceStreamEvent.ThinkingDelta(0, "plan"), item),

@@ -1,7 +1,11 @@
 import type { Model, ModelGateway } from '@opspilot/model-gateway';
 import { Turn } from '@opspilot/domain';
 
-import { createAgentSession, type AgentSession } from '../agent-session/index.js';
+import {
+  createAgentSession,
+  prepareSessionExecutionConfig,
+  type AgentSession,
+} from '../agent-session/index.js';
 import type { CompactionService, CompactionSettings, ContextManager } from '../context/index.js';
 import type { Session } from '@opspilot/domain';
 import type { SessionStore } from '../session-store/session-store.js';
@@ -92,6 +96,15 @@ export class ExecuteTurn {
     let unsubscribe: (() => void) | undefined;
     try {
       await options?.onEvent?.({ type: 'turn_ready', turnId: turn.getId() });
+      const executionConfig = prepareSessionExecutionConfig({
+        session,
+        sessionStore: this.sessionStore,
+        modelGateway: this.modelGateway,
+        model: input.model,
+        defaultModel: this.defaultModel,
+        thinkingLevel: input.thinkingLevel,
+        created,
+      });
       const inputEntry = session.appendMessage(input.message);
       this.sessionStore.appendEntry(sessionId, inputEntry);
       recorder.recordInputCommitted(inputEntry.id, inputEntry.id);
@@ -104,8 +117,8 @@ export class ExecuteTurn {
         session,
         sessionStore: this.sessionStore,
         modelGateway: this.modelGateway,
-        model: input.model ?? (created ? this.defaultModel : undefined),
-        thinkingLevel: input.thinkingLevel,
+        model: executionConfig.model,
+        thinkingLevel: executionConfig.thinkingLevel,
         tools,
         systemPrompt: this.systemPrompt,
         contextManager: this.contextManager,

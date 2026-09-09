@@ -15,6 +15,8 @@ public abstract record AgentServiceStreamEvent
 
     public sealed record TurnEnded : AgentServiceStreamEvent;
 
+    public sealed record TurnReady(Guid TurnId) : AgentServiceStreamEvent;
+
     public sealed record MessageStarted(
         string Role)
         : AgentServiceStreamEvent;

@@ -16,6 +16,7 @@ import { AgentSession } from './agent-session.js';
 
 export interface CreateAgentSessionOptions {
   readonly session: Session;
+  /** Retained for callers migrating to prepareSessionExecutionConfig; it is never written to. */
   readonly sessionStore?: SessionStore;
   readonly modelGateway: ModelGateway;
   readonly model?: Model;
@@ -30,8 +31,7 @@ export interface CreateAgentSessionOptions {
 /** 从 Session 上下文组装 Model、Agent Runtime 和 AgentSession。 */
 export function createAgentSession(options: CreateAgentSessionOptions): AgentSession {
   const sessionContext = buildSessionContext(options.session);
-  const isNewSession = options.session.getEntries().length === 0;
-  const model = resolveModel(options, sessionContext.model, isNewSession);
+  const model = resolveModel(options, sessionContext.model);
   const thinkingLevel = resolveThinkingLevel(
     model,
     options.thinkingLevel,
@@ -42,16 +42,6 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
   const compactionService =
     options.compactionService ?? new DefaultCompactionService(options.modelGateway);
   const compactionSettings = options.compactionSettings ?? DEFAULT_COMPACTION_SETTINGS;
-
-  persistInitialOrOverriddenState(
-    options.session,
-    options.sessionStore,
-    model,
-    thinkingLevel,
-    sessionContext.model,
-    sessionContext.thinkingLevel,
-    isNewSession,
-  );
 
   const agent = new Agent({
     model,
@@ -86,7 +76,6 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
 function resolveModel(
   options: CreateAgentSessionOptions,
   sessionModel: ReturnType<typeof buildSessionContext>['model'],
-  isNewSession: boolean,
 ): Model {
   if (options.model !== undefined) {
     const canonicalModel = options.modelGateway.getModel(options.model.provider, options.model.id);
@@ -105,7 +94,6 @@ function resolveModel(
     );
   }
 
-  if (isNewSession) throw new Error('createAgentSession requires a model for a new session');
   throw new Error('createAgentSession requires a model for the current session');
 }
 
@@ -117,45 +105,4 @@ function resolveThinkingLevel(
   const requested = override ?? restored;
   if (requested === 'off') return 'off';
   return clampThinkingLevel(model, requested);
-}
-
-function persistInitialOrOverriddenState(
-  session: Session,
-  sessionStore: SessionStore | undefined,
-  model: Model,
-  thinkingLevel: AgentThinkingLevel,
-  restoredModel: ReturnType<typeof buildSessionContext>['model'],
-  restoredThinkingLevel: AgentThinkingLevel,
-  isNewSession: boolean,
-): void {
-  if (isNewSession) {
-    appendAndPersist(session, sessionStore, () =>
-      session.appendModelChange(model.provider, model.id),
-    );
-    appendAndPersist(session, sessionStore, () => session.appendThinkingLevelChange(thinkingLevel));
-    return;
-  }
-
-  if (
-    restoredModel === null ||
-    restoredModel.provider !== model.provider ||
-    restoredModel.modelId !== model.id
-  ) {
-    appendAndPersist(session, sessionStore, () =>
-      session.appendModelChange(model.provider, model.id),
-    );
-  }
-
-  if (thinkingLevel !== restoredThinkingLevel) {
-    appendAndPersist(session, sessionStore, () => session.appendThinkingLevelChange(thinkingLevel));
-  }
-}
-
-function appendAndPersist(
-  session: Session,
-  sessionStore: SessionStore | undefined,
-  append: () => Parameters<SessionStore['appendEntry']>[1],
-): void {
-  const entry = append();
-  sessionStore?.appendEntry(session.getId(), entry);
 }

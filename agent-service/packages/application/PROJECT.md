@@ -4,7 +4,7 @@
 
 当前 Session 已是用户可见长期会话的 Domain aggregate，而不是 Application 内部的 SessionManager。它由 `SessionMetadata` 与 history tree 组成；Application 通过 `SessionStore` port 访问 persistence，filesystem adapter 位于 `@opspilot/infrastructure`。
 
-Application 的持久化边界只包含 `SessionStore` interface。Application 不导出或依赖 `FileSystemSessionStore`、JSONL parser、metadata JSON helper、filesystem error 或 Node fs；这些具体实现属于 Infrastructure。Application unit tests 使用 in-memory fake，真实 filesystem behavior 在 Infrastructure / api-runtime integration tests 中验证。
+Application 的持久化边界包含 `SessionStore` 与 `TurnStore` interface。Application 不导出或依赖 `FileSystemSessionStore`、`FileSystemTurnStore`、JSONL parser、metadata JSON helper、filesystem error 或 Node fs；这些具体实现属于 Infrastructure。Application unit tests 使用 in-memory fake，真实 filesystem behavior 在 Infrastructure / api-runtime integration tests 中验证。
 
 ```text
 Session
@@ -222,6 +222,10 @@ Session
         ↓
 Turn.create() / TurnStore
         ↓
+prepareSessionExecutionConfig()
+        ↓
+Session config + user input durable commit
+        ↓
 createAgentSession()
         ↓
 AgentSession
@@ -258,6 +262,8 @@ SessionStore.appendEntry()
 
 TurnEventRecorder records durable execution facts and advances Turn checkpoints
 after the corresponding Session boundary is durable.
+
+`prepareSessionExecutionConfig()` 在 `input_committed` checkpoint 之前解析并持久化 effective model / thinking level；`createAgentSession()` 只从已准备好的 Session context 构造 Agent Runtime，不再隐式追加 Session 配置 entry。
 ```
 
 因此：

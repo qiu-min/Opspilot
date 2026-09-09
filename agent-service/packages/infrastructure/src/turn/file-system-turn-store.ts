@@ -72,9 +72,11 @@ export class FileSystemTurnStore implements TurnStore {
     const paths = this.getTurnPaths(turnId);
     this.assertCompleteLayout(turnId, paths);
     const state = this.loadState(paths);
-    this.validateEventLog(turnId, state, this.readEvents(paths));
+    const events = this.readEvents(paths);
+    this.validateEventLog(turnId, state, events);
+    const reconciledState = reconcileTerminalState(state, events);
     try {
-      return Turn.restore(state);
+      return Turn.restore(reconciledState);
     } catch (error) {
       throw new TurnStoreError(`Turn metadata violates domain invariants: ${turnId}.`, {
         cause: error,
@@ -125,6 +127,7 @@ export class FileSystemTurnStore implements TurnStore {
     if (events.some((existing) => existing.id === event.id)) {
       throw new TurnStoreError(`Duplicate TurnEvent id for Turn ${turnId}: ${event.id}.`);
     }
+    this.validateEventLog(turnId, state, [...events, event]);
 
     try {
       appendTurnEvent(paths.events, event);
@@ -234,6 +237,18 @@ export class FileSystemTurnStore implements TurnStore {
       previousAttempt = event.attempt;
     });
 
+    validateTerminalEvents(turnId, events);
+    const terminalEvent = findTerminalEventForAttempt(events, state.attempt);
+    if (
+      terminalEvent !== undefined &&
+      isTerminalStatus(state.status) &&
+      terminalStatus(terminalEvent) !== state.status
+    ) {
+      throw new TurnStoreError(
+        `Turn ${turnId} metadata status ${state.status} conflicts with terminal event ${terminalEvent.type}.`,
+      );
+    }
+
     if (
       state.checkpoint !== null &&
       (events.length === 0 || state.checkpoint.eventSequence >= events.length)
@@ -284,6 +299,87 @@ export class FileSystemTurnStore implements TurnStore {
   private removeTemporaryDirectory(directory: string): void {
     rmSync(directory, { recursive: true, force: true });
   }
+}
+
+type TerminalTurnEvent = Extract<
+  TurnEvent,
+  { type: 'turn_completed' | 'turn_failed' | 'turn_cancelled' }
+>;
+
+function reconcileTerminalState(state: TurnState, events: readonly TurnEvent[]): TurnState {
+  if (state.status !== 'running' && state.status !== 'interrupted') return state;
+
+  const terminalEvent = findTerminalEventForAttempt(events, state.attempt);
+  if (terminalEvent === undefined) return state;
+
+  return {
+    ...state,
+    status: terminalStatus(terminalEvent),
+    completedAt: terminalEvent.timestamp,
+    ...(terminalEvent.type === 'turn_completed'
+      ? { resultLeafId: terminalEvent.resultLeafId }
+      : {}),
+  };
+}
+
+function findTerminalEventForAttempt(
+  events: readonly TurnEvent[],
+  attempt: number,
+): TerminalTurnEvent | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.attempt === attempt && isTerminalTurnEvent(event)) return event;
+  }
+  return undefined;
+}
+
+function validateTerminalEvents(turnId: string, events: readonly TurnEvent[]): void {
+  const terminalByAttempt = new Map<number, { event: TerminalTurnEvent; index: number }>();
+
+  events.forEach((event, index) => {
+    if (!isTerminalTurnEvent(event)) return;
+
+    const previous = terminalByAttempt.get(event.attempt);
+    if (previous !== undefined) {
+      throw new TurnStoreError(
+        `Turn ${turnId} attempt ${event.attempt} has multiple terminal events: ` +
+          `${previous.event.type} and ${event.type}.`,
+      );
+    }
+    terminalByAttempt.set(event.attempt, { event, index });
+  });
+
+  for (const { event, index } of terminalByAttempt.values()) {
+    const laterSameAttempt = events.slice(index + 1).some((candidate) => candidate.attempt === event.attempt);
+    if (laterSameAttempt) {
+      throw new TurnStoreError(
+        `Turn ${turnId} attempt ${event.attempt} contains events after terminal event ${event.type}.`,
+      );
+    }
+  }
+}
+
+function isTerminalTurnEvent(event: TurnEvent): event is TerminalTurnEvent {
+  return (
+    event.type === 'turn_completed' ||
+    event.type === 'turn_failed' ||
+    event.type === 'turn_cancelled'
+  );
+}
+
+function terminalStatus(event: TerminalTurnEvent): Extract<TurnState['status'], 'completed' | 'failed' | 'cancelled'> {
+  switch (event.type) {
+    case 'turn_completed':
+      return 'completed';
+    case 'turn_failed':
+      return 'failed';
+    case 'turn_cancelled':
+      return 'cancelled';
+  }
+}
+
+function isTerminalStatus(status: TurnState['status']): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
 
 function assertNonEmptyId(value: string, field: string): void {

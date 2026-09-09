@@ -229,6 +229,24 @@ describe('Turn API', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it('rejects a route sessionId that conflicts with the body sessionId', async () => {
+    const execute = vi.fn<ExecuteTurn['execute']>(async () => turnResult);
+    const server = await startServer(execute);
+    app = server.app;
+
+    const response = await postJson(
+      server.port,
+      `/sessions/${sessionReadyId}/turns`,
+      { sessionId: '00000000-0000-4000-8000-000000000002', message: 'hello' },
+    );
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.body)).toMatchObject({
+      code: 'VALIDATION_ERROR',
+    });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('writes AgentEvents in order, forwards tool events, and sends done', async () => {
     const execute: ExecuteTurn['execute'] = async (_input, options) => {
       options?.onEvent?.({
