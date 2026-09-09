@@ -150,7 +150,7 @@ describe('Turn stream API', () => {
       request as never,
       response as never,
     );
-    request.emit('close');
+    response.emit('close');
     await operation;
 
     expect(returned).toBe(true);

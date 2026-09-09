@@ -190,6 +190,9 @@ export class ExecuteTurn {
       throw error;
     } finally {
       unsubscribe?.();
+      if (streamChannelOpened && !streamTerminalPublished) {
+        this.turnStreamHub?.closeTurn(turn.getId());
+      }
       if (agentSession !== undefined) agentSession.dispose();
     }
   }

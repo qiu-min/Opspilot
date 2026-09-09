@@ -3,8 +3,11 @@ import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import {
   GetSessionHistory,
   ExecuteTurn,
+  GetActiveTurn,
+  SubscribeTurnStream,
   Session,
   type SessionStore,
+  type TurnStreamHub,
 } from '@opspilot/application';
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
@@ -175,9 +178,10 @@ describe('Session history API', () => {
   });
 });
 
-async function startServer(
-  getSessionHistory: GetSessionHistory,
-): Promise<INestApplication> {
+async function startServer(getSessionHistory: GetSessionHistory): Promise<INestApplication> {
+  const streamHub = {
+    getActiveTurn: () => null,
+  } as unknown as TurnStreamHub;
   const module = await Test.createTestingModule({
     imports: [
       ApiModule.register({
@@ -197,8 +201,16 @@ async function startServer(
               resolve: (resource) => ({ id: resource.id, filePath: resource.storagePath }),
             } satisfies ExcelResourcePathResolver,
           },
+          { provide: GetActiveTurn, useValue: new GetActiveTurn(streamHub) },
+          { provide: SubscribeTurnStream, useValue: new SubscribeTurnStream(streamHub) },
         ],
-        exports: [ExecuteTurn, GetSessionHistory, EXCEL_RESOURCE_PATH_RESOLVER],
+        exports: [
+          ExecuteTurn,
+          GetSessionHistory,
+          GetActiveTurn,
+          SubscribeTurnStream,
+          EXCEL_RESOURCE_PATH_RESOLVER,
+        ],
       }),
     ],
   }).compile();

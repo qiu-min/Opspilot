@@ -19,6 +19,7 @@ import {
   ExecuteTurn,
   type ExecuteTurnDependencies,
   type TurnExecutionEvent,
+  type TurnStreamHub,
   type TurnStore,
   Session,
   type SessionStore,
@@ -30,7 +31,9 @@ import { InMemoryTurnStore } from './support/in-memory-turn-store.js';
 
 class TestExecuteTurn extends ExecuteTurn {
   public constructor(
-    options: Omit<ExecuteTurnDependencies, 'turnStore'> & { readonly turnStore?: ExecuteTurnDependencies['turnStore'] },
+    options: Omit<ExecuteTurnDependencies, 'turnStore'> & {
+      readonly turnStore?: ExecuteTurnDependencies['turnStore'];
+    },
   ) {
     super({ ...options, turnStore: options.turnStore ?? new InMemoryTurnStore() });
   }
@@ -267,10 +270,12 @@ describe('ExecuteTurn', () => {
     const turn = turnStore.load(result.turnId);
     const session = store.load(result.sessionId);
 
-    expect(session.getEntries().filter((entry) => entry.type === 'message').map((entry) => entry.message)).toEqual([
-      input,
-      assistantMessage('done'),
-    ]);
+    expect(
+      session
+        .getEntries()
+        .filter((entry) => entry.type === 'message')
+        .map((entry) => entry.message),
+    ).toEqual([input, assistantMessage('done')]);
     expect(events.map((event) => event.type)).toEqual([
       'turn_started',
       'input_committed',
@@ -534,6 +539,57 @@ describe('ExecuteTurn', () => {
     expect(turn.getState().status).toBe('failed');
     expect(events.at(-1)).toMatchObject({ type: 'turn_failed', message: 'provider failed' });
     expect(messageEntries(store.load(result.sessionId))).toHaveLength(2);
+  });
+
+  it('closes an unconfirmed live channel when durable failure recording also fails', async () => {
+    const { store, turnStore: baseTurnStore } = createStore();
+    const turnStore: TurnStore = {
+      create: (turn) => baseTurnStore.create(turn),
+      load: (turnId) => baseTurnStore.load(turnId),
+      save: (turn) => baseTurnStore.save(turn),
+      appendEvent: (turnId, event) => {
+        if (event.type === 'turn_failed') throw new Error('failure persistence unavailable');
+        baseTurnStore.appendEvent(turnId, event);
+      },
+      loadEvents: (turnId) => baseTurnStore.loadEvents(turnId),
+      listBySession: (sessionId) => baseTurnStore.listBySession(sessionId),
+      listRecoverable: () => baseTurnStore.listRecoverable(),
+    };
+    const closeTurn = vi.fn();
+    const publish = vi.fn();
+    const streamHub = {
+      openTurn: vi.fn(),
+      publish,
+      publishDraft: publish,
+      getActiveTurn: vi.fn(),
+      getProjection: vi.fn(),
+      subscribe: vi.fn(),
+      closeTurn,
+    } as unknown as TurnStreamHub;
+    const runner = new TestExecuteTurn({
+      sessionStore: store,
+      turnStore,
+      modelGateway: createGateway([]),
+      toolDefinitions: [],
+      defaultModel: model,
+      turnStreamHub: streamHub,
+    });
+
+    await expect(
+      runner.execute(
+        { message: userMessage('hello') },
+        {
+          onEvent: (event) => {
+            if (event.type === 'turn_ready') throw new Error('observer failed');
+          },
+        },
+      ),
+    ).rejects.toThrow('observer failed');
+
+    expect(closeTurn).toHaveBeenCalledOnce();
+    expect(publish).toHaveBeenCalledOnce();
+    const startedEvent = publish.mock.calls[0]?.[0] as { readonly turnId: string };
+    expect(baseTurnStore.load(startedEvent.turnId).getState().status).toBe('running');
   });
 
   it('awaits session_ready listeners before creating AgentSession', async () => {

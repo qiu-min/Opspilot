@@ -1,11 +1,16 @@
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import { EventEmitter } from 'node:events';
 
-import { GetSessionHistory, ExecuteTurn } from '@opspilot/application';
-import type {
-  ExecuteTurnInput,
-  ExecuteTurnResult,
+import {
+  ExecuteTurn,
+  GetActiveTurn,
+  GetSessionHistory,
+  SubscribeTurnStream,
+  type TurnStreamEvent,
+  type TurnStreamEventDraftPayload,
+  type TurnStreamHub,
 } from '@opspilot/application';
+import type { ExecuteTurnInput, ExecuteTurnResult } from '@opspilot/application';
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import type { Request, Response } from 'express';
@@ -234,11 +239,10 @@ describe('Turn API', () => {
     const server = await startServer(execute);
     app = server.app;
 
-    const response = await postJson(
-      server.port,
-      `/sessions/${sessionReadyId}/turns`,
-      { sessionId: '00000000-0000-4000-8000-000000000002', message: 'hello' },
-    );
+    const response = await postJson(server.port, `/sessions/${sessionReadyId}/turns`, {
+      sessionId: '00000000-0000-4000-8000-000000000002',
+      message: 'hello',
+    });
 
     expect(response.statusCode).toBe(400);
     expect(JSON.parse(response.body)).toMatchObject({
@@ -247,24 +251,21 @@ describe('Turn API', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('writes AgentEvents in order, forwards tool events, and sends done', async () => {
+  it('writes Hub TurnStreamEvents in order and ends after a terminal event', async () => {
+    const hub = createScriptedStreamHub([
+      streamEvent({ type: 'turn_started' }, 0),
+      streamEvent({ type: 'assistant_text_delta', delta: 'hello' }, 1),
+      streamEvent({ type: 'tool_started', callId: 'call-1', name: 'lookup' }, 2),
+      streamEvent({ type: 'turn_completed', resultLeafId: 'leaf-1' }, 3),
+    ]);
     const execute: ExecuteTurn['execute'] = async (_input, options) => {
-      options?.onEvent?.({
-        type: 'session_ready',
-        sessionId: sessionReadyId,
-        created: true,
-      });
-      options?.onEvent?.({ type: 'agent_start' });
-      options?.onEvent?.({
-        type: 'tool_execution_start',
-        toolCall: { callId: 'call-1', name: 'lookup', arguments: { query: 'hello' } },
-      });
-      options?.onEvent?.({ type: 'session_settled' });
+      options?.onEvent?.({ type: 'turn_ready', turnId: 'turn-1' });
       return { ...turnResult, sessionId: sessionReadyId };
     };
     const controller = new TurnsController(
       { execute } as ExecuteTurn,
       defaultExcelResourcePathResolver,
+      new SubscribeTurnStream(hub),
     );
     const request = new EventEmitter() as Request;
     const response = new FakeResponse();
@@ -278,11 +279,10 @@ describe('Turn API', () => {
     });
     expect(response.chunks.join('')).toBe(
       [
-        `event: session_ready\ndata: {"type":"session_ready","sessionId":"${sessionReadyId}","created":true}\n\n`,
-        'event: agent_start\ndata: {"type":"agent_start"}\n\n',
-        'event: tool_execution_start\ndata: {"type":"tool_execution_start","toolCall":{"callId":"call-1","name":"lookup","arguments":{"query":"hello"}}}\n\n',
-        'event: session_settled\ndata: {"type":"session_settled"}\n\n',
-        `event: done\ndata: {"sessionId":"${sessionReadyId}","turnId":"turn-1","leafId":"leaf-1","status":"completed","output":"hello back"}\n\n`,
+        `id: 0\nevent: turn_started\ndata: ${JSON.stringify(hubEvent(0, { type: 'turn_started' }))}\n\n`,
+        `id: 1\nevent: assistant_text_delta\ndata: ${JSON.stringify(hubEvent(1, { type: 'assistant_text_delta', delta: 'hello' }))}\n\n`,
+        `id: 2\nevent: tool_started\ndata: ${JSON.stringify(hubEvent(2, { type: 'tool_started', callId: 'call-1', name: 'lookup' }))}\n\n`,
+        `id: 3\nevent: turn_completed\ndata: ${JSON.stringify(hubEvent(3, { type: 'turn_completed', resultLeafId: 'leaf-1' }))}\n\n`,
       ].join(''),
     );
     expect(response.writableEnded).toBe(true);
@@ -291,16 +291,16 @@ describe('Turn API', () => {
   });
 
   it('serves the stream endpoint with SSE events and headers', async () => {
+    const hub = createScriptedStreamHub([
+      streamEvent({ type: 'turn_started' }, 0),
+      streamEvent({ type: 'assistant_text_delta', delta: 'hello' }, 1),
+      streamEvent({ type: 'turn_completed', resultLeafId: 'leaf-1' }, 2),
+    ]);
     const execute: ExecuteTurn['execute'] = async (_input, options) => {
-      options?.onEvent?.({
-        type: 'session_ready',
-        sessionId: sessionReadyId,
-        created: true,
-      });
-      options?.onEvent?.({ type: 'agent_start' });
+      options?.onEvent?.({ type: 'turn_ready', turnId: 'turn-1' });
       return { ...turnResult, sessionId: sessionReadyId };
     };
-    const server = await startServer(execute);
+    const server = await startServer(execute, defaultExcelResourcePathResolver, hub);
     app = server.app;
 
     const response = await postJson(server.port, '/turns/stream', {
@@ -309,22 +309,25 @@ describe('Turn API', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.headers['content-type']).toBe('text/event-stream');
-    expect(response.body).toBe(
-      [
-        `event: session_ready\ndata: {"type":"session_ready","sessionId":"${sessionReadyId}","created":true}\n\n`,
-        'event: agent_start\ndata: {"type":"agent_start"}\n\n',
-        `event: done\ndata: {"sessionId":"${sessionReadyId}","turnId":"turn-1","leafId":"leaf-1","status":"completed","output":"hello back"}\n\n`,
-      ].join(''),
-    );
+    expect(response.body).toContain('id: 0\nevent: turn_started\ndata:');
+    expect(response.body).toContain('id: 1\nevent: assistant_text_delta\ndata:');
+    expect(response.body).toContain('id: 2\nevent: turn_completed\ndata:');
+    expect(response.body).not.toContain('session_settled');
+    expect(response.body).not.toContain('event: done');
   });
 
   it('resolves an Excel resource for the stream endpoint as well', async () => {
     const resolve = vi.fn(() => ({ id: 'file-2', filePath: '/shared/data/book.xlsx' }));
-    const execute = vi.fn<ExecuteTurn['execute']>(async (input) => {
+    const hub = createScriptedStreamHub([
+      streamEvent({ type: 'turn_started' }, 0),
+      streamEvent({ type: 'turn_completed', resultLeafId: 'leaf-1' }, 1),
+    ]);
+    const execute = vi.fn<ExecuteTurn['execute']>(async (input, options) => {
       expect(input.excelResource).toEqual({ id: 'file-2', filePath: '/shared/data/book.xlsx' });
+      options?.onEvent?.({ type: 'turn_ready', turnId: 'turn-1' });
       return turnResult;
     });
-    const server = await startServer(execute, { resolve });
+    const server = await startServer(execute, { resolve }, hub);
     app = server.app;
 
     const response = await postJson(server.port, '/turns/stream', {
@@ -337,13 +340,16 @@ describe('Turn API', () => {
     expect(execute).toHaveBeenCalledOnce();
   });
 
-  it('sanitizes Agent error events and sends done with error status', async () => {
-    const errorResult = createTurnResult('error', 'provider secret');
+  it('sends a safe Hub terminal failure event without leaking provider details', async () => {
+    const hub = createScriptedStreamHub([
+      streamEvent({ type: 'turn_started' }, 0),
+      streamEvent({ type: 'turn_failed', message: 'Turn failed.' }, 1),
+    ]);
     const execute: ExecuteTurn['execute'] = async (_input, options) => {
-      options?.onEvent?.({ type: 'agent_end', messages: errorResult.messages });
-      return errorResult;
+      options?.onEvent?.({ type: 'turn_ready', turnId: 'turn-1' });
+      return createTurnResult('error', 'provider secret');
     };
-    const server = await startServer(execute);
+    const server = await startServer(execute, defaultExcelResourcePathResolver, hub);
     app = server.app;
 
     const response = await postJson(server.port, '/turns/stream', {
@@ -351,10 +357,7 @@ describe('Turn API', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.body).toContain(
-      'event: done\ndata: {"sessionId":"session-1","turnId":"turn-1","leafId":"leaf-1","status":"error","output":""}\n\n',
-    );
-    expect(response.body).not.toContain('errorMessage');
+    expect(response.body).toContain('event: turn_failed\ndata:');
     expect(response.body).not.toContain('provider secret');
   });
 
@@ -377,51 +380,42 @@ describe('Turn API', () => {
     expect(response.body).not.toContain('provider secret');
   });
 
-  it('sends an SSE error after the stream has started', async () => {
-    const execute: ExecuteTurn['execute'] = async (_input, options) => {
-      options?.onEvent?.({ type: 'agent_start' });
-      throw new Error('provider secret');
-    };
-    const controller = new TurnsController(
-      { execute } as ExecuteTurn,
-      defaultExcelResourcePathResolver,
-    );
+  it('disconnects a Hub subscriber without cancelling the execution', async () => {
     const request = new EventEmitter() as Request;
     const response = new FakeResponse();
-
-    await controller.streamTurn({ message: 'hello' }, request, response as unknown as Response);
-
-    expect(response.chunks.join('')).toContain(
-      'event: error\ndata: {"message":"Internal server error."}\n\n',
-    );
-    expect(response.chunks.join('')).not.toContain('provider secret');
-    expect(response.writableEnded).toBe(true);
-  });
-
-  it('does not write more events after the client disconnects', async () => {
-    const request = new EventEmitter() as Request;
-    const response = new FakeResponse();
+    let returned = false;
+    const hub = createBlockingStreamHub(() => {
+      returned = true;
+    });
     const execute: ExecuteTurn['execute'] = async (_input, options) => {
-      options?.onEvent?.({ type: 'agent_start' });
-      request.emit('close');
-      options?.onEvent?.({ type: 'agent_end', messages: turnResult.messages });
+      options?.onEvent?.({ type: 'turn_ready', turnId: 'turn-1' });
+      await new Promise<void>(() => undefined);
       return turnResult;
     };
     const controller = new TurnsController(
       { execute } as ExecuteTurn,
       defaultExcelResourcePathResolver,
+      new SubscribeTurnStream(hub),
     );
 
-    await controller.streamTurn({ message: 'hello' }, request, response as unknown as Response);
+    const operation = controller.streamTurn(
+      { message: 'hello' },
+      request,
+      response as unknown as Response,
+    );
+    await Promise.resolve();
+    response.emit('close');
+    await operation;
 
-    expect(response.chunks.join('')).toBe('event: agent_start\ndata: {"type":"agent_start"}\n\n');
-    expect(response.writableEnded).toBe(true);
+    expect(returned).toBe(true);
+    expect(request.listenerCount('close')).toBe(0);
   });
 });
 
 async function startServer(
   execute: ExecuteTurn['execute'],
   excelResourcePathResolver: ExcelResourcePathResolver = defaultExcelResourcePathResolver,
+  streamHub: TurnStreamHub = createScriptedStreamHub([]),
 ): Promise<{
   readonly app: INestApplication;
   readonly port: number;
@@ -436,8 +430,16 @@ async function startServer(
             useValue: { execute: () => ({ leafId: null, items: [] }) },
           },
           { provide: EXCEL_RESOURCE_PATH_RESOLVER, useValue: excelResourcePathResolver },
+          { provide: GetActiveTurn, useValue: new GetActiveTurn(streamHub) },
+          { provide: SubscribeTurnStream, useValue: new SubscribeTurnStream(streamHub) },
         ],
-        exports: [ExecuteTurn, GetSessionHistory, EXCEL_RESOURCE_PATH_RESOLVER],
+        exports: [
+          ExecuteTurn,
+          GetSessionHistory,
+          GetActiveTurn,
+          SubscribeTurnStream,
+          EXCEL_RESOURCE_PATH_RESOLVER,
+        ],
       }),
     ],
   }).compile();
@@ -483,6 +485,60 @@ function postBody(port: number, path: string, body: string): Promise<HttpRespons
     request.on('error', reject);
     request.end(body);
   });
+}
+
+function createScriptedStreamHub(events: readonly TurnStreamEvent[]): TurnStreamHub {
+  return {
+    subscribe: () => ({
+      [Symbol.asyncIterator](): AsyncIterator<TurnStreamEvent> {
+        let index = 0;
+        return {
+          next: async (): Promise<IteratorResult<TurnStreamEvent>> => {
+            const event = events[index++];
+            return event === undefined
+              ? { value: undefined, done: true }
+              : { value: event, done: false };
+          },
+          return: async () => ({ value: undefined, done: true }),
+        };
+      },
+    }),
+  } as unknown as TurnStreamHub;
+}
+
+function createBlockingStreamHub(onReturn: () => void): TurnStreamHub {
+  let resolveNext!: (result: IteratorResult<TurnStreamEvent>) => void;
+  return {
+    subscribe: () => ({
+      [Symbol.asyncIterator](): AsyncIterator<TurnStreamEvent> {
+        return {
+          next: () =>
+            new Promise<IteratorResult<TurnStreamEvent>>((resolve) => {
+              resolveNext = resolve;
+            }),
+          return: async () => {
+            onReturn();
+            resolveNext?.({ value: undefined, done: true });
+            return { value: undefined, done: true };
+          },
+        };
+      },
+    }),
+  } as unknown as TurnStreamHub;
+}
+
+function streamEvent(payload: TurnStreamEventDraftPayload, sequence: number): TurnStreamEvent {
+  return {
+    ...payload,
+    turnId: 'turn-1',
+    sessionId: sessionReadyId,
+    sequence,
+    timestamp: new Date(sequence * 1_000).toISOString(),
+  } as TurnStreamEvent;
+}
+
+function hubEvent(sequence: number, payload: TurnStreamEventDraftPayload): TurnStreamEvent {
+  return streamEvent(payload, sequence);
 }
 
 function createTurnResult(

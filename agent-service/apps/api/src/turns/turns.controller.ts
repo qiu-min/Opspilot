@@ -11,13 +11,11 @@ import {
   Query,
   Req,
   Res,
-  Optional,
 } from '@nestjs/common';
 import {
   ExecuteTurn,
   SubscribeTurnStream,
   type ExcelResource,
-  type TurnExecutionEvent,
   type TurnStreamEvent,
 } from '@opspilot/application';
 import type { Request, Response } from 'express';
@@ -32,10 +30,7 @@ import {
   mapExecuteTurnResult,
   type ExecuteTurnResponse,
 } from './turn.mapper.js';
-import { serializeTurnExecutionEvent } from './turn-event.serializer.js';
 import { executeTurnRequestSchema, type ExecuteTurnRequest } from './turn.schemas.js';
-
-const SSE_ERROR_MESSAGE = 'Internal server error.';
 
 /** HTTP boundary for application-level Turns owned by a Session. */
 @Controller()
@@ -44,7 +39,7 @@ export class TurnsController {
     private readonly executeTurn: ExecuteTurn,
     @Inject(EXCEL_RESOURCE_PATH_RESOLVER)
     private readonly excelResourcePathResolver: ExcelResourcePathResolver,
-    @Optional() private readonly subscribeTurnStream?: SubscribeTurnStream,
+    private readonly subscribeTurnStream: SubscribeTurnStream,
   ) {}
 
   @Post('turns')
@@ -93,8 +88,6 @@ export class TurnsController {
     @Req() incomingRequest: Request,
     @Res() response: Response,
   ): Promise<void> {
-    if (this.subscribeTurnStream === undefined)
-      throw new Error('SubscribeTurnStream is not configured.');
     const afterSequence = parseAfterSequence(after);
     const stream: AsyncIterable<TurnStreamEvent> = this.subscribeTurnStream.execute(
       turnId,
@@ -114,7 +107,6 @@ export class TurnsController {
       endResponse(response);
     };
     incomingRequest.on('aborted', onClose);
-    incomingRequest.on('close', onClose);
     response.on('close', onClose);
 
     try {
@@ -130,7 +122,6 @@ export class TurnsController {
     } finally {
       await iterator.return?.();
       incomingRequest.off('aborted', onClose);
-      incomingRequest.off('close', onClose);
       response.off('close', onClose);
     }
   }
@@ -151,48 +142,7 @@ export class TurnsController {
     sessionId?: string,
   ): Promise<void> {
     this.assertRouteSessionIdentity(request, sessionId);
-    if (this.subscribeTurnStream !== undefined) {
-      await this.streamStartedTurnWithHub(request, incomingRequest, response, sessionId);
-      return;
-    }
-    response.setHeader('Content-Type', 'text/event-stream');
-    response.setHeader('Cache-Control', 'no-cache, no-transform');
-    response.setHeader('Connection', 'keep-alive');
-    response.setHeader('X-Accel-Buffering', 'no');
-
-    let disconnected = false;
-    let started = false;
-    const onClose = (): void => {
-      disconnected = true;
-    };
-
-    incomingRequest.on('close', onClose);
-    response.on('close', onClose);
-
-    try {
-      const result = await this.executeTurn.execute(this.mapRequest(request, sessionId), {
-        onEvent: (event: TurnExecutionEvent) => {
-          if (disconnected || !canWrite(response)) return;
-          if (writeSsePayload(response, event.type, serializeTurnExecutionEvent(event))) {
-            started = true;
-          } else {
-            disconnected = true;
-          }
-        },
-      });
-
-      if (!disconnected && writeSseEvent(response, 'done', mapExecuteTurnResult(result))) {
-        started = true;
-      }
-      endResponse(response);
-    } catch (error: unknown) {
-      if (!started && !response.headersSent && !disconnected) throw error;
-      if (!disconnected) writeSseEvent(response, 'error', { message: SSE_ERROR_MESSAGE });
-      endResponse(response);
-    } finally {
-      incomingRequest.off('close', onClose);
-      response.off('close', onClose);
-    }
+    await this.streamStartedTurnWithHub(request, incomingRequest, response, sessionId);
   }
 
   /** Starts a Turn and attaches the first client to the same Hub protocol as reattach. */
@@ -218,12 +168,11 @@ export class TurnsController {
       endResponse(response);
     };
     incomingRequest.on('aborted', onClose);
-    incomingRequest.on('close', onClose);
     response.on('close', onClose);
 
     const execution = this.executeTurn.execute(this.mapRequest(request, sessionId), {
-      onEvent: (event: TurnExecutionEvent) => {
-        if (event.type !== 'turn_ready' || disconnected || this.subscribeTurnStream === undefined) {
+      onEvent: (event) => {
+        if (event.type !== 'turn_ready' || disconnected) {
           return;
         }
         try {
@@ -259,7 +208,6 @@ export class TurnsController {
     } finally {
       await iterator?.return?.();
       incomingRequest.off('aborted', onClose);
-      incomingRequest.off('close', onClose);
       response.off('close', onClose);
     }
   }
@@ -288,10 +236,6 @@ export class TurnsController {
 
 function canWrite(response: Response): boolean {
   return !response.writableEnded && !response.destroyed;
-}
-
-function writeSseEvent(response: Response, eventType: string, data: unknown): boolean {
-  return writeSsePayload(response, eventType, JSON.stringify(data));
 }
 
 function writeSsePayload(

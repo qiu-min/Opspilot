@@ -73,12 +73,15 @@ sessions/{sessionId}/
 当前接口：
 
 - `POST /turns`：执行一次普通 JSON Turn，可通过 body 中的 `sessionId` 继续已有 Session。
-- `POST /turns/stream`：启动 Turn 并连接首个 live SSE subscriber（旧调用方仍可使用）。
+- `POST /turns/stream`：启动 Turn 并连接首个 live SSE subscriber。
 - `POST /sessions/{sessionId}/turns`：在指定 Session 上执行 Turn。
 - `POST /sessions/{sessionId}/turns/stream`：在指定 Session 上启动 Turn 并连接首个 live SSE subscriber。
 - `GET /sessions/{sessionId}/history`：供 Backend 读取当前 active branch 的 UI-safe 历史 projection。
 - `GET /sessions/{sessionId}/active-turn`：读取当前进程中可 reattach 的 live Turn 及 projection。
 - `GET /turns/{turnId}/stream?after=N`：订阅已有 Turn 的 live stream；不会创建或重新执行 Turn。
+
+三个 SSE endpoint 统一发送 `TurnStreamEvent`，格式为 `id: sequence`、`event: type`、
+`data: JSON event`；不再发送 AgentEvent、`session_settled` 或 `done` 作为 live protocol。
 
 普通 Turn 请求可以携带相对共享存储根目录的 Excel `storagePath`。`api-runtime` 将其安全解析为 Application 使用的绝对 `filePath`；SSE 和普通入口使用同一请求契约。
 

@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Optional, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe } from '@nestjs/common';
 import {
   GetActiveTurn,
   GetSessionHistory,
@@ -11,14 +11,13 @@ import {
 export class SessionsController {
   constructor(
     private readonly getSessionHistory: GetSessionHistory,
-    @Optional() private readonly getActiveTurn?: GetActiveTurn,
+    private readonly getActiveTurn: GetActiveTurn,
   ) {}
 
   @Get(':sessionId/active-turn')
   getActiveTurnSnapshot(
     @Param('sessionId', new ParseUUIDPipe({ version: '4' })) sessionId: string,
   ): { readonly activeTurn: ActiveTurnStreamSnapshot | null } {
-    if (this.getActiveTurn === undefined) throw new Error('GetActiveTurn is not configured.');
     return { activeTurn: this.getActiveTurn.execute(sessionId) };
   }
 

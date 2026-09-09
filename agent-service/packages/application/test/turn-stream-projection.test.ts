@@ -21,6 +21,42 @@ describe('TurnStreamProjection reducer', () => {
     expect(projection.lastSequence).toBe(1);
   });
 
+  it('keeps only the current live assistant message across message boundaries', () => {
+    let projection = createInitialTurnStreamProjection(identity);
+    projection = reduce(projection, event({ type: 'assistant_message_started' }, 0));
+    projection = reduce(projection, event({ type: 'assistant_text_delta', delta: 'first' }, 1));
+    projection = reduce(projection, event({ type: 'assistant_message_completed' }, 2));
+    expect(projection.assistant).toEqual({ text: '', messageVisible: false, isThinking: false });
+
+    projection = reduce(projection, event({ type: 'assistant_message_started' }, 3));
+    projection = reduce(projection, event({ type: 'assistant_text_delta', delta: 'second' }, 4));
+
+    expect(projection.assistant).toEqual({
+      text: 'second',
+      messageVisible: true,
+      isThinking: false,
+    });
+  });
+
+  it('does not join assistant text across a tool round-trip', () => {
+    let projection = createInitialTurnStreamProjection(identity);
+    const events: TurnStreamEvent[] = [
+      event({ type: 'assistant_message_started' }, 0),
+      event({ type: 'assistant_text_delta', delta: 'checking' }, 1),
+      event({ type: 'assistant_message_completed' }, 2),
+      event({ type: 'tool_queued', callId: 'call-1', name: 'lookup' }, 3),
+      event({ type: 'tool_started', callId: 'call-1', name: 'lookup' }, 4),
+      event({ type: 'tool_completed', callId: 'call-1', name: 'lookup', isError: false }, 5),
+      event({ type: 'assistant_message_started' }, 6),
+      event({ type: 'assistant_text_delta', delta: 'result' }, 7),
+    ];
+
+    for (const next of events) projection = reduce(projection, next);
+
+    expect(projection.assistant.text).toBe('result');
+    expect(projection.tools).toEqual([{ callId: 'call-1', name: 'lookup', status: 'completed' }]);
+  });
+
   it('tracks thinking, tools, compaction, usage, and terminal status', () => {
     let projection = createInitialTurnStreamProjection(identity);
     projection = reduce(projection, event({ type: 'assistant_thinking_started' }, 0));

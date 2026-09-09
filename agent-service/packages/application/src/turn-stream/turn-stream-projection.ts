@@ -97,7 +97,11 @@ export function applyTurnStreamEvent(
     case 'assistant_message_started':
       return {
         ...next,
-        assistant: { ...next.assistant, messageVisible: true },
+        assistant: {
+          text: '',
+          messageVisible: true,
+          isThinking: false,
+        },
       };
     case 'assistant_text_delta':
       return {
@@ -110,7 +114,14 @@ export function applyTurnStreamEvent(
         },
       };
     case 'assistant_message_completed':
-      return next;
+      return {
+        ...next,
+        assistant: {
+          text: '',
+          messageVisible: false,
+          isThinking: false,
+        },
+      };
     case 'tool_queued':
       return {
         ...next,
