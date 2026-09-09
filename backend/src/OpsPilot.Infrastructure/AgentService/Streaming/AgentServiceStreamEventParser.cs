@@ -36,7 +36,7 @@ internal static class AgentServiceStreamEventParser
             "assistant_thinking_started" => new AgentAssistantThinkingStarted(turnId, sessionId, sequence, timestamp),
             "assistant_thinking_completed" => new AgentAssistantThinkingCompleted(turnId, sessionId, sequence, timestamp),
             "assistant_message_started" => new AgentAssistantMessageStarted(turnId, sessionId, sequence, timestamp),
-            "assistant_text_delta" => new AgentAssistantTextDelta(turnId, sessionId, sequence, timestamp, RequiredString(data, "delta", frame)),
+            "assistant_text_delta" => new AgentAssistantTextDelta(turnId, sessionId, sequence, timestamp, RequiredText(data, "delta", frame)),
             "assistant_message_completed" => new AgentAssistantMessageCompleted(turnId, sessionId, sequence, timestamp),
             "tool_queued" => new AgentToolQueued(turnId, sessionId, sequence, timestamp, RequiredString(data, "callId", frame), RequiredString(data, "name", frame), OptionalString(data, "batchId", frame)),
             "tool_started" => new AgentToolStarted(turnId, sessionId, sequence, timestamp, RequiredString(data, "callId", frame), RequiredString(data, "name", frame)),
@@ -80,6 +80,12 @@ internal static class AgentServiceStreamEventParser
     private static string RequiredString(JsonElement data, string name, SseFrame frame)
     {
         if (!data.TryGetProperty(name, out JsonElement value) || value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(value.GetString())) throw Malformed(frame, $"{name} must be a non-empty string.");
+        return value.GetString()!;
+    }
+
+    private static string RequiredText(JsonElement data, string name, SseFrame frame)
+    {
+        if (!data.TryGetProperty(name, out JsonElement value) || value.ValueKind != JsonValueKind.String) throw Malformed(frame, $"{name} must be a string.");
         return value.GetString()!;
     }
 
