@@ -11,6 +11,7 @@ import type { TurnExecutionContext, TurnExecutionContextStore } from '../turn-ex
 import type { TurnStore } from '../turn-store/turn-store.js';
 import { TurnStreamProjector, type TurnStreamHub } from '../turn-stream/index.js';
 import { TurnEventRecorder } from '../turns/turn-event-recorder.js';
+import { withExcelResourceGuidance } from '../system-prompt/index.js';
 import {
   InMemorySessionRunCoordinator,
   type SessionRunCoordinator,
@@ -232,7 +233,10 @@ export class ResumeTurn {
             ? {}
             : { excelResource: executionContext.excelResource }),
         }),
-        systemPrompt: this.systemPrompt,
+        systemPrompt: withExcelResourceGuidance(
+          this.systemPrompt,
+          executionContext?.excelResource !== undefined,
+        ),
         contextManager: this.contextManager,
         compactionService: this.compactionService,
         compactionSettings: this.compactionSettings,

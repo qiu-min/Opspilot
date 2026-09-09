@@ -15,6 +15,7 @@ export class TurnStreamProjector {
   private readonly sessionId: string;
   private thinkingActive = false;
   private assistantMessageVisible = false;
+  private assistantText = '';
   private readonly queuedToolCalls = new Set<string>();
 
   public constructor(identity: TurnStreamProjectorIdentity) {
@@ -81,6 +82,7 @@ export class TurnStreamProjector {
           this.assistantMessageVisible = true;
           events.push(this.draft({ type: 'assistant_message_started' }));
         }
+        this.assistantText += event.event.delta;
         events.push(this.draft({ type: 'assistant_text_delta', delta: event.event.delta }));
         return events;
       }
@@ -109,8 +111,24 @@ export class TurnStreamProjector {
       this.thinkingActive = false;
       events.push(this.draft({ type: 'assistant_thinking_completed' }));
     }
-    events.push(this.draft({ type: 'assistant_message_completed' }));
+    const visibleText = message.content
+      .flatMap((content) => (content.type === 'text' ? [content.text] : []))
+      .join('');
+    const missingText = visibleText.startsWith(this.assistantText)
+      ? visibleText.slice(this.assistantText.length)
+      : '';
+    if (missingText.length > 0) {
+      if (!this.assistantMessageVisible) {
+        this.assistantMessageVisible = true;
+        events.push(this.draft({ type: 'assistant_message_started' }));
+      }
+      events.push(this.draft({ type: 'assistant_text_delta', delta: missingText }));
+    }
+    if (this.assistantMessageVisible) {
+      events.push(this.draft({ type: 'assistant_message_completed' }));
+    }
     this.assistantMessageVisible = false;
+    this.assistantText = '';
     for (const toolCall of message.toolCalls ?? []) {
       events.push(...this.projectToolQueued(toolCall));
     }

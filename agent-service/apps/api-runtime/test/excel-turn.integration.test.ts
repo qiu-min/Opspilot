@@ -191,16 +191,13 @@ describe('Application Excel discovery Turn integration', () => {
     );
   });
 
-  it('continues after get_workbook_info is called without an ExcelResource', async () => {
+  it('does not expose get_workbook_info without an ExcelResource', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'opspilot-application-missing-excel-e2e-'));
     directories.push(directory);
     const sessionDirectory = join(directory, 'sessions');
     await mkdir(sessionDirectory);
 
     const gateway = createGateway([
-      assistantMessage('', [
-        { callId: 'missing-resource-call', name: 'get_workbook_info', arguments: {} },
-      ]),
       assistantMessage('Please attach an Excel workbook before I inspect it.'),
     ]);
     const store = new FileSystemSessionStore(sessionDirectory);
@@ -216,7 +213,7 @@ describe('Application Excel discovery Turn integration', () => {
       message: userMessage('Inspect the workbook.'),
     });
 
-    expect(gateway.streamMock).toHaveBeenCalledTimes(2);
+    expect(gateway.streamMock).toHaveBeenCalledTimes(1);
     expect(lastAssistantText(result.messages)).toBe(
       'Please attach an Excel workbook before I inspect it.',
     );
@@ -224,33 +221,15 @@ describe('Application Excel discovery Turn integration', () => {
       .reverse()
       .find((message) => message.role === 'assistant');
     expect(finalAssistant).toMatchObject({ finishReason: 'stop' });
-
-    const toolResult = findToolResult(result.messages);
-    expect(toolResult).toMatchObject({
-      role: 'tool',
-      name: 'get_workbook_info',
-      isError: true,
-      details: {
-        kind: 'recoverable',
-        code: 'EXCEL_RESOURCE_REQUIRED',
-      },
-    });
-    expect(toolResult.content[0]?.text).toContain('No Excel workbook is attached');
-    expect(gateway.requestedContexts[1]?.messages.at(-1)).toEqual(toolResult);
+    expect(gateway.requestedContexts[0]?.tools).toEqual([]);
+    expect(result.messages.some((message) => message.role === 'tool')).toBe(false);
 
     const persistedMessages = store
       .load(result.sessionId)
       .getEntries()
       .filter((entry) => entry.type === 'message')
       .map((entry) => entry.message);
-    expect(findToolResult(persistedMessages)).toMatchObject({
-      role: 'tool',
-      isError: true,
-      details: {
-        kind: 'recoverable',
-        code: 'EXCEL_RESOURCE_REQUIRED',
-      },
-    });
+    expect(persistedMessages.some((message) => message.role === 'tool')).toBe(false);
   });
 });
 

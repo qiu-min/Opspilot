@@ -19,6 +19,7 @@ import {
   type TurnStreamHub,
 } from '../turn-stream/index.js';
 import { TurnEventRecorder } from './turn-event-recorder.js';
+import { withExcelResourceGuidance } from '../system-prompt/index.js';
 import type { ExecuteTurnInput, ExecuteTurnOptions, ExecuteTurnResult } from './turn-types.js';
 import {
   InMemorySessionRunCoordinator,
@@ -162,7 +163,10 @@ export class ExecuteTurn {
         model: executionConfig.model,
         thinkingLevel: executionConfig.thinkingLevel,
         tools,
-        systemPrompt: this.systemPrompt,
+        systemPrompt: withExcelResourceGuidance(
+          this.systemPrompt,
+          input.excelResource !== undefined,
+        ),
         contextManager: this.contextManager,
         compactionService: this.compactionService,
         compactionSettings: this.compactionSettings,

@@ -177,9 +177,13 @@ export function SessionPage() {
         if (event.type === "tool_completed") setSessionStatus(sessionId, event.isError ? `${event.name} failed` : `${event.name} completed`);
         if (event.type === "turn_completed" || event.type === "turn_failed" || event.type === "turn_cancelled") { terminal = true; await reconcileTerminalSession(sessionId, turnId); break; }
       }
-      if (!terminal && !controller.signal.aborted && allowRecovery) {
+      if (!terminal && !controller.signal.aborted) {
         releaseTurnStreamController(sessionId, turnId, controller);
-        await recoverDisconnectedTurn(sessionId, turnId, optimisticMessageId);
+        if (allowRecovery) {
+          await recoverDisconnectedTurn(sessionId, turnId, optimisticMessageId);
+        } else {
+          await reconcileEndedTurnStream(sessionId, turnId);
+        }
       }
     } catch (error: unknown) {
       if (controller.signal.aborted) return;
@@ -237,6 +241,22 @@ export function SessionPage() {
     } catch (error: unknown) {
       setPendingTurnStart(sessionId, false);
       setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "Unable to reattach the active Turn.") }));
+    }
+  }
+
+  async function reconcileEndedTurnStream(sessionId: string, turnId: string | undefined) {
+    if (!accessToken) return;
+    try {
+      const active = await getActiveSessionTurn(sessionId, accessToken);
+      if (active.activeTurn !== null) {
+        setErrorsBySessionId((current) => ({ ...current, [sessionId]: "The live stream ended before the Turn reached a terminal state." }));
+        return;
+      }
+
+      clearTurnState(turnId);
+      await loadSession(sessionId);
+    } catch (error: unknown) {
+      setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "Unable to reconcile the completed Turn.") }));
     }
   }
 
@@ -314,7 +334,7 @@ export function SessionPage() {
   }
 
   function handleSessionSelect(sessionId: string) { if (!sessions.some((item) => item.id === sessionId)) return; setActiveSessionId(sessionId); setDraft(""); setIsMobileNavVisible(false); }
-  function handleAttach(files: FileList) { if (!activeSessionId || files.length === 0) return; setAttachmentsBySessionId((current) => ({ ...current, [activeSessionId]: replacePendingAttachment(files[0]) })); }
+  function handleAttach(file: File) { if (!activeSessionId) return; setAttachmentsBySessionId((current) => ({ ...current, [activeSessionId]: replacePendingAttachment(file) })); }
   function handleRemoveAttachment(id: string) { if (!activeSessionId) return; setAttachmentsBySessionId((current) => ({ ...current, [activeSessionId]: (current[activeSessionId] ?? []).filter((item) => item.id !== id) })); }
 
   const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;

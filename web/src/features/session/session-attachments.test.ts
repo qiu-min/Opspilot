@@ -1,7 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { SessionAttachmentValidationError, uploadPendingAttachment } from "./session-attachments";
+import { replacePendingAttachment, SessionAttachmentValidationError, uploadPendingAttachment } from "./session-attachments";
 
 describe("Session attachments", () => {
+  it("creates a pending attachment from the selected File", () => {
+    const file = new File(["data"], "report.xlsx", { lastModified: 123 });
+
+    expect(replacePendingAttachment(file)).toMatchObject([{
+      id: "report.xlsx-123-4",
+      name: "report.xlsx",
+      file,
+    }]);
+  });
+
+  it("ignores an empty file selection without crashing", () => {
+    expect(replacePendingAttachment(undefined)).toEqual([]);
+  });
+
   it("uploads one xlsx attachment", async () => {
     const file = new File(["data"], "report.xlsx");
     const result = await uploadPendingAttachment([{ id: "1", name: file.name, size: "4 B", kind: "xlsx", file }], "token", new AbortController().signal, async () => ({ id: "file-1", fileName: file.name, sizeBytes: 4, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", createdAtUtc: "2026-09-09T00:00:00Z" }));

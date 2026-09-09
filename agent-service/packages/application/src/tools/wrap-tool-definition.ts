@@ -23,5 +23,10 @@ export function wrapToolDefinitions(
   definitions: readonly ToolDefinition[],
   context: ToolContext,
 ): readonly AgentTool[] {
-  return definitions.map((definition) => wrapToolDefinition(definition, context));
+  return definitions
+    .filter(
+      (definition) =>
+        definition.requiresExcelResource !== true || context.excelResource !== undefined,
+    )
+    .map((definition) => wrapToolDefinition(definition, context));
 }

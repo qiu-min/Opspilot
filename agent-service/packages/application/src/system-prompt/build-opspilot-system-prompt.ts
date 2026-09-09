@@ -78,3 +78,18 @@ export function buildOpsPilotSystemPrompt(
 
   return sections.join('\n');
 }
+
+/** Adds per-Turn resource state without exposing the server-side file path to the model. */
+export function withExcelResourceGuidance(
+  systemPrompt: string | undefined,
+  hasExcelResource: boolean,
+): string | undefined {
+  if (!hasExcelResource) return systemPrompt;
+
+  const guidance =
+    'This Turn includes an attached Excel workbook. The workbook is available through the Excel tools. When the user asks to inspect or analyze the workbook, call the relevant Excel tool before answering; do not say that no workbook is attached.';
+  const basePrompt = systemPrompt?.trim();
+  return basePrompt === undefined || basePrompt.length === 0
+    ? guidance
+    : `${basePrompt}\n\n${guidance}`;
+}

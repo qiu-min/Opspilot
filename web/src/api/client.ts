@@ -9,6 +9,7 @@ export type ApiRequestOptions = {
   method?: RequestInit["method"];
   body?: unknown;
   signal?: AbortSignal;
+  cache?: RequestCache;
   accessToken?: string;
   headers?: HeadersInit;
 };
@@ -39,6 +40,7 @@ export async function apiFetch(
     method: options.method,
     headers,
     signal: options.signal,
+    cache: options.cache,
   };
 
   if (options.body instanceof FormData) {

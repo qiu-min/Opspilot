@@ -16,7 +16,7 @@ type ComposerProps = {
   agentName: string;
   onDraftChange: (value: string) => void;
   onSubmit: (payload: ComposerSubmitPayload) => void;
-  onAttach: (files: FileList) => void;
+  onAttach: (file: File) => void;
   onRemoveAttachment: (id: string) => void;
 };
 
@@ -31,8 +31,9 @@ export function Composer({ draft, attachments, isProcessing, disabled = false, a
   }
 
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
-    if (event.target.files && event.target.files.length > 0) {
-      onAttach(event.target.files);
+    const file = event.target.files?.item(0);
+    if (file) {
+      onAttach(file);
       event.target.value = "";
     }
   }

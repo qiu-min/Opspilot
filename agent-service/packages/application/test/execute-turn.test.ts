@@ -233,6 +233,28 @@ describe('ExecuteTurn', () => {
     expect(gateway.requestedContexts[0]?.systemPrompt).toBe('SENTINEL_SYSTEM_PROMPT');
   });
 
+  it('adds attached workbook guidance to the per-Turn model context', async () => {
+    const { store } = createStore();
+    const gateway = createGateway([assistantStream(assistantMessage('world'), model)]);
+    const runner = new TestExecuteTurn({
+      sessionStore: store,
+      modelGateway: gateway,
+      toolDefinitions: [],
+      defaultModel: model,
+      systemPrompt: 'SENTINEL_SYSTEM_PROMPT',
+    });
+
+    await runner.execute({
+      message: userMessage('analyze the workbook'),
+      excelResource: { id: 'resource-1', filePath: 'workbook.xlsx' },
+    });
+
+    expect(gateway.requestedContexts[0]?.systemPrompt).toContain('SENTINEL_SYSTEM_PROMPT');
+    expect(gateway.requestedContexts[0]?.systemPrompt).toContain(
+      'This Turn includes an attached Excel workbook.',
+    );
+  });
+
   it('keeps the original behavior when onEvent is omitted', async () => {
     const { store } = createStore();
     const inputMessage = userMessage('hello');

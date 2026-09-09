@@ -19,8 +19,8 @@ export function createPendingAttachment(file: File): PendingAttachment {
   };
 }
 
-export function replacePendingAttachment(file: File): PendingAttachment[] {
-  return [createPendingAttachment(file)];
+export function replacePendingAttachment(file: File | undefined): PendingAttachment[] {
+  return file === undefined ? [] : [createPendingAttachment(file)];
 }
 
 export function toMessageAttachment(attachment: PendingAttachment): Attachment {

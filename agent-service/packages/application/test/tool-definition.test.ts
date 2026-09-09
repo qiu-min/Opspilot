@@ -94,4 +94,24 @@ describe('ToolDefinition wrappers', () => {
 
     expect(wrapped.map((tool) => tool.name)).toEqual(['first', 'second']);
   });
+
+  it('does not expose Excel-dependent tools without an Excel resource', () => {
+    const definitions: ToolDefinition[] = [
+      createDefinition('lookup', vi.fn(async () => ({ content: [] }))),
+      {
+        ...createDefinition('get_workbook_info', vi.fn(async () => ({ content: [] }))),
+        requiresExcelResource: true,
+      },
+    ];
+
+    expect(wrapToolDefinitions(definitions, { sessionId: 'session-1' }).map((tool) => tool.name)).toEqual([
+      'lookup',
+    ]);
+    expect(
+      wrapToolDefinitions(definitions, {
+        sessionId: 'session-1',
+        excelResource: { id: 'resource-1', filePath: 'workbook.xlsx' },
+      }).map((tool) => tool.name),
+    ).toEqual(['lookup', 'get_workbook_info']);
+  });
 });

@@ -128,6 +128,38 @@ describe('TurnStreamProjector', () => {
     ]);
     expect(JSON.stringify([...thinking, ...text])).not.toContain('hidden reasoning');
   });
+
+  it('completes an assistant message from the durable message content when no text delta was emitted', () => {
+    const projector = new TurnStreamProjector(identity);
+    const events = projector.project({
+      type: 'message_end',
+      message: {
+        ...assistantMessage(),
+        content: [{ type: 'text', text: 'final answer' }],
+      },
+    } satisfies AgentSessionEvent);
+
+    expect(events.map((event) => event.type)).toEqual([
+      'assistant_message_started',
+      'assistant_text_delta',
+      'assistant_message_completed',
+    ]);
+    expect(events[1]).toMatchObject({ type: 'assistant_text_delta', delta: 'final answer' });
+  });
+
+  it('does not emit an orphan assistant completion for a tool-call-only message', () => {
+    const projector = new TurnStreamProjector(identity);
+    const events = projector.project({
+      type: 'message_end',
+      message: {
+        ...assistantMessage(),
+        finishReason: 'tool_calls',
+        toolCalls: [{ callId: 'call-1', name: 'lookup', arguments: {} }],
+      },
+    } satisfies AgentSessionEvent);
+
+    expect(events.map((event) => event.type)).toEqual(['tool_queued']);
+  });
 });
 
 function reduce(

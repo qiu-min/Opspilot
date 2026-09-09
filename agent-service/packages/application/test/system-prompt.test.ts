@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildOpsPilotSystemPrompt, type ToolDefinition } from '../src/index.js';
+import { buildOpsPilotSystemPrompt, type ToolDefinition, withExcelResourceGuidance } from '../src/index.js';
 
 function fakeTool(
   name: string,
@@ -77,5 +77,17 @@ describe('buildOpsPilotSystemPrompt', () => {
     expect(prompt.match(/Be concise and focus on the user's actual task\./g)).toHaveLength(1);
     expect(prompt.match(/Use evidence\./g)).toHaveLength(1);
     expect(prompt).toContain('Additional runtime instruction.');
+  });
+
+  it('adds per-Turn guidance when an Excel workbook is attached', () => {
+    const prompt = withExcelResourceGuidance('Base prompt.', true);
+
+    expect(prompt).toContain('This Turn includes an attached Excel workbook.');
+    expect(prompt).toContain('call the relevant Excel tool before answering');
+    expect(prompt).toContain('Base prompt.');
+  });
+
+  it('does not change the prompt when no Excel workbook is attached', () => {
+    expect(withExcelResourceGuidance('Base prompt.', false)).toBe('Base prompt.');
   });
 });
