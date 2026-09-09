@@ -12,6 +12,7 @@ export {
   type AssistantMessageCompletedEvent,
   type CompactionCompletedEvent,
   type CompactionStartedEvent,
+  type InputCommittedEvent,
   type ModelCompletedEvent,
   type ModelStartedEvent,
   type ToolCompletedEvent,

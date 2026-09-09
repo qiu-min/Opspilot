@@ -228,7 +228,7 @@ function requireTurnStatus(value: unknown): TurnStatus {
 function requireCheckpointPhase(value: unknown): TurnCheckpoint['phase'] {
   if (
     value !== 'input_committed' &&
-    value !== 'model_completed' &&
+    value !== 'assistant_committed' &&
     value !== 'tool_completed'
   ) {
     throw new TurnMetadataPersistenceError(

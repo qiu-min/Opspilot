@@ -26,10 +26,17 @@ export interface ModelCompletedEvent extends TurnEventBase {
   readonly type: 'model_completed';
 }
 
+export interface InputCommittedEvent extends TurnEventBase {
+  readonly type: 'input_committed';
+  readonly entryId: string;
+  readonly sessionLeafId: string;
+}
+
+/** The assistant message has been committed to Session and has a durable leaf. */
 export interface AssistantMessageCompletedEvent extends TurnEventBase {
   readonly type: 'assistant_message_completed';
   readonly entryId: string;
-  readonly sessionLeafId: string | null;
+  readonly sessionLeafId: string;
 }
 
 export interface ToolRequestedEvent extends TurnEventBase {
@@ -93,6 +100,7 @@ export type TurnEvent =
   | TurnStartedEvent
   | ModelStartedEvent
   | ModelCompletedEvent
+  | InputCommittedEvent
   | AssistantMessageCompletedEvent
   | ToolRequestedEvent
   | ToolStartedEvent
@@ -137,9 +145,13 @@ export function validateTurnEvent(event: unknown): asserts event is TurnEvent {
     case 'turn_resumed':
     case 'turn_cancelled':
       return;
+    case 'input_committed':
+      assertEntryId(event.entryId, 'input_committed entryId');
+      assertEntryId(event.sessionLeafId, 'input_committed sessionLeafId');
+      return;
     case 'assistant_message_completed':
       assertEntryId(event.entryId, 'assistant_message_completed entryId');
-      assertNullableId(event.sessionLeafId, 'assistant_message_completed sessionLeafId');
+      assertEntryId(event.sessionLeafId, 'assistant_message_completed sessionLeafId');
       return;
     case 'tool_requested':
     case 'tool_started':

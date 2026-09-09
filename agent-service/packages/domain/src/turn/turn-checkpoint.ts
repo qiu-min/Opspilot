@@ -10,7 +10,7 @@ export interface TurnCheckpoint {
 /** Recovery phases supported by the first Turn model version. */
 export type TurnCheckpointPhase =
   | 'input_committed'
-  | 'model_completed'
+  | 'assistant_committed'
   | 'tool_completed';
 
 /** Validates and clones a checkpoint without retaining mutable caller state. */
@@ -44,7 +44,7 @@ export function validateTurnCheckpoint(checkpoint: TurnCheckpoint): void {
 /** Checks whether a value is a supported checkpoint phase. */
 export function isTurnCheckpointPhase(value: unknown): value is TurnCheckpointPhase {
   return (
-    value === 'input_committed' || value === 'model_completed' || value === 'tool_completed'
+    value === 'input_committed' || value === 'assistant_committed' || value === 'tool_completed'
   );
 }
 

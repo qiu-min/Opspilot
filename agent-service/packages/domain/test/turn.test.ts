@@ -5,6 +5,7 @@ import {
   TurnStateError,
   type TurnCheckpoint,
   type TurnState,
+  validateTurnCheckpoint,
 } from '../src/index.js';
 
 const createdAt = '2026-01-01T00:00:00.000Z';
@@ -31,7 +32,7 @@ function checkpoint(eventSequence: number): TurnCheckpoint {
   return {
     eventSequence,
     sessionLeafId: 'leaf-1',
-    phase: 'model_completed',
+    phase: 'assistant_committed',
   };
 }
 
@@ -141,6 +142,22 @@ describe('Turn', () => {
 
     const snapshot = turn.getState();
     expect(snapshot).not.toBe(turn.getState());
+  });
+
+  it('accepts only durable checkpoint phases', () => {
+    for (const phase of ['input_committed', 'assistant_committed', 'tool_completed'] as const) {
+      expect(() =>
+        validateTurnCheckpoint({ eventSequence: 0, sessionLeafId: 'leaf-1', phase }),
+      ).not.toThrow();
+    }
+
+    expect(() =>
+      validateTurnCheckpoint({
+        eventSequence: 0,
+        sessionLeafId: 'leaf-1',
+        phase: 'model_completed',
+      } as unknown as TurnCheckpoint),
+    ).toThrow();
   });
 
   it('rejects checkpoint changes after a terminal transition', () => {

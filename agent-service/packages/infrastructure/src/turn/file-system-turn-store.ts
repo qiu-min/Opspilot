@@ -189,6 +189,7 @@ export class FileSystemTurnStore implements TurnStore {
 
   private validateEventLog(turnId: string, state: TurnState, events: readonly TurnEvent[]): TurnEvent[] {
     const eventIds = new Set<string>();
+    let previousAttempt: number | undefined;
     events.forEach((event, index) => {
       if (event.turnId !== turnId) {
         throw new TurnStoreError(`TurnEvent ${event.id} references the wrong Turn: ${turnId}.`);
@@ -204,7 +205,33 @@ export class FileSystemTurnStore implements TurnStore {
       if (eventIds.has(event.id)) {
         throw new TurnStoreError(`Duplicate TurnEvent id for Turn ${turnId}: ${event.id}.`);
       }
+      if (event.attempt < 1) {
+        throw new TurnStoreError(`TurnEvent ${event.id} has an invalid attempt: ${event.attempt}.`);
+      }
+      if (event.attempt > state.attempt) {
+        throw new TurnStoreError(
+          `TurnEvent ${event.id} attempt ${event.attempt} exceeds Turn ${turnId} attempt ${state.attempt}.`,
+        );
+      }
+      if (index === 0 && event.attempt !== 1) {
+        throw new TurnStoreError(
+          `The first TurnEvent for Turn ${turnId} must have attempt 1, received ${event.attempt}.`,
+        );
+      }
+      if (previousAttempt !== undefined) {
+        if (event.attempt < previousAttempt) {
+          throw new TurnStoreError(
+            `TurnEvent attempt moves backwards for Turn ${turnId}: ${previousAttempt} -> ${event.attempt}.`,
+          );
+        }
+        if (event.attempt - previousAttempt > 1) {
+          throw new TurnStoreError(
+            `TurnEvent attempt skips a value for Turn ${turnId}: ${previousAttempt} -> ${event.attempt}.`,
+          );
+        }
+      }
       eventIds.add(event.id);
+      previousAttempt = event.attempt;
     });
 
     if (
@@ -214,6 +241,15 @@ export class FileSystemTurnStore implements TurnStore {
       throw new TurnStoreError(
         `Turn ${turnId} checkpoint does not reference an existing TurnEvent sequence.`,
       );
+    }
+    if (state.checkpoint !== null) {
+      const checkpointEvent = events[state.checkpoint.eventSequence];
+      const expectedEventType = checkpointEventType(state.checkpoint.phase);
+      if (checkpointEvent.type !== expectedEventType) {
+        throw new TurnStoreError(
+          `Turn ${turnId} checkpoint phase ${state.checkpoint.phase} must reference ${expectedEventType}, received ${checkpointEvent.type}.`,
+        );
+      }
     }
     return [...events];
   }
@@ -265,5 +301,18 @@ function isDirectory(path: string): boolean {
     return lstatSync(path).isDirectory();
   } catch {
     return false;
+  }
+}
+
+function checkpointEventType(
+  phase: NonNullable<TurnState['checkpoint']>['phase'],
+): TurnEvent['type'] {
+  switch (phase) {
+    case 'input_committed':
+      return 'input_committed';
+    case 'assistant_committed':
+      return 'assistant_message_completed';
+    case 'tool_completed':
+      return 'tool_completed';
   }
 }
