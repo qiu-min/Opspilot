@@ -77,6 +77,7 @@ public sealed class SessionTurnHandlersTests
 
         Assert.Equal(SessionId, result.SessionId);
         Assert.Equal(SessionId, agent.LastRunSessionId);
+        Assert.Equal(new AgentTurnRequest("inspect", null), agent.LastRunRequest);
         Assert.Equal(CreatedAt.AddMinutes(1), repository.Session!.UpdatedAtUtc);
         Assert.True(repository.Saved);
     }
@@ -108,8 +109,31 @@ public sealed class SessionTurnHandlersTests
         Assert.Collection(events,
             item => Assert.IsType<AgentTurnStarted>(item),
             item => Assert.IsType<AgentAssistantTextDelta>(item));
+        Assert.Equal(new AgentTurnRequest("inspect", null), agent.LastStreamRequest);
         Assert.Equal(CreatedAt.AddMinutes(1), repository.Session!.UpdatedAtUtc);
         Assert.True(repository.Saved);
+    }
+
+    [Fact]
+    public async Task StartStream_MapsOwnedFileAssetToTheAgentExcelResource()
+    {
+        var file = FileAsset.Create(
+            UserId,
+            "report.xlsx",
+            "stored.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            3,
+            "uploads/stored.xlsx",
+            CreatedAt);
+        var agent = new FakeAgentSessionClient
+        {
+            StartEvents = [new AgentTurnStarted(TurnId, SessionId, 0, CreatedAt)],
+        };
+        var handler = new StreamSessionTurnHandler(NewFileHandler(file), NewRepository(), new FakeCurrentUser(UserId), new FixedTimeProvider(CreatedAt.AddMinutes(1)), agent);
+
+        await CollectAsync(handler.HandleAsync(new StreamSessionTurnCommand(SessionId, file.Id, "inspect"), CancellationToken.None));
+
+        Assert.Equal(new AgentTurnRequest("inspect", new AgentExcelResource(file.Id, "uploads/stored.xlsx")), agent.LastStreamRequest);
     }
 
     [Fact]
@@ -175,7 +199,7 @@ public sealed class SessionTurnHandlersTests
     }
 
     private static FakeSessionRepository NewRepository() => new() { Session = Session.Create(SessionId, UserId, Session.DefaultTitle, CreatedAt) };
-    private static GetFileAssetHandler NewFileHandler() => new(new FakeFileAssetRepository(), new FakeCurrentUser(UserId));
+    private static GetFileAssetHandler NewFileHandler(FileAsset? fileAsset = null) => new(new FakeFileAssetRepository(fileAsset), new FakeCurrentUser(UserId));
 
     private static async Task<List<AgentTurnStreamEvent>> CollectAsync(IAsyncEnumerable<AgentTurnStreamEvent> events)
     {
@@ -202,9 +226,9 @@ public sealed class SessionTurnHandlersTests
         public Task SaveChangesAsync(CancellationToken cancellationToken) { Saved = true; return Task.CompletedTask; }
     }
 
-    private sealed class FakeFileAssetRepository : IFileAssetRepository
+    private sealed class FakeFileAssetRepository(FileAsset? fileAsset = null) : IFileAssetRepository
     {
-        public Task<FileAsset?> GetByIdAndUserIdAsync(Guid fileId, Guid userId, CancellationToken cancellationToken) => Task.FromResult<FileAsset?>(null);
+        public Task<FileAsset?> GetByIdAndUserIdAsync(Guid fileId, Guid userId, CancellationToken cancellationToken) => Task.FromResult(fileAsset is not null && fileAsset.Id == fileId && fileAsset.UserId == userId ? fileAsset : null);
         public Task AddAsync(FileAsset fileAsset, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
@@ -218,6 +242,8 @@ public sealed class SessionTurnHandlersTests
         public IReadOnlyList<AgentTurnStreamEvent> ReattachEvents { get; init; } = [];
         public Guid? LastHistorySessionId { get; private set; }
         public Guid? LastRunSessionId { get; private set; }
+        public AgentTurnRequest? LastRunRequest { get; private set; }
+        public AgentTurnRequest? LastStreamRequest { get; private set; }
         public Guid? LastActiveSessionId { get; private set; }
         public Guid? LastReattachTurnId { get; private set; }
         public long? LastAfterSequence { get; private set; }
@@ -225,8 +251,8 @@ public sealed class SessionTurnHandlersTests
 
         public Task<AgentSessionCreated> CreateSessionAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<AgentSessionHistory> GetHistoryAsync(Guid sessionId, CancellationToken cancellationToken) { LastHistorySessionId = sessionId; return Task.FromResult(History); }
-        public Task<AgentTurnResult> RunTurnAsync(Guid sessionId, AgentTurnRequest request, CancellationToken cancellationToken) { LastRunSessionId = sessionId; RunTurnCalls++; return Task.FromResult(TurnResult); }
-        public IAsyncEnumerable<AgentTurnStreamEvent> StartTurnStreamAsync(Guid sessionId, AgentTurnRequest request, CancellationToken cancellationToken) => Yield(StartEvents, cancellationToken);
+        public Task<AgentTurnResult> RunTurnAsync(Guid sessionId, AgentTurnRequest request, CancellationToken cancellationToken) { LastRunSessionId = sessionId; LastRunRequest = request; RunTurnCalls++; return Task.FromResult(TurnResult); }
+        public IAsyncEnumerable<AgentTurnStreamEvent> StartTurnStreamAsync(Guid sessionId, AgentTurnRequest request, CancellationToken cancellationToken) { LastStreamRequest = request; return Yield(StartEvents, cancellationToken); }
         public Task<AgentActiveTurnSnapshot?> GetActiveTurnAsync(Guid sessionId, CancellationToken cancellationToken) { LastActiveSessionId = sessionId; return Task.FromResult(ActiveTurn); }
         public IAsyncEnumerable<AgentTurnStreamEvent> ReattachTurnStreamAsync(Guid turnId, long? afterSequence, CancellationToken cancellationToken) { LastReattachTurnId = turnId; LastAfterSequence = afterSequence; return Yield(ReattachEvents, cancellationToken); }
 

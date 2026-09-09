@@ -218,6 +218,7 @@ export class ResumeTurn {
     const recorder = new TurnEventRecorder(turn, this.turnStore, session);
     recorder.recordTurnResumed();
     this.openStream(turn, sessionId);
+    const streamChannelOpened = this.turnStreamHub !== undefined;
     const projector = new TurnStreamProjector({ turnId: turn.getId(), sessionId });
     let agentSession: AgentSession | undefined;
     let unsubscribe: (() => void) | undefined;
@@ -284,6 +285,18 @@ export class ResumeTurn {
         } catch {
           // Preserve the original recovery failure.
         }
+      }
+      if (
+        streamChannelOpened &&
+        !terminalPublished &&
+        turn.getState().status !== 'completed' &&
+        turn.getState().status !== 'cancelled'
+      ) {
+        this.publishTerminal(turn, sessionId, {
+          type: 'turn_failed',
+          message: SAFE_TURN_FAILURE_MESSAGE,
+        });
+        terminalPublished = true;
       }
       throw error;
     } finally {

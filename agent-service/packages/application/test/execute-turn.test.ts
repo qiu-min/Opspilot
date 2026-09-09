@@ -563,7 +563,28 @@ describe('ExecuteTurn', () => {
     expect(messageEntries(store.load(result.sessionId))).toHaveLength(2);
   });
 
-  it('closes an unconfirmed live channel when durable failure recording also fails', async () => {
+  it('records and publishes cancellation as the Turn terminal outcome', async () => {
+    const { store, turnStore } = createStore();
+    const abortedResponse: AssistantMessage = {
+      ...assistantMessage('', model),
+      finishReason: 'aborted',
+      errorMessage: 'Request aborted.',
+    };
+    const runner = new TestExecuteTurn({
+      sessionStore: store,
+      turnStore,
+      modelGateway: createGateway([failedAssistantStream(abortedResponse, model)]),
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+
+    const result = await runner.execute({ message: userMessage('hello') });
+
+    expect(turnStore.load(result.turnId).getState().status).toBe('cancelled');
+    expect(turnStore.loadEvents(result.turnId).at(-1)).toMatchObject({ type: 'turn_cancelled' });
+  });
+
+  it('publishes a safe live failure when durable failure recording also fails', async () => {
     const { store, turnStore: baseTurnStore } = createStore();
     const turnStore: TurnStore = {
       create: (turn) => baseTurnStore.create(turn),
@@ -609,7 +630,11 @@ describe('ExecuteTurn', () => {
     ).rejects.toThrow('observer failed');
 
     expect(closeTurn).toHaveBeenCalledOnce();
-    expect(publish).toHaveBeenCalledOnce();
+    expect(publish).toHaveBeenCalledTimes(2);
+    expect(publish.mock.calls[1]?.[0]).toMatchObject({
+      type: 'turn_failed',
+      message: 'Turn failed.',
+    });
     const startedEvent = publish.mock.calls[0]?.[0] as { readonly turnId: string };
     expect(baseTurnStore.load(startedEvent.turnId).getState().status).toBe('running');
   });

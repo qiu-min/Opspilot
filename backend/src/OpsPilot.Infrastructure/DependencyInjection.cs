@@ -17,7 +17,8 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddInfrastructure(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        string? contentRootPath = null)
     {
         JwtOptions jwtOptions = ReadJwtOptions(configuration);
         jwtOptions.Validate();
@@ -72,8 +73,10 @@ public static class DependencyInjection
 
         string? configuredRootPath = configuration[$"{FileStorageOptions.SectionName}:RootPath"];
         string rootPath = string.IsNullOrWhiteSpace(configuredRootPath)
-            ? "storage"
-            : configuredRootPath;
+            ? Path.Combine(contentRootPath ?? Directory.GetCurrentDirectory(), "storage")
+            : Path.IsPathRooted(configuredRootPath)
+                ? configuredRootPath
+                : Path.Combine(contentRootPath ?? Directory.GetCurrentDirectory(), configuredRootPath);
         services.AddSingleton(new FileStorageOptions { RootPath = rootPath });
         services.AddSingleton<IFileStorage, LocalFileStorage>();
 

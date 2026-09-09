@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../api/client";
 import type { ActiveTurnResponse } from "../../api/sessions/session-contracts";
-import { classifyTurnStreamError, isSessionTurnProcessing, planActiveTurnRecovery, removeOptimisticMessage, shouldHydrateTurnProjection, shouldStartTurnSubscription } from "./turn-recovery";
+import { classifyTurnStreamError, isSessionTurnProcessing, planActiveTurnRecovery, removeOptimisticMessage, shouldClearTurnAfterFailure, shouldHydrateTurnProjection, shouldStartTurnSubscription } from "./turn-recovery";
 
 const projection = (lastSequence: number) => ({
   turnId: "t1", sessionId: "s1", status: "running" as const,
@@ -43,6 +43,12 @@ describe("turn recovery coordinator", () => {
   it("clears processing only when there is no active or pending Turn", () => {
     expect(isSessionTurnProcessing(undefined, true)).toBe(true);
     expect(isSessionTurnProcessing(undefined, false)).toBe(false);
+  });
+
+  it("clears a failed subscription without clearing a newer Turn", () => {
+    expect(shouldClearTurnAfterFailure("t1", "t1")).toBe(true);
+    expect(shouldClearTurnAfterFailure(undefined, "t1")).toBe(false);
+    expect(shouldClearTurnAfterFailure("t2", "t1")).toBe(false);
   });
 
   it("keeps one subscriber when returning from B to a running A", () => {

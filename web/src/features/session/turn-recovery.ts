@@ -31,6 +31,13 @@ export function isSessionTurnProcessing(activeTurnId: string | undefined, pendin
   return activeTurnId !== undefined || pendingStart;
 }
 
+export function shouldClearTurnAfterFailure(
+  activeTurnId: string | undefined,
+  failedTurnId: string | undefined,
+): boolean {
+  return failedTurnId === undefined || activeTurnId === failedTurnId;
+}
+
 export function shouldStartTurnSubscription(hasExistingSubscription: boolean): boolean {
   return !hasExistingSubscription;
 }

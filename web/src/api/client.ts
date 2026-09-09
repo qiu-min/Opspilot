@@ -30,6 +30,10 @@ export class ApiError extends Error {
   }
 }
 
+export function isUnauthorizedApiError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status === 401;
+}
+
 export async function apiFetch(
   path: string,
   options: ApiRequestOptions = {},

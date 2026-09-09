@@ -35,6 +35,7 @@ agent-service/packages/db/generated/
 
 # Local uploaded files
 backend/storage/
+backend/src/OpsPilot.Api/storage/
 # Local persisted sessions
 agent-service/data/sessions/
 agent-service/data/turns/

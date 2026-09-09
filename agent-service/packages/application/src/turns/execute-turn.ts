@@ -209,11 +209,17 @@ export class ExecuteTurn {
       };
     } catch (error: unknown) {
       this.recordFailureBestEffort(turn, recorder, error);
-      if (streamChannelOpened && !streamTerminalPublished && turn.getState().status === 'failed') {
+      if (
+        streamChannelOpened &&
+        !streamTerminalPublished &&
+        turn.getState().status !== 'completed' &&
+        turn.getState().status !== 'cancelled'
+      ) {
         this.publishTurnTerminal(turn.getId(), sessionId, {
           type: 'turn_failed',
           message: SAFE_TURN_FAILURE_MESSAGE,
         });
+        streamTerminalPublished = true;
       }
       throw error;
     } finally {

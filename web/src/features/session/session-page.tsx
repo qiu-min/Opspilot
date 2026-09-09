@@ -1,6 +1,6 @@
 import { AlertCircle, Menu, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError } from "../../api/client";
+import { ApiError, isUnauthorizedApiError } from "../../api/client";
 import { createSession, getActiveSessionTurn, getSession, listSessions, reattachSessionTurnStream, startSessionTurnStream } from "../../api/sessions/session-api";
 import type { ActiveTurnResponse } from "../../api/sessions/session-contracts";
 import type { TurnStreamEvent } from "../../api/sessions/turn-stream-contracts";
@@ -15,7 +15,7 @@ import { demoAgentName, demoConnectedTools, demoContextFiles, demoContextStatus,
 import { isXlsxFile, replacePendingAttachment, uploadPendingAttachment, SessionAttachmentValidationError } from "./session-attachments";
 import { formatMessageCreatedAt, mergeLiveTurnResponse, toSessionItems, toSessionSummary } from "./session-mappers";
 import { projectTurnStream } from "./turn-stream-projection";
-import { classifyTurnStreamError, isSessionTurnProcessing, planActiveTurnRecovery, removeOptimisticMessage, shouldHydrateTurnProjection, shouldStartTurnSubscription } from "./turn-recovery";
+import { classifyTurnStreamError, isSessionTurnProcessing, planActiveTurnRecovery, removeOptimisticMessage, shouldClearTurnAfterFailure, shouldHydrateTurnProjection, shouldStartTurnSubscription } from "./turn-recovery";
 import { createInitialTurnStreamState, hydrateTurnStreamStateFromProjection, reduceTurnStreamEvent, TurnStreamStateError, type TurnStreamState } from "./turn-stream-state";
 import type { ChatMessage, PendingAttachment, SessionItem, SessionSummary } from "./types";
 
@@ -25,7 +25,7 @@ function formatSessionUpdatedAt(value: string) { const date = new Date(value); r
 function errorMessage(error: unknown, fallback: string) { if (error instanceof ApiError) return error.detail || error.title || fallback; if (error instanceof TypeError) return "Unable to reach OpsPilot. Check your connection and try again."; return fallback; }
 
 export function SessionPage() {
-  const { session: authSession } = useAuth();
+  const { session: authSession, clearSession } = useAuth();
   const accessToken = authSession?.accessToken;
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -52,6 +52,8 @@ export function SessionPage() {
   const [pageStatus, setPageStatus] = useState("Ready");
   const listController = useRef<AbortController | null>(null);
   const sessionController = useRef<AbortController | null>(null);
+  const turnRecoveryControllersBySessionId = useRef(new Map<string, AbortController>());
+  const authInvalidatedRef = useRef(false);
 
   const setSessionStatus = useCallback((sessionId: string, status: string) => setStatusBySessionId((current) => ({ ...current, [sessionId]: status })), []);
   const setActiveTurnId = useCallback((sessionId: string, turnId: string | undefined) => {
@@ -68,6 +70,29 @@ export function SessionPage() {
     setTurnStreamStatesByTurnId((current) => ({ ...current, [turnId]: state }));
   }, []);
 
+  const invalidateAuthentication = useCallback((error: unknown): boolean => {
+    if (!isUnauthorizedApiError(error)) return false;
+    if (authInvalidatedRef.current) return true;
+
+    authInvalidatedRef.current = true;
+    listController.current?.abort();
+    sessionController.current?.abort();
+    for (const controller of turnStreamControllersByTurnId.current.values()) controller.abort();
+    for (const controller of pendingStartControllersBySessionId.current.values()) controller.abort();
+    for (const controller of turnRecoveryControllersBySessionId.current.values()) controller.abort();
+    turnStreamControllersByTurnId.current.clear();
+    pendingStartControllersBySessionId.current.clear();
+    turnRecoveryControllersBySessionId.current.clear();
+    activeTurnIdsRef.current = {};
+    pendingTurnStartSessionIdsRef.current.clear();
+    turnStreamStatesRef.current = {};
+    setActiveTurnIdBySessionId({});
+    setPendingTurnStartSessionIds(new Set());
+    setTurnStreamStatesByTurnId({});
+    clearSession();
+    return true;
+  }, [clearSession]);
+
   const refreshSessions = useCallback(async () => {
     if (!accessToken) return;
     listController.current?.abort();
@@ -76,11 +101,22 @@ export function SessionPage() {
       const next = (await listSessions(accessToken, controller.signal)).map(toSessionSummary);
       if (controller.signal.aborted) return;
       setSessions(next); setActiveSessionId((current) => current && next.some((item) => item.id === current) ? current : next[0]?.id ?? null); setSessionListError(null); setPageError(null);
-    } catch (error: unknown) { if (!controller.signal.aborted) { const message = errorMessage(error, "Unable to load sessions. Try again."); setSessionListError(message); setPageError(message); } }
+      } catch (error: unknown) {
+        if (invalidateAuthentication(error)) return;
+        if (!controller.signal.aborted) { const message = errorMessage(error, "Unable to load sessions. Try again."); setSessionListError(message); setPageError(message); }
+      }
     finally { if (listController.current === controller) { listController.current = null; setIsLoadingSessions(false); } }
-  }, [accessToken]);
+  }, [accessToken, invalidateAuthentication]);
 
   useEffect(() => { if (!accessToken) { setSessions([]); setActiveSessionId(null); return; } void refreshSessions(); return () => listController.current?.abort(); }, [accessToken, refreshSessions]);
+  useEffect(() => { authInvalidatedRef.current = false; }, [accessToken]);
+  useEffect(() => () => {
+    listController.current?.abort();
+    sessionController.current?.abort();
+    for (const controller of turnStreamControllersByTurnId.current.values()) controller.abort();
+    for (const controller of pendingStartControllersBySessionId.current.values()) controller.abort();
+    for (const controller of turnRecoveryControllersBySessionId.current.values()) controller.abort();
+  }, []);
 
   const loadSession = useCallback(async (sessionId: string) => {
     if (!accessToken) return;
@@ -99,16 +135,21 @@ export function SessionPage() {
           true,
         );
       }
-    } catch (error: unknown) { if (!controller.signal.aborted) setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "Unable to load this session. Try selecting it again.") })); }
+      } catch (error: unknown) {
+        if (invalidateAuthentication(error)) return;
+        if (!controller.signal.aborted) setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "Unable to load this session. Try selecting it again.") }));
+      }
     finally { if (sessionController.current === controller) { sessionController.current = null; setLoadingSessionIds((current) => ({ ...current, [sessionId]: false })); } }
-  }, [accessToken]);
+  }, [accessToken, invalidateAuthentication]);
 
   useEffect(() => { if (activeSessionId) void loadSession(activeSessionId); return () => sessionController.current?.abort(); }, [activeSessionId, loadSession]);
 
   function hydrateActiveTurnProjection(sessionId: string, active: ActiveTurnResponse, expectedTurnId?: string): { turnId: string; afterSequence: number } | undefined {
     if (active.activeTurn === null) {
+      const previousTurnId = activeTurnIdsRef.current[sessionId];
       setActiveTurnId(sessionId, undefined);
       setPendingTurnStart(sessionId, false);
+      if (previousTurnId !== undefined) clearTurnState(previousTurnId);
       return undefined;
     }
     const { turnId, projection } = active.activeTurn;
@@ -147,13 +188,13 @@ export function SessionPage() {
       stream = openStream(controller.signal);
     } catch (error: unknown) {
       releaseTurnStreamController(sessionId, expectedTurnId, controller);
-      handleSubscriptionFailure(sessionId, error, optimisticMessageId);
+      handleSubscriptionFailure(sessionId, expectedTurnId, error, optimisticMessageId);
       return;
     }
 
     void consumeTurnStream(sessionId, expectedTurnId, stream, controller, allowRecovery, optimisticMessageId).catch((error: unknown) => {
       releaseTurnStreamController(sessionId, expectedTurnId, controller);
-      handleSubscriptionFailure(sessionId, error, optimisticMessageId);
+      handleSubscriptionFailure(sessionId, expectedTurnId, error, optimisticMessageId);
     });
   }
 
@@ -186,6 +227,7 @@ export function SessionPage() {
         }
       }
     } catch (error: unknown) {
+      if (invalidateAuthentication(error)) return;
       if (controller.signal.aborted) return;
       const conflictKind = classifyTurnStreamError(error);
       if (conflictKind === "session_active_turn") {
@@ -200,15 +242,11 @@ export function SessionPage() {
         return;
       }
       if (conflictKind === "other_conflict") {
-        rollbackOptimisticMessage(sessionId, optimisticMessageId);
-        setPendingTurnStart(sessionId, false);
-        setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "The request conflicts with an active Turn.") }));
+        handleSubscriptionFailure(sessionId, turnId, error, optimisticMessageId, "The request conflicts with an active Turn.");
         return;
       }
       if (optimisticMessageId !== undefined && error instanceof ApiError) {
-        rollbackOptimisticMessage(sessionId, optimisticMessageId);
-        setPendingTurnStart(sessionId, false);
-        setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "The request failed. Try again.") }));
+        handleSubscriptionFailure(sessionId, turnId, error, optimisticMessageId, "The request failed. Try again.");
         return;
       }
       if (allowRecovery) {
@@ -216,16 +254,21 @@ export function SessionPage() {
         await recoverDisconnectedTurn(sessionId, turnId, optimisticMessageId);
         return;
       }
-      setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "The live stream could not be restored.") }));
+      handleSubscriptionFailure(sessionId, turnId, error, optimisticMessageId);
     } finally { releaseTurnStreamController(sessionId, turnId, controller); }
   }
 
   async function recoverDisconnectedTurn(sessionId: string, expectedTurnId?: string, optimisticMessageId?: string) {
     if (!accessToken) return;
+    turnRecoveryControllersBySessionId.current.get(sessionId)?.abort();
+    const recoveryController = new AbortController();
+    turnRecoveryControllersBySessionId.current.set(sessionId, recoveryController);
     try {
-      const active = await getActiveSessionTurn(sessionId, accessToken);
+      const active = await getActiveSessionTurn(sessionId, accessToken, recoveryController.signal);
       const recoveryPlan = planActiveTurnRecovery(active, expectedTurnId);
       if (recoveryPlan.kind === "reload_history") {
+        setActiveTurnId(sessionId, undefined);
+        setPendingTurnStart(sessionId, false);
         clearTurnState(expectedTurnId);
         await loadSession(sessionId);
         return;
@@ -239,24 +282,40 @@ export function SessionPage() {
         optimisticMessageId,
       );
     } catch (error: unknown) {
+      if (invalidateAuthentication(error) || recoveryController.signal.aborted) return;
+      if (shouldClearTurnAfterFailure(activeTurnIdsRef.current[sessionId], expectedTurnId)) setActiveTurnId(sessionId, undefined);
+      clearTurnState(expectedTurnId);
       setPendingTurnStart(sessionId, false);
       setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "Unable to reattach the active Turn.") }));
+    } finally {
+      if (turnRecoveryControllersBySessionId.current.get(sessionId) === recoveryController) turnRecoveryControllersBySessionId.current.delete(sessionId);
     }
   }
 
   async function reconcileEndedTurnStream(sessionId: string, turnId: string | undefined) {
     if (!accessToken) return;
+    turnRecoveryControllersBySessionId.current.get(sessionId)?.abort();
+    const reconciliationController = new AbortController();
+    turnRecoveryControllersBySessionId.current.set(sessionId, reconciliationController);
     try {
-      const active = await getActiveSessionTurn(sessionId, accessToken);
+      const active = await getActiveSessionTurn(sessionId, accessToken, reconciliationController.signal);
       if (active.activeTurn !== null) {
         setErrorsBySessionId((current) => ({ ...current, [sessionId]: "The live stream ended before the Turn reached a terminal state." }));
         return;
       }
 
+      if (shouldClearTurnAfterFailure(activeTurnIdsRef.current[sessionId], turnId)) setActiveTurnId(sessionId, undefined);
+      setPendingTurnStart(sessionId, false);
       clearTurnState(turnId);
       await loadSession(sessionId);
     } catch (error: unknown) {
+      if (invalidateAuthentication(error) || reconciliationController.signal.aborted) return;
+      if (shouldClearTurnAfterFailure(activeTurnIdsRef.current[sessionId], turnId)) setActiveTurnId(sessionId, undefined);
+      setPendingTurnStart(sessionId, false);
+      clearTurnState(turnId);
       setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "Unable to reconcile the completed Turn.") }));
+    } finally {
+      if (turnRecoveryControllersBySessionId.current.get(sessionId) === reconciliationController) turnRecoveryControllersBySessionId.current.delete(sessionId);
     }
   }
 
@@ -279,10 +338,16 @@ export function SessionPage() {
     }));
   }
 
-  function handleSubscriptionFailure(sessionId: string, error: unknown, optimisticMessageId?: string) {
+  function handleSubscriptionFailure(sessionId: string, turnId: string | undefined, error: unknown, optimisticMessageId?: string, fallback = "The live stream could not be restored.") {
+    if (invalidateAuthentication(error)) return;
     rollbackOptimisticMessage(sessionId, optimisticMessageId);
+    const activeTurnId = activeTurnIdsRef.current[sessionId];
+    if (shouldClearTurnAfterFailure(activeTurnId, turnId)) {
+      setActiveTurnId(sessionId, undefined);
+    }
+    clearTurnState(turnId ?? activeTurnId);
     setPendingTurnStart(sessionId, false);
-    setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "The live stream could not be restored.") }));
+    setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, fallback) }));
   }
 
   async function reconcileTerminalSession(sessionId: string, turnId: string) {
@@ -293,6 +358,7 @@ export function SessionPage() {
       await refreshSessions();
       setSessionStatus(sessionId, "Response completed");
     } catch (error: unknown) {
+      if (invalidateAuthentication(error)) return;
       setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "Unable to refresh the completed Session.") }));
     } finally {
       setActiveTurnId(sessionId, undefined);
@@ -304,7 +370,7 @@ export function SessionPage() {
   async function handleNewSession() {
     if (!accessToken || isCreatingSession) return; setIsCreatingSession(true);
     try { const created = toSessionSummary(await createSession(accessToken)); setSessions((current) => [created, ...current.filter((item) => item.id !== created.id)]); setActiveSessionId(created.id); setTimelinesBySessionId((current) => ({ ...current, [created.id]: [] })); setAttachmentsBySessionId((current) => ({ ...current, [created.id]: [] })); setPageStatus("New session ready"); setIsMobileNavVisible(false); }
-    catch (error: unknown) { setPageError(errorMessage(error, "Unable to create a Session. Try again.")); }
+    catch (error: unknown) { if (!invalidateAuthentication(error)) setPageError(errorMessage(error, "Unable to create a Session. Try again.")); }
     finally { setIsCreatingSession(false); }
   }
 
@@ -328,6 +394,7 @@ export function SessionPage() {
     } catch (error: unknown) {
       rollbackOptimisticMessage(sessionId, optimisticId);
       setPendingTurnStart(sessionId, false);
+      if (invalidateAuthentication(error)) return;
       if (error instanceof SessionAttachmentValidationError) setErrorsBySessionId((current) => ({ ...current, [sessionId]: error.message }));
       else setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "The request failed. Try again.") }));
     }

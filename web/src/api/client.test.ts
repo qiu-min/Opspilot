@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { apiRequest } from "./client";
+import { apiRequest, ApiError, isUnauthorizedApiError } from "./client";
 
 describe("ApiError", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -16,5 +16,11 @@ describe("ApiError", () => {
       status: 409,
       code: "TURN_STREAM_REPLAY_GAP",
     });
+  });
+
+  it("classifies only HTTP 401 ApiErrors as authentication failures", () => {
+    expect(isUnauthorizedApiError(new ApiError(401, "Unauthorized", "expired"))).toBe(true);
+    expect(isUnauthorizedApiError(new ApiError(400, "Bad Request", "invalid"))).toBe(false);
+    expect(isUnauthorizedApiError(new Error("expired"))).toBe(false);
   });
 });

@@ -1,5 +1,5 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
-import type { AuthSession } from "./auth-session";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { isAuthSessionExpired, type AuthSession } from "./auth-session";
 
 export type AuthContextValue = {
   session: AuthSession | null;
@@ -10,11 +10,26 @@ export type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<AuthSession | null>(null);
+  const [session, setSessionState] = useState<AuthSession | null>(null);
 
-  const clearSession = () => {
-    setSession(null);
-  };
+  const setSession = useCallback((nextSession: AuthSession) => {
+    setSessionState(isAuthSessionExpired(nextSession) ? null : nextSession);
+  }, []);
+
+  const clearSession = useCallback(() => setSessionState(null), []);
+
+  useEffect(() => {
+    if (session === null) return;
+
+    const expiresAt = Date.parse(session.expiresAtUtc);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      setSessionState(null);
+      return;
+    }
+
+    const timer = setTimeout(() => setSessionState(null), expiresAt - Date.now());
+    return () => clearTimeout(timer);
+  }, [session]);
 
   return (
     <AuthContext.Provider value={{ session, setSession, clearSession }}>
