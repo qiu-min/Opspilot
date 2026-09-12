@@ -2,9 +2,9 @@ import type {
   ToolDisplayInfo,
   ToolPresentationContext,
   ToolPresentationResolver,
-} from '@opspilot/application';
+} from '../../turn-stream/tool-presentation.js';
 
-/** Creates the business presentation resolver for the Excel tools exposed by this runtime. */
+/** Creates the business presentation resolver for the Excel tools exposed by this application. */
 export function createExcelToolPresentationResolver(): ToolPresentationResolver {
   return resolveExcelToolPresentation;
 }

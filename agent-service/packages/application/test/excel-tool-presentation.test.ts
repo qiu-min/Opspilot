@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createExcelToolPresentationResolver } from '../src/tool-presentation/excel-tool-presentation.js';
+import { createExcelToolPresentationResolver } from '../src/index.js';
 
 describe('Excel tool presentation resolver', () => {
   const resolve = createExcelToolPresentationResolver();

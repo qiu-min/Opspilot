@@ -3,6 +3,7 @@ import {
   createGetSheetProfileTool,
   createGetWorkbookInfoTool,
   buildOpsPilotSystemPrompt,
+  createExcelToolPresentationResolver,
   GetActiveTurn,
   CreateSession,
   GetSessionHistory,
@@ -25,7 +26,6 @@ import { ExcelJsDiscoveryAdapter } from '@opspilot/tool-gateway';
 
 import { ApiModule, EXCEL_RESOURCE_PATH_RESOLVER } from '@opspilot/api';
 import { FileSystemExcelResourcePathResolver } from './files/excel-resource-path-resolver.js';
-import { createExcelToolPresentationResolver } from './tool-presentation/excel-tool-presentation.js';
 import type { RuntimeConfig } from './runtime-config.js';
 
 /** Builds the only Excel tools exposed by this runtime composition root. */
