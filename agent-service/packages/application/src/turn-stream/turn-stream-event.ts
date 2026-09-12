@@ -1,3 +1,5 @@
+import type { ToolDisplayInfo } from './tool-presentation.js';
+
 /** Common fields carried by every ephemeral UI stream event. */
 export interface TurnStreamEventBase {
   readonly turnId: string;
@@ -37,12 +39,14 @@ export interface ToolQueuedStreamEvent extends TurnStreamEventBase {
   readonly callId: string;
   readonly name: string;
   readonly batchId?: string;
+  readonly display?: ToolDisplayInfo;
 }
 
 export interface ToolStartedStreamEvent extends TurnStreamEventBase {
   readonly type: 'tool_started';
   readonly callId: string;
   readonly name: string;
+  readonly display?: ToolDisplayInfo;
 }
 
 export interface ToolCompletedStreamEvent extends TurnStreamEventBase {
@@ -50,6 +54,7 @@ export interface ToolCompletedStreamEvent extends TurnStreamEventBase {
   readonly callId: string;
   readonly name: string;
   readonly isError: boolean;
+  readonly display?: ToolDisplayInfo;
 }
 
 export interface CompactionStartedStreamEvent extends TurnStreamEventBase {

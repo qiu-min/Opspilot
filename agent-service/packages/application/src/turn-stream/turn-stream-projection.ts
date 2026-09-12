@@ -1,4 +1,5 @@
 import type { TurnStreamEvent } from './turn-stream-event.js';
+import type { ToolDisplayInfo } from './tool-presentation.js';
 
 export type TurnStreamProjectionStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 export type TurnStreamToolStatus = 'queued' | 'running' | 'completed' | 'failed';
@@ -6,6 +7,7 @@ export type TurnStreamToolStatus = 'queued' | 'running' | 'completed' | 'failed'
 export interface TurnStreamToolProjection {
   readonly callId: string;
   readonly name: string;
+  readonly display?: ToolDisplayInfo;
   readonly status: TurnStreamToolStatus;
 }
 
@@ -128,6 +130,7 @@ export function applyTurnStreamEvent(
         tools: upsertTool(next.tools, {
           callId: event.callId,
           name: event.name,
+          display: event.display,
           status: 'queued',
         }),
       };
@@ -137,6 +140,7 @@ export function applyTurnStreamEvent(
         tools: upsertTool(next.tools, {
           callId: event.callId,
           name: event.name,
+          display: event.display,
           status: 'running',
         }),
       };
@@ -146,6 +150,7 @@ export function applyTurnStreamEvent(
         tools: upsertTool(next.tools, {
           callId: event.callId,
           name: event.name,
+          display: event.display,
           status: event.isError ? 'failed' : 'completed',
         }),
       };
@@ -177,5 +182,8 @@ function upsertTool(
 ): readonly TurnStreamToolProjection[] {
   const index = tools.findIndex((tool) => tool.callId === replacement.callId);
   if (index < 0) return [...tools, replacement];
-  return tools.map((tool, toolIndex) => (toolIndex === index ? replacement : tool));
+  const existing = tools[index]!;
+  const display = replacement.display ?? existing.display;
+  const next = display === undefined ? replacement : { ...replacement, display };
+  return tools.map((tool, toolIndex) => (toolIndex === index ? next : tool));
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   applyTurnStreamEvent,
@@ -44,7 +44,7 @@ describe('TurnStreamProjection reducer', () => {
       event({ type: 'assistant_message_started' }, 0),
       event({ type: 'assistant_text_delta', delta: 'checking' }, 1),
       event({ type: 'assistant_message_completed' }, 2),
-      event({ type: 'tool_queued', callId: 'call-1', name: 'lookup' }, 3),
+      event({ type: 'tool_queued', callId: 'call-1', name: 'lookup', display: { title: 'Look up', subject: 'record-1' } }, 3),
       event({ type: 'tool_started', callId: 'call-1', name: 'lookup' }, 4),
       event({ type: 'tool_completed', callId: 'call-1', name: 'lookup', isError: false }, 5),
       event({ type: 'assistant_message_started' }, 6),
@@ -54,7 +54,7 @@ describe('TurnStreamProjection reducer', () => {
     for (const next of events) projection = reduce(projection, next);
 
     expect(projection.assistant.text).toBe('result');
-    expect(projection.tools).toEqual([{ callId: 'call-1', name: 'lookup', status: 'completed' }]);
+    expect(projection.tools).toEqual([{ callId: 'call-1', name: 'lookup', display: { title: 'Look up', subject: 'record-1' }, status: 'completed' }]);
   });
 
   it('tracks thinking, tools, compaction, usage, and terminal status', () => {
@@ -159,6 +159,64 @@ describe('TurnStreamProjector', () => {
     } satisfies AgentSessionEvent);
 
     expect(events.map((event) => event.type)).toEqual(['tool_queued']);
+  });
+
+  it('resolves and reuses one UI-safe display across a tool lifecycle', () => {
+    const display = { title: 'Inspect Worksheet', subject: 'Sheet1' };
+    const resolver = vi.fn(() => display);
+    const projector = new TurnStreamProjector({ ...identity, toolPresentationResolver: resolver });
+    const toolCall = { callId: 'call-1', name: 'get_sheet_profile', arguments: { sheetName: 'Sheet1' } };
+
+    const queued = projector.project({
+      type: 'message_end',
+      message: {
+        ...assistantMessage(),
+        finishReason: 'tool_calls',
+        toolCalls: [toolCall],
+      },
+    } satisfies AgentSessionEvent);
+    const started = projector.project({ type: 'tool_execution_start', toolCall } satisfies AgentSessionEvent);
+    const completed = projector.project({
+      type: 'tool_execution_end',
+      toolCall,
+      result: { role: 'tool', callId: 'call-1', name: 'get_sheet_profile', content: [], isError: false },
+    } satisfies AgentSessionEvent);
+
+    expect(queued[0]).toMatchObject({ type: 'tool_queued', display });
+    expect(started[0]).toMatchObject({ type: 'tool_started', display });
+    expect(completed[0]).toMatchObject({ type: 'tool_completed', display });
+    expect(resolver).toHaveBeenCalledOnce();
+  });
+
+  it('falls back to the tool name when presentation resolution is unavailable or fails', () => {
+    const unavailable = new TurnStreamProjector(identity).project({
+      type: 'tool_execution_start',
+      toolCall: { callId: 'call-1', name: 'unknown_tool', arguments: {} },
+    } satisfies AgentSessionEvent);
+    const failing = new TurnStreamProjector({
+      ...identity,
+      toolPresentationResolver: () => { throw new Error('presentation failed'); },
+    }).project({
+      type: 'tool_execution_start',
+      toolCall: { callId: 'call-2', name: 'failing_tool', arguments: {} },
+    } satisfies AgentSessionEvent);
+
+    expect(unavailable[0]).toMatchObject({ display: { title: 'unknown_tool' } });
+    expect(failing[0]).toMatchObject({ display: { title: 'failing_tool' } });
+  });
+
+  it('keeps displays isolated between different tool calls', () => {
+    const resolver = vi.fn(({ name }: { name: string }) => ({ title: name }));
+    const projector = new TurnStreamProjector({ ...identity, toolPresentationResolver: resolver });
+
+    const first = projector.project({ type: 'tool_execution_start', toolCall: { callId: 'call-1', name: 'first_tool', arguments: {} } } satisfies AgentSessionEvent);
+    const second = projector.project({ type: 'tool_execution_start', toolCall: { callId: 'call-2', name: 'second_tool', arguments: {} } } satisfies AgentSessionEvent);
+    const firstAgain = projector.project({ type: 'tool_execution_end', toolCall: { callId: 'call-1', name: 'first_tool', arguments: {} }, result: { role: 'tool', callId: 'call-1', name: 'first_tool', content: [], isError: false } } satisfies AgentSessionEvent);
+
+    expect(first[0]).toMatchObject({ display: { title: 'first_tool' } });
+    expect(second[0]).toMatchObject({ display: { title: 'second_tool' } });
+    expect(firstAgain[0]).toMatchObject({ display: { title: 'first_tool' } });
+    expect(resolver).toHaveBeenCalledTimes(2);
   });
 });
 

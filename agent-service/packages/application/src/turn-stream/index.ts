@@ -31,6 +31,11 @@ export {
   type TurnStreamToolStatus,
 } from './turn-stream-projection.js';
 export { TurnStreamProjector, type TurnStreamProjectorIdentity } from './turn-stream-projector.js';
+export type {
+  ToolDisplayInfo,
+  ToolPresentationContext,
+  ToolPresentationResolver,
+} from './tool-presentation.js';
 export {
   TurnStreamNotFoundError,
   TurnStreamReplayGapError,

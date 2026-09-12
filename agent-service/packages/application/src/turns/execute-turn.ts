@@ -16,6 +16,7 @@ import type { TurnExecutionContextStore } from '../turn-execution/index.js';
 import {
   TurnStreamProjector,
   TurnStreamSessionConflictError,
+  type ToolPresentationResolver,
   type TurnStreamHub,
 } from '../turn-stream/index.js';
 import { TurnEventRecorder } from './turn-event-recorder.js';
@@ -43,6 +44,7 @@ export interface ExecuteTurnDependencies {
   readonly compactionSettings?: CompactionSettings;
   readonly sessionRunCoordinator?: SessionRunCoordinator;
   readonly turnStreamHub?: TurnStreamHub;
+  readonly toolPresentationResolver?: ToolPresentationResolver;
 }
 
 /** Orchestrates Session input commit, Agent Runtime execution, and Turn durability. */
@@ -59,6 +61,7 @@ export class ExecuteTurn {
   private readonly compactionSettings?: CompactionSettings;
   private readonly sessionRunCoordinator: SessionRunCoordinator;
   private readonly turnStreamHub?: TurnStreamHub;
+  private readonly toolPresentationResolver?: ToolPresentationResolver;
 
   public constructor(options: ExecuteTurnDependencies) {
     this.sessionStore = options.sessionStore;
@@ -74,6 +77,7 @@ export class ExecuteTurn {
     this.sessionRunCoordinator =
       options.sessionRunCoordinator ?? new InMemorySessionRunCoordinator();
     this.turnStreamHub = options.turnStreamHub;
+    this.toolPresentationResolver = options.toolPresentationResolver;
   }
 
   /** Executes one Turn. Existing Sessions are loaded only after their queue is acquired. */
@@ -172,7 +176,11 @@ export class ExecuteTurn {
         compactionSettings: this.compactionSettings,
       });
 
-      const projector = new TurnStreamProjector({ turnId: turn.getId(), sessionId });
+      const projector = new TurnStreamProjector({
+        turnId: turn.getId(),
+        sessionId,
+        toolPresentationResolver: this.toolPresentationResolver,
+      });
       unsubscribe = agentSession.subscribe(async (event) => {
         recorder.recordAgentSessionEvent(event);
         for (const streamEvent of projector.project(event)) {

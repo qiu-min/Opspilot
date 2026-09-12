@@ -31,7 +31,7 @@ export type TurnStreamProjectionResponse = {
   sessionId: string;
   status: "running" | "completed" | "failed" | "cancelled";
   assistant: { text: string; messageVisible: boolean; isThinking: boolean };
-  tools: Array<{ callId: string; name: string; status: "queued" | "running" | "completed" | "failed" }>;
+  tools: Array<{ callId: string; name: string; status: "queued" | "running" | "completed" | "failed"; display?: ToolDisplayInfo }>;
   compaction: { status: "idle" | "running" };
   usage: { inputTokens: number; outputTokens: number; totalTokens: number } | null;
   lastSequence: number;
@@ -40,3 +40,4 @@ export type TurnStreamProjectionResponse = {
 export type ActiveTurnResponse = {
   activeTurn: { turnId: string; sessionId: string; status: "running"; projection: TurnStreamProjectionResponse } | null;
 };
+import type { ToolDisplayInfo } from "./turn-stream-contracts";

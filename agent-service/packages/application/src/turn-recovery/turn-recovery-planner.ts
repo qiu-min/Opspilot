@@ -19,18 +19,30 @@ export interface TurnRecoveryPlannerInput {
 
 /** Purely analyzes durable Turn/Session facts into one safe recovery action. */
 export class TurnRecoveryPlanner {
+  /**
+    1. 当前 attempt 是否已经结束？
+    2. 根据事件补算最新安全 checkpoint
+    3. 校验 checkpoint 是否有真实证据
+    4. 确认 Session leaf 是否存在
+    5. 判断是否需要继续调用模型
+    6. 如果有工具，计算 pending ToolCall
+    7. 检查工具是否允许安全恢复
+    8. 返回一个恢复计划
+   */
   public plan(input: TurnRecoveryPlannerInput): TurnRecoveryPlan {
+    /**1. 先检查当前 attempt 是否已经有终态事件 */
     const terminalEvent = findTerminalEvent(input.events, input.turn.getState().attempt);
     if (terminalEvent !== undefined) {
       return { kind: 'reconcile_terminal', terminalEvent };
     }
-
+    /**2. 计算 effectiveCheckpoint */
     const checkpointResult = calculateEffectiveCheckpoint(input);
     if (checkpointResult.kind === 'invalid') {
       return { kind: 'unrecoverable', reason: checkpointResult.reason };
     }
     const effectiveCheckpoint = checkpointResult.checkpoint;
     const safeLeafId = effectiveCheckpoint.sessionLeafId;
+    /**3. 校验 checkpoint 的证据是否真实存在 */
     if (safeLeafId === null || input.session.getEntry(safeLeafId) === undefined) {
       return {
         kind: 'unrecoverable',

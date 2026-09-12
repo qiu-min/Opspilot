@@ -1,10 +1,10 @@
 import type { TurnStreamProjectionResponse } from "../../api/sessions/session-contracts";
-import type { TurnStreamEvent } from "../../api/sessions/turn-stream-contracts";
+import type { ToolDisplayInfo, TurnStreamEvent } from "../../api/sessions/turn-stream-contracts";
 
 export type TurnStreamPhase = "idle" | "streaming" | "completed" | "error" | "cancelled";
 export type TurnStreamAssistantMessage = { text: string; completed: boolean };
 export type TurnStreamActivity = { type: "assistant-message"; messageIndex: number } | { type: "agent-execution"; batchId: string };
-export type TurnStreamToolExecution = { batchId: string; callId: string; name: string; status: "queued" | "running" | "completed" | "failed" };
+export type TurnStreamToolExecution = { batchId: string; callId: string; name: string; status: "queued" | "running" | "completed" | "failed"; display?: ToolDisplayInfo };
 export type TurnStreamUsage = { inputTokens: number; outputTokens: number; totalTokens: number };
 export type TurnStreamCompaction = { status: "idle" | "running" | "completed"; reason: string | null; aborted: boolean; failed: boolean; willRetry: boolean };
 export type TurnStreamState = {
@@ -62,9 +62,9 @@ export function reduceTurnStreamEvent(state: TurnStreamState, event: TurnStreamE
       messages[index] = { ...messages[index], completed: true };
       return { ...next, assistantMessages: messages, isThinking: false };
     }
-    case "tool_queued": return updateTool(next, { batchId: event.batchId ?? `tool-batch-${event.callId}`, callId: event.callId, name: event.name, status: "queued" });
-    case "tool_started": return updateTool(next, { batchId: next.toolExecutions.find((tool) => tool.callId === event.callId)?.batchId ?? `tool-batch-${event.callId}`, callId: event.callId, name: event.name, status: "running" });
-    case "tool_completed": return updateTool(next, { batchId: next.toolExecutions.find((tool) => tool.callId === event.callId)?.batchId ?? `tool-batch-${event.callId}`, callId: event.callId, name: event.name, status: event.isError ? "failed" : "completed" });
+    case "tool_queued": return updateTool(next, { batchId: event.batchId ?? `tool-batch-${event.callId}`, callId: event.callId, name: event.name, status: "queued", display: event.display });
+    case "tool_started": return updateTool(next, { batchId: next.toolExecutions.find((tool) => tool.callId === event.callId)?.batchId ?? `tool-batch-${event.callId}`, callId: event.callId, name: event.name, status: "running", display: event.display });
+    case "tool_completed": return updateTool(next, { batchId: next.toolExecutions.find((tool) => tool.callId === event.callId)?.batchId ?? `tool-batch-${event.callId}`, callId: event.callId, name: event.name, status: event.isError ? "failed" : "completed", display: event.display });
     case "compaction_started": return { ...next, compaction: { status: "running", reason: event.reason ?? null, aborted: false, failed: false, willRetry: false } };
     case "compaction_completed": return { ...next, compaction: { status: "completed", reason: event.reason ?? null, aborted: event.aborted ?? false, failed: event.failed ?? false, willRetry: event.willRetry ?? false } };
     case "usage": return { ...next, usageEvents: [...next.usageEvents, { inputTokens: event.inputTokens, outputTokens: event.outputTokens, totalTokens: event.totalTokens }] };
@@ -76,7 +76,10 @@ export function reduceTurnStreamEvent(state: TurnStreamState, event: TurnStreamE
 
 function updateTool(state: TurnStreamState, tool: TurnStreamToolExecution): TurnStreamState {
   const index = state.toolExecutions.findIndex((item) => item.callId === tool.callId);
-  const toolExecutions = index < 0 ? [...state.toolExecutions, tool] : state.toolExecutions.map((item, itemIndex) => itemIndex === index ? tool : item);
+  const existing = index < 0 ? undefined : state.toolExecutions[index];
+  const display = tool.display ?? existing?.display;
+  const nextTool = display === undefined ? tool : { ...tool, display };
+  const toolExecutions = index < 0 ? [...state.toolExecutions, nextTool] : state.toolExecutions.map((item, itemIndex) => itemIndex === index ? nextTool : item);
   const activity: TurnStreamActivity[] = state.activity.some((item) => item.type === "agent-execution" && item.batchId === tool.batchId) ? state.activity : [...state.activity, { type: "agent-execution" as const, batchId: tool.batchId }];
   return { ...state, toolExecutions, activity };
 }

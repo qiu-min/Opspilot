@@ -90,7 +90,8 @@ sessions/{sessionId}/
 Backend Session.Id 与 Agent Service Session.Id 使用同一个 identity。`reattach` 只恢复观看，不恢复执行；进程重启后的执行恢复由 Agent Service 的 `ResumeTurn` 负责，TurnStream projection 仍不持久化。
 
 三个 SSE endpoint 统一发送 `TurnStreamEvent`，格式为 `id: sequence`、`event: type`、
-`data: JSON event`；不再发送 AgentEvent、`session_settled` 或 `done` 作为 live protocol。
+`data: JSON event`；tool lifecycle event 可携带由业务 composition resolver 生成的
+UI-safe display metadata；不再发送 AgentEvent、`session_settled` 或 `done` 作为 live protocol。
 
 Live stream 的 HTTP 409 使用稳定 code：`TURN_STREAM_REPLAY_GAP` 表示 replay buffer 不足，`SESSION_ACTIVE_TURN_CONFLICT` 表示 Session 已有 active Turn；普通冲突继续使用 `CONFLICT`。
 

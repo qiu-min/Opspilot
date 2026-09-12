@@ -1,9 +1,12 @@
 import type { AgentSessionEvent } from '../agent-session/agent-session.js';
+import type { ModelToolCall } from '@opspilot/model-gateway';
 import type { TurnStreamEventDraft, TurnStreamEventDraftPayload } from './turn-stream-event.js';
+import type { ToolDisplayInfo, ToolPresentationResolver } from './tool-presentation.js';
 
 export interface TurnStreamProjectorIdentity {
   readonly turnId: string;
   readonly sessionId: string;
+  readonly toolPresentationResolver?: ToolPresentationResolver;
 }
 
 /**
@@ -13,14 +16,17 @@ export interface TurnStreamProjectorIdentity {
 export class TurnStreamProjector {
   private readonly turnId: string;
   private readonly sessionId: string;
+  private readonly toolPresentationResolver?: ToolPresentationResolver;
   private thinkingActive = false;
   private assistantMessageVisible = false;
   private assistantText = '';
   private readonly queuedToolCalls = new Set<string>();
+  private readonly toolDisplays = new Map<string, ToolDisplayInfo>();
 
   public constructor(identity: TurnStreamProjectorIdentity) {
     this.turnId = identity.turnId;
     this.sessionId = identity.sessionId;
+    this.toolPresentationResolver = identity.toolPresentationResolver;
   }
 
   /** Projects one source event into zero or more transport-neutral live drafts. */
@@ -36,6 +42,7 @@ export class TurnStreamProjector {
             type: 'tool_started',
             callId: event.toolCall.callId,
             name: event.toolCall.name,
+            display: this.resolveToolDisplay(event.toolCall),
           }),
         ];
       case 'tool_execution_end':
@@ -45,6 +52,7 @@ export class TurnStreamProjector {
             callId: event.toolCall.callId,
             name: event.toolCall.name,
             isError: event.result.isError,
+            display: this.resolveToolDisplay(event.toolCall),
           }),
         ];
       case 'compaction_start':
@@ -138,13 +146,58 @@ export class TurnStreamProjector {
   private projectToolQueued(toolCall: {
     readonly callId: string;
     readonly name: string;
+    readonly arguments: ModelToolCall['arguments'];
   }): readonly TurnStreamEventDraft[] {
     if (this.queuedToolCalls.has(toolCall.callId)) return [];
     this.queuedToolCalls.add(toolCall.callId);
-    return [this.draft({ type: 'tool_queued', callId: toolCall.callId, name: toolCall.name })];
+    return [
+      this.draft({
+        type: 'tool_queued',
+        callId: toolCall.callId,
+        name: toolCall.name,
+        display: this.resolveToolDisplay(toolCall),
+      }),
+    ];
+  }
+
+  /** Resolves one display once per call and degrades safely on resolver failures. */
+  private resolveToolDisplay(toolCall: ModelToolCall): ToolDisplayInfo {
+    const cached = this.toolDisplays.get(toolCall.callId);
+    if (cached !== undefined) return cached;
+
+    let resolved: unknown;
+    try {
+      resolved = this.toolPresentationResolver?.({
+        name: toolCall.name,
+        arguments: toolCall.arguments,
+      });
+    } catch {
+      resolved = undefined;
+    }
+
+    const display = normalizeToolDisplayInfo(resolved) ?? { title: toolCall.name };
+    this.toolDisplays.set(toolCall.callId, display);
+    return display;
   }
 
   private draft(event: TurnStreamEventDraftPayload): TurnStreamEventDraft {
     return { ...event, turnId: this.turnId, sessionId: this.sessionId } as TurnStreamEventDraft;
   }
+}
+
+function normalizeToolDisplayInfo(value: unknown): ToolDisplayInfo | undefined {
+  if (!isRecord(value) || typeof value.title !== 'string' || value.title.trim().length === 0) {
+    return undefined;
+  }
+  if (value.subject !== undefined && typeof value.subject !== 'string') return undefined;
+  if (value.detail !== undefined && typeof value.detail !== 'string') return undefined;
+  return {
+    title: value.title,
+    ...(value.subject === undefined ? {} : { subject: value.subject }),
+    ...(value.detail === undefined ? {} : { detail: value.detail }),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

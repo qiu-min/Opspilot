@@ -18,11 +18,11 @@ public sealed record AgentAssistantTextDelta(Guid TurnId, Guid SessionId, long S
     : AgentTurnStreamEvent(TurnId, SessionId, Sequence, Timestamp) { public override string Type => "assistant_text_delta"; }
 public sealed record AgentAssistantMessageCompleted(Guid TurnId, Guid SessionId, long Sequence, DateTimeOffset Timestamp)
     : AgentTurnStreamEvent(TurnId, SessionId, Sequence, Timestamp) { public override string Type => "assistant_message_completed"; }
-public sealed record AgentToolQueued(Guid TurnId, Guid SessionId, long Sequence, DateTimeOffset Timestamp, string CallId, string Name, string? BatchId)
+public sealed record AgentToolQueued(Guid TurnId, Guid SessionId, long Sequence, DateTimeOffset Timestamp, string CallId, string Name, string? BatchId, AgentToolDisplayInfo? Display = null)
     : AgentTurnStreamEvent(TurnId, SessionId, Sequence, Timestamp) { public override string Type => "tool_queued"; }
-public sealed record AgentToolStarted(Guid TurnId, Guid SessionId, long Sequence, DateTimeOffset Timestamp, string CallId, string Name)
+public sealed record AgentToolStarted(Guid TurnId, Guid SessionId, long Sequence, DateTimeOffset Timestamp, string CallId, string Name, AgentToolDisplayInfo? Display = null)
     : AgentTurnStreamEvent(TurnId, SessionId, Sequence, Timestamp) { public override string Type => "tool_started"; }
-public sealed record AgentToolCompleted(Guid TurnId, Guid SessionId, long Sequence, DateTimeOffset Timestamp, string CallId, string Name, bool IsError)
+public sealed record AgentToolCompleted(Guid TurnId, Guid SessionId, long Sequence, DateTimeOffset Timestamp, string CallId, string Name, bool IsError, AgentToolDisplayInfo? Display = null)
     : AgentTurnStreamEvent(TurnId, SessionId, Sequence, Timestamp) { public override string Type => "tool_completed"; }
 public sealed record AgentCompactionStarted(Guid TurnId, Guid SessionId, long Sequence, DateTimeOffset Timestamp, string? Reason)
     : AgentTurnStreamEvent(TurnId, SessionId, Sequence, Timestamp) { public override string Type => "compaction_started"; }

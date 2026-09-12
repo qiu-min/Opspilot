@@ -9,7 +9,11 @@ import type { ToolDefinition } from '../tools/tool-definition.js';
 import { wrapToolDefinitions } from '../tools/wrap-tool-definition.js';
 import type { TurnExecutionContext, TurnExecutionContextStore } from '../turn-execution/index.js';
 import type { TurnStore } from '../turn-store/turn-store.js';
-import { TurnStreamProjector, type TurnStreamHub } from '../turn-stream/index.js';
+import {
+  TurnStreamProjector,
+  type ToolPresentationResolver,
+  type TurnStreamHub,
+} from '../turn-stream/index.js';
 import { TurnEventRecorder } from '../turns/turn-event-recorder.js';
 import { withExcelResourceGuidance } from '../system-prompt/index.js';
 import {
@@ -34,6 +38,7 @@ export interface ResumeTurnDependencies {
   readonly compactionSettings?: CompactionSettings;
   readonly sessionRunCoordinator?: SessionRunCoordinator;
   readonly turnStreamHub?: TurnStreamHub;
+  readonly toolPresentationResolver?: ToolPresentationResolver;
   readonly planner?: TurnRecoveryPlanner;
 }
 
@@ -63,6 +68,7 @@ export class ResumeTurn {
   private readonly compactionSettings?: CompactionSettings;
   private readonly sessionRunCoordinator: SessionRunCoordinator;
   private readonly turnStreamHub?: TurnStreamHub;
+  private readonly toolPresentationResolver?: ToolPresentationResolver;
   private readonly planner: TurnRecoveryPlanner;
 
   public constructor(options: ResumeTurnDependencies) {
@@ -79,6 +85,7 @@ export class ResumeTurn {
     this.sessionRunCoordinator =
       options.sessionRunCoordinator ?? new InMemorySessionRunCoordinator();
     this.turnStreamHub = options.turnStreamHub;
+    this.toolPresentationResolver = options.toolPresentationResolver;
     this.planner = options.planner ?? new TurnRecoveryPlanner();
   }
 
@@ -219,7 +226,11 @@ export class ResumeTurn {
     recorder.recordTurnResumed();
     this.openStream(turn, sessionId);
     const streamChannelOpened = this.turnStreamHub !== undefined;
-    const projector = new TurnStreamProjector({ turnId: turn.getId(), sessionId });
+    const projector = new TurnStreamProjector({
+      turnId: turn.getId(),
+      sessionId,
+      toolPresentationResolver: this.toolPresentationResolver,
+    });
     let agentSession: AgentSession | undefined;
     let unsubscribe: (() => void) | undefined;
     let terminalPublished = false;

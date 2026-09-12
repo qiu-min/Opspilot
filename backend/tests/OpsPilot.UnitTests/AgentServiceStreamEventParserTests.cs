@@ -51,6 +51,62 @@ public sealed class AgentServiceStreamEventParserTests
         Assert.Contains($"{invalidField} must be a non-empty string.", exception.Message);
     }
 
+    [Fact]
+    public async Task StartTurnStream_ParsesOptionalToolDisplay()
+    {
+        using var httpClient = CreateHttpClient(
+            "tool_started",
+            CreatePayload(
+                "tool_started",
+                display: new Dictionary<string, object?>
+                {
+                    ["title"] = "Inspect Worksheet",
+                    ["subject"] = "Sheet1",
+                    ["detail"] = "Reading worksheet metadata",
+                }));
+
+        AgentToolStarted toolStarted = Assert.IsType<AgentToolStarted>(
+            Assert.Single(await ReadEventsAsync(new AgentServiceClient(httpClient))));
+
+        Assert.Equal("Inspect Worksheet", toolStarted.Display?.Title);
+        Assert.Equal("Sheet1", toolStarted.Display?.Subject);
+        Assert.Equal("Reading worksheet metadata", toolStarted.Display?.Detail);
+    }
+
+    [Fact]
+    public async Task StartTurnStream_AllowsToolDisplayToBeOmitted()
+    {
+        using var httpClient = CreateHttpClient("tool_started", CreatePayload("tool_started"));
+
+        AgentToolStarted toolStarted = Assert.IsType<AgentToolStarted>(
+            Assert.Single(await ReadEventsAsync(new AgentServiceClient(httpClient))));
+
+        Assert.Null(toolStarted.Display);
+    }
+
+    [Theory]
+    [InlineData("display must be a JSON object.", "not-an-object")]
+    [InlineData("display.title must be a non-empty string.", "missing-title")]
+    [InlineData("display.subject must be a string.", "invalid-subject")]
+    public async Task StartTurnStream_RejectsMalformedToolDisplay(string expectedMessage, string variant)
+    {
+        object? display = variant switch
+        {
+            "not-an-object" => (object?)new object?[] { "invalid" },
+            "missing-title" => (object?)new Dictionary<string, object?> { ["subject"] = "Sheet1" },
+            "invalid-subject" => (object?)new Dictionary<string, object?> { ["title"] = "Inspect Worksheet", ["subject"] = 123 },
+            _ => throw new ArgumentOutOfRangeException(nameof(variant)),
+        };
+        using var httpClient = CreateHttpClient(
+            "tool_started",
+            CreatePayload("tool_started", display: display));
+
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(
+            () => ReadEventsAsync(new AgentServiceClient(httpClient)));
+
+        Assert.Contains(expectedMessage, exception.Message);
+    }
+
     private static HttpClient CreateHttpClient(string eventName, string payload) => new(new SseHandler(eventName, payload))
     {
         BaseAddress = new Uri("http://agent-service.test/"),
@@ -73,7 +129,8 @@ public sealed class AgentServiceStreamEventParserTests
     private static string CreatePayload(
         string eventName,
         string? delta = null,
-        string? invalidField = null)
+        string? invalidField = null,
+        object? display = null)
     {
         var payload = new Dictionary<string, object?>
         {
@@ -101,6 +158,11 @@ public sealed class AgentServiceStreamEventParserTests
         if (invalidField is not null)
         {
             payload[invalidField] = " ";
+        }
+
+        if (display is not null)
+        {
+            payload["display"] = display;
         }
 
         return JsonSerializer.Serialize(payload);

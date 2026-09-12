@@ -30,7 +30,7 @@ Application 还定义独立的 `TurnStreamEvent` presentation contract、纯 red
 `assistant_thinking_started` / `assistant_thinking_completed`，不会传输隐藏 reasoning 文本。
 
 `TurnStreamProjection` 只保存当前 Turn 的 partial assistant text、thinking 状态、tool
-状态、compaction 状态、usage 和 `lastSequence`，不替代 Session history，也不暴露
+状态（可带由注入的 `ToolPresentationResolver` 生成的 UI-safe `ToolDisplayInfo`）、compaction 状态、usage 和 `lastSequence`，不替代 Session history，也不暴露
 `MutableAgentState`。`TurnStreamEvent.sequence` 由 Hub 从 0 开始独立分配，和 durable
 `TurnEvent.sequence` 无关。Hub 在内存保留有限 replay buffer（默认 256）；丢失范围会以
 `TurnStreamReplayGapError` 明确报告。

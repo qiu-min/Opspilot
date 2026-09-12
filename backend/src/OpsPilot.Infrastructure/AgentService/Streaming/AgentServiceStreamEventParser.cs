@@ -38,9 +38,9 @@ internal static class AgentServiceStreamEventParser
             "assistant_message_started" => new AgentAssistantMessageStarted(turnId, sessionId, sequence, timestamp),
             "assistant_text_delta" => new AgentAssistantTextDelta(turnId, sessionId, sequence, timestamp, RequiredText(data, "delta", frame)),
             "assistant_message_completed" => new AgentAssistantMessageCompleted(turnId, sessionId, sequence, timestamp),
-            "tool_queued" => new AgentToolQueued(turnId, sessionId, sequence, timestamp, RequiredString(data, "callId", frame), RequiredString(data, "name", frame), OptionalString(data, "batchId", frame)),
-            "tool_started" => new AgentToolStarted(turnId, sessionId, sequence, timestamp, RequiredString(data, "callId", frame), RequiredString(data, "name", frame)),
-            "tool_completed" => new AgentToolCompleted(turnId, sessionId, sequence, timestamp, RequiredString(data, "callId", frame), RequiredString(data, "name", frame), RequiredBoolean(data, "isError", frame)),
+            "tool_queued" => new AgentToolQueued(turnId, sessionId, sequence, timestamp, RequiredString(data, "callId", frame), RequiredString(data, "name", frame), OptionalString(data, "batchId", frame), OptionalToolDisplay(data, frame)),
+            "tool_started" => new AgentToolStarted(turnId, sessionId, sequence, timestamp, RequiredString(data, "callId", frame), RequiredString(data, "name", frame), OptionalToolDisplay(data, frame)),
+            "tool_completed" => new AgentToolCompleted(turnId, sessionId, sequence, timestamp, RequiredString(data, "callId", frame), RequiredString(data, "name", frame), RequiredBoolean(data, "isError", frame), OptionalToolDisplay(data, frame)),
             "compaction_started" => new AgentCompactionStarted(turnId, sessionId, sequence, timestamp, OptionalString(data, "reason", frame)),
             "compaction_completed" => new AgentCompactionCompleted(turnId, sessionId, sequence, timestamp, OptionalString(data, "reason", frame), OptionalBoolean(data, "aborted", frame), OptionalBoolean(data, "failed", frame), OptionalBoolean(data, "willRetry", frame)),
             "usage" => new AgentUsage(turnId, sessionId, sequence, timestamp, RequiredInt(data, "inputTokens", frame), RequiredInt(data, "outputTokens", frame), RequiredInt(data, "totalTokens", frame)),
@@ -93,6 +93,29 @@ internal static class AgentServiceStreamEventParser
     {
         if (!data.TryGetProperty(name, out JsonElement value) || value.ValueKind == JsonValueKind.Null) return null;
         if (value.ValueKind != JsonValueKind.String) throw Malformed(frame, $"{name} must be a string or null.");
+        return value.GetString();
+    }
+
+    private static AgentToolDisplayInfo? OptionalToolDisplay(JsonElement data, SseFrame frame)
+    {
+        if (!data.TryGetProperty("display", out JsonElement display)) return null;
+        if (display.ValueKind != JsonValueKind.Object) throw Malformed(frame, "display must be a JSON object.");
+        return new AgentToolDisplayInfo(
+            RequiredDisplayString(display, "title", frame),
+            OptionalDisplayString(display, "subject", frame),
+            OptionalDisplayString(display, "detail", frame));
+    }
+
+    private static string RequiredDisplayString(JsonElement display, string name, SseFrame frame)
+    {
+        if (!display.TryGetProperty(name, out JsonElement value) || value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(value.GetString())) throw Malformed(frame, $"display.{name} must be a non-empty string.");
+        return value.GetString()!;
+    }
+
+    private static string? OptionalDisplayString(JsonElement display, string name, SseFrame frame)
+    {
+        if (!display.TryGetProperty(name, out JsonElement value)) return null;
+        if (value.ValueKind != JsonValueKind.String) throw Malformed(frame, $"display.{name} must be a string.");
         return value.GetString();
     }
 

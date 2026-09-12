@@ -25,6 +25,7 @@ import { ExcelJsDiscoveryAdapter } from '@opspilot/tool-gateway';
 
 import { ApiModule, EXCEL_RESOURCE_PATH_RESOLVER } from '@opspilot/api';
 import { FileSystemExcelResourcePathResolver } from './files/excel-resource-path-resolver.js';
+import { createExcelToolPresentationResolver } from './tool-presentation/excel-tool-presentation.js';
 import type { RuntimeConfig } from './runtime-config.js';
 
 /** Builds the only Excel tools exposed by this runtime composition root. */
@@ -53,13 +54,18 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     tools: toolDefinitions,
   });
   const sessionStore = new FileSystemSessionStore(config.sessionDirectory);
+  /**一次业务层级别的 Turn实例：包括events.json和metadata.json，前者保存追加式执行事实，后者保存当前 Turn snapshot */
   const turnStore = new FileSystemTurnStore(config.turnStorageRoot);
+  /** excution.json保存的是一次 Turn 恢复所需、但不属于 Domain Turn 的最小输入，目前主要是excel业务 */
   const turnExecutionContextStore = new FileSystemTurnExecutionContextStore(config.turnStorageRoot);
+  /** Turn 流 hub，用于管理 Turn 的订阅和发布 进程重启丢失*/
   const turnStreamHub = new InMemoryTurnStreamHub();
+  /**负责按 sessionId 串行化执行 同一个 Session：Turn 串行执行 不同 Session：可以并行执行*/
   const sessionRunCoordinator: SessionRunCoordinator = new InMemorySessionRunCoordinator();
   const excelResourcePathResolver = new FileSystemExcelResourcePathResolver(
     config.sharedStorageRoot,
   );
+  const toolPresentationResolver = createExcelToolPresentationResolver();
   const executeTurn = new ExecuteTurn({
     sessionStore,
     turnStore,
@@ -69,6 +75,7 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     toolDefinitions,
     systemPrompt,
     turnStreamHub,
+    toolPresentationResolver,
     sessionRunCoordinator,
   });
   const resumeTurn = new ResumeTurn({
@@ -80,6 +87,7 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     systemPrompt,
     sessionRunCoordinator,
     turnStreamHub,
+    toolPresentationResolver,
   });
   const recoverTurnsOnStartup = new RecoverTurnsOnStartup({ turnStore, resumeTurn });
   const getSessionHistory = new GetSessionHistory(sessionStore);

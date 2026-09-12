@@ -40,6 +40,7 @@ src/features/session/
 ```
 
 SSE parser 严格验证 event name、payload `type`、`turnId`、`sessionId`、safe non-negative `sequence`、timestamp，以及 SSE `id == sequence`。未知事件和协议不一致使用 `TurnStreamProtocolError`。
+tool lifecycle event 的可选 display metadata 也在 parser/state 层严格校验并沿生命周期保留；completed durable history 仍是 terminal 后的事实来源。
 
 ## Development
 

@@ -1,4 +1,4 @@
-import { TurnStreamProtocolError, type TurnStreamEvent } from "./turn-stream-contracts";
+import { TurnStreamProtocolError, type ToolDisplayInfo, type TurnStreamEvent } from "./turn-stream-contracts";
 
 type SseMessage = { eventName: string; data: string; id?: string };
 
@@ -77,12 +77,18 @@ function parseTurnSseMessage(message: SseMessage): TurnStreamEvent {
       return { type, turnId, sessionId, sequence, timestamp } as TurnStreamEvent;
     case "assistant_text_delta":
       return { type, turnId, sessionId, sequence, timestamp, delta: requireString(payload, "delta", type) };
-    case "tool_queued":
-      return { type, turnId, sessionId, sequence, timestamp, callId: requireNonEmptyString(payload, "callId", type), name: requireNonEmptyString(payload, "name", type), ...(payload.batchId === undefined ? {} : { batchId: requireString(payload, "batchId", type) }) };
-    case "tool_started":
-      return { type, turnId, sessionId, sequence, timestamp, callId: requireNonEmptyString(payload, "callId", type), name: requireNonEmptyString(payload, "name", type) };
-    case "tool_completed":
-      return { type, turnId, sessionId, sequence, timestamp, callId: requireNonEmptyString(payload, "callId", type), name: requireNonEmptyString(payload, "name", type), isError: requireBoolean(payload, "isError", type) };
+    case "tool_queued": {
+      const display = optionalToolDisplay(payload, type);
+      return { type, turnId, sessionId, sequence, timestamp, callId: requireNonEmptyString(payload, "callId", type), name: requireNonEmptyString(payload, "name", type), ...(payload.batchId === undefined ? {} : { batchId: requireString(payload, "batchId", type) }), ...(display === undefined ? {} : { display }) };
+    }
+    case "tool_started": {
+      const display = optionalToolDisplay(payload, type);
+      return { type, turnId, sessionId, sequence, timestamp, callId: requireNonEmptyString(payload, "callId", type), name: requireNonEmptyString(payload, "name", type), ...(display === undefined ? {} : { display }) };
+    }
+    case "tool_completed": {
+      const display = optionalToolDisplay(payload, type);
+      return { type, turnId, sessionId, sequence, timestamp, callId: requireNonEmptyString(payload, "callId", type), name: requireNonEmptyString(payload, "name", type), isError: requireBoolean(payload, "isError", type), ...(display === undefined ? {} : { display }) };
+    }
     case "compaction_started":
       return { type, turnId, sessionId, sequence, timestamp, ...(payload.reason === undefined ? {} : { reason: requireString(payload, "reason", type) }) };
     case "compaction_completed":
@@ -137,6 +143,14 @@ function requireNumber(payload: Record<string, unknown>, field: string, eventNam
   const value = payload[field];
   if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value < 0) throw protocolError(eventName, `${field} must be a non-negative integer`);
   return value;
+}
+function optionalToolDisplay(payload: Record<string, unknown>, eventName: string): ToolDisplayInfo | undefined {
+  if (payload.display === undefined) return undefined;
+  if (!isRecord(payload.display)) throw protocolError(eventName, "display must be an object");
+  const title = requireNonEmptyString(payload.display, "title", `${eventName}.display`);
+  const subject = payload.display.subject === undefined ? undefined : requireString(payload.display, "subject", `${eventName}.display`);
+  const detail = payload.display.detail === undefined ? undefined : requireString(payload.display, "detail", `${eventName}.display`);
+  return { title, ...(subject === undefined ? {} : { subject }), ...(detail === undefined ? {} : { detail }) };
 }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function protocolError(eventName: string, detail: string): TurnStreamProtocolError { return new TurnStreamProtocolError(`Malformed TurnStreamEvent "${eventName}": ${detail}.`); }

@@ -10,7 +10,6 @@ import type {
 import type {
   AssistantMessage,
   Context,
-  ModelToolCall,
   Tool,
   ToolResultMessage,
 } from '@opspilot/model-gateway';
