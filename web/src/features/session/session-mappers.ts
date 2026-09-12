@@ -20,9 +20,17 @@ export function toSessionItems(response: SessionDetailResponse): SessionItem[] {
   return items;
 }
 
-export function mergeLiveTurnResponse(durableItems: SessionItem[], liveResponse: TurnResponseItem | undefined, liveResponseId: string | undefined): SessionItem[] {
+/** Returns the only durable response that appeared after a terminal refresh. */
+export function findNewDurableResponseId(previousItems: SessionItem[], refreshedItems: SessionItem[]): string | undefined {
+  const previousResponseIds = new Set(previousItems.filter((item): item is TurnResponseItem => item.type === "response").map((item) => item.id));
+  const newResponseIds = refreshedItems.filter((item): item is TurnResponseItem => item.type === "response" && !previousResponseIds.has(item.id)).map((item) => item.id);
+  return newResponseIds.length === 1 ? newResponseIds[0] : undefined;
+}
+
+export function mergeLiveTurnResponse(durableItems: SessionItem[], liveResponse: TurnResponseItem | undefined, liveResponseId: string | undefined, durableResponseId?: string): SessionItem[] {
   if (liveResponse === undefined || liveResponseId === undefined) return durableItems;
-  const index = durableItems.findIndex((item) => item.type === "response" && (item.id === liveResponseId || hasSharedToolCall(item, liveResponse)));
+  const explicitIndex = durableResponseId === undefined ? -1 : durableItems.findIndex((item) => item.type === "response" && item.id === durableResponseId);
+  const index = explicitIndex >= 0 ? explicitIndex : durableItems.findIndex((item) => item.type === "response" && (item.id === liveResponseId || hasSharedToolCall(item, liveResponse)));
   if (index < 0) return [...durableItems, liveResponse];
   const next = [...durableItems];
   next[index] = mergeResponseBlocks(next[index] as TurnResponseItem, liveResponse);
@@ -30,9 +38,9 @@ export function mergeLiveTurnResponse(durableItems: SessionItem[], liveResponse:
 }
 
 /** Durable history is authoritative after terminal events; live blocks only preserve current UI identity. */
-export function reconcileSessionItems(durableItems: SessionItem[], liveResponseId?: string, liveResponse?: TurnResponseItem): SessionItem[] {
+export function reconcileSessionItems(durableItems: SessionItem[], liveResponseId?: string, liveResponse?: TurnResponseItem, durableResponseId?: string): SessionItem[] {
   if (liveResponseId === undefined || liveResponse === undefined) return durableItems;
-  return mergeLiveTurnResponse(durableItems, liveResponse, liveResponseId);
+  return mergeLiveTurnResponse(durableItems, liveResponse, liveResponseId, durableResponseId);
 }
 export function formatMessageCreatedAt(createdAt = new Date().toISOString()): string { const date = new Date(createdAt); return Number.isNaN(date.getTime()) ? "Recently" : new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date); }
 

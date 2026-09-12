@@ -1,7 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { mergeLiveTurnResponse, toSessionItems } from "./session-mappers";
+import { findNewDurableResponseId, mergeLiveTurnResponse, toSessionItems } from "./session-mappers";
 
 describe("Session history mapper", () => {
+  it("finds exactly one durable response added by a terminal refresh", () => {
+    const previous = [{ type: "response" as const, id: "response-a", status: "completed" as const, blocks: [] }];
+    const refreshed = [...previous, { type: "response" as const, id: "response-b", status: "completed" as const, blocks: [] }];
+    expect(findNewDurableResponseId(previous, refreshed)).toBe("response-b");
+    expect(findNewDurableResponseId(previous, previous)).toBeUndefined();
+    expect(findNewDurableResponseId(previous, [...refreshed, { type: "response" as const, id: "response-c", status: "completed" as const, blocks: [] }])).toBeUndefined();
+  });
+
+  it("merges a normal assistant Turn into the unique new durable response", () => {
+    const before = [{ type: "response" as const, id: "response-a", status: "completed" as const, blocks: [{ type: "assistant_text" as const, id: "assistant-a", text: "Response A", completed: true }] }];
+    const after = [...before, { type: "response" as const, id: "response-server-b", status: "completed" as const, blocks: [{ type: "assistant_text" as const, id: "assistant-b", text: "hello", completed: true }] }];
+    const live = { type: "response" as const, id: "turn-b", status: "completed" as const, metrics: { startedAt: "2026-09-09T00:00:00Z", completedAt: "2026-09-09T00:00:01Z", usage: { inputTokens: 30, outputTokens: 10, totalTokens: 40 }, toolCount: 0 }, blocks: [{ type: "assistant_text" as const, id: "live-assistant", text: "hello", completed: true }] };
+
+    const merged = mergeLiveTurnResponse(after, live, live.id, findNewDurableResponseId(before, after));
+
+    expect(merged).toHaveLength(2);
+    expect(merged[1]).toMatchObject({ metrics: live.metrics, blocks: [{ type: "assistant_text", text: "hello" }] });
+    expect(merged[1]?.type === "response" ? merged[1].blocks.filter((block) => block.type === "assistant_text") : []).toHaveLength(1);
+  });
+
   it("keeps durable history and projects tool execution by callId", () => {
     const items = toSessionItems({ id: "s", title: "New session", createdAtUtc: "2026-09-09T00:00:00Z", updatedAtUtc: "2026-09-09T00:00:00Z", items: [
       { type: "message", id: "u", role: "user", text: "inspect", createdAtUtc: "2026-09-09T00:00:00Z" },
