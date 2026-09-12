@@ -40,6 +40,22 @@ SSE disconnect 只取消当前 subscriber，不会调用 `AgentSession.abort()` 
 被移除。reattach 与 resume 是不同语义：reattach 只恢复观看，resume 使用 durable
 checkpoint 恢复同一个 Turn 的执行。
 
+## Durable Turn presentation
+
+`TurnStreamProjection` 是 active Turn 的 live / ephemeral presentation；它不进入 Session
+history。历史恢复由 `GetSessionHistory` 在 application 边界组合两个纯 read projection：
+
+```text
+Session branch -> buildSessionHistoryProjection() -> items
+Turn + TurnEvent + SessionEntry -> buildTurnPresentationSummary() -> turnSummaries
+```
+
+`TurnPresentationSummary` 每次从 durable `Turn`、`TurnEvent` 和相关的
+`SessionEntry` 重建，不新增 summary 文件、数据库表或 TurnEvent schema/version。只返回
+terminal Turn，并按当前 branch 的 user input 顺序排序；`usage_recorded` 每条代表一个
+完成 model call 的最终 contribution，Turn usage 会累加全部记录。工具的 display 通过与
+live presentation 相同的 `ToolPresentationResolver` 重新解析，失败时安全降级为工具名。
+
 ## 职责
 
 本包主要负责：

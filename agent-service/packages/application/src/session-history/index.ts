@@ -6,4 +6,8 @@ export {
   type SessionHistoryProjection,
   type SessionHistoryToolExecutionItem,
 } from './session-history-projection.js';
-export { GetSessionHistory } from './get-session-history.js';
+export {
+  GetSessionHistory,
+  type GetSessionHistoryDependencies,
+  type SessionHistoryResult,
+} from './get-session-history.js';

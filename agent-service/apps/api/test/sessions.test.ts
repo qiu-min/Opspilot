@@ -8,6 +8,7 @@ import {
   SubscribeTurnStream,
   Session,
   type SessionStore,
+  type TurnStore,
   type TurnStreamHub,
 } from '@opspilot/application';
 import { Test } from '@nestjs/testing';
@@ -46,7 +47,7 @@ describe('Session history API', () => {
         throw new Error('not used');
       },
     };
-    app = await startServer(new GetSessionHistory(store));
+    app = await startServer(new GetSessionHistory({ sessionStore: store, turnStore: emptyTurnStore() }));
 
     const response = await postJson(app, '/sessions');
 
@@ -115,7 +116,7 @@ describe('Session history API', () => {
         throw new Error('history endpoint must not save metadata');
       },
     };
-    app = await startServer(new GetSessionHistory(store));
+    app = await startServer(new GetSessionHistory({ sessionStore: store, turnStore: emptyTurnStore() }));
 
     const response = await getJson(app, `/sessions/${sessionId}/history`);
 
@@ -185,7 +186,7 @@ describe('Session history API', () => {
         throw new Error('history endpoint must not save metadata');
       },
     };
-    app = await startServer(new GetSessionHistory(store));
+    app = await startServer(new GetSessionHistory({ sessionStore: store, turnStore: emptyTurnStore() }));
 
     const response = await getJson(app, `/sessions/${sessionId}/history`);
     const body = JSON.parse(response.body) as {
@@ -314,4 +315,24 @@ function postJson(app: INestApplication, path: string): Promise<HttpResponse> {
     request.on('error', reject);
     request.end();
   });
+}
+
+function emptyTurnStore(): TurnStore {
+  return {
+    create: () => {
+      throw new Error('not used');
+    },
+    load: () => {
+      throw new Error('not used');
+    },
+    save: () => {
+      throw new Error('not used');
+    },
+    appendEvent: () => {
+      throw new Error('not used');
+    },
+    loadEvents: () => [],
+    listBySession: () => [],
+    listRecoverable: () => [],
+  };
 }

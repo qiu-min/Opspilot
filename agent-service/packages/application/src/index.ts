@@ -10,4 +10,5 @@ export * from './system-prompt/index.js';
 export * from './turn-stream/index.js';
 export * from './turn-execution/index.js';
 export * from './turn-recovery/index.js';
+export * from './turn-presentation/index.js';
 export * from '@opspilot/domain';

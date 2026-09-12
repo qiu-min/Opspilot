@@ -44,7 +44,13 @@ public sealed class SessionsController(
     public async Task<ActionResult<SessionDetailResponse>> GetDetail(Guid sessionId, CancellationToken cancellationToken)
     {
         GetSessionDetailResult result = await getSessionDetailHandler.HandleAsync(new GetSessionDetailQuery(sessionId), cancellationToken);
-        return Ok(new SessionDetailResponse(result.Id, result.Title, result.CreatedAtUtc, result.UpdatedAtUtc, result.Items.Select(MapHistoryItem).ToArray()));
+        return Ok(new SessionDetailResponse(
+            result.Id,
+            result.Title,
+            result.CreatedAtUtc,
+            result.UpdatedAtUtc,
+            result.Items.Select(MapHistoryItem).ToArray(),
+            result.TurnSummaries.Select(MapTurnSummary).ToArray()));
     }
 
     [HttpPost("{sessionId:guid}/turns")]
@@ -133,4 +139,31 @@ public sealed class SessionsController(
         SessionHistoryToolExecutionItemResult tool => new SessionHistoryToolExecutionItemResponse(tool.Id, tool.CallId, tool.Name, tool.Status, tool.CreatedAtUtc),
         _ => throw new InvalidOperationException($"Unsupported Session history item: {item.GetType().Name}.")
     };
+
+    private static SessionTurnPresentationSummaryResponse MapTurnSummary(SessionTurnPresentationSummaryResult summary) =>
+        new(
+            summary.TurnId,
+            summary.SessionId,
+            summary.InputEntryId,
+            summary.Status,
+            summary.StartedAt,
+            summary.CompletedAt,
+            summary.Usage is null
+                ? null
+                : new SessionTurnPresentationUsageResponse(
+                    summary.Usage.InputTokens,
+                    summary.Usage.OutputTokens,
+                    summary.Usage.TotalTokens),
+            summary.Tools.Select(tool => new SessionToolPresentationSummaryResponse(
+                tool.CallId,
+                tool.Name,
+                tool.Status,
+                tool.Display is null
+                    ? null
+                    : new SessionToolDisplayInfoResponse(
+                        tool.Display.Title,
+                        tool.Display.Subject,
+                        tool.Display.Detail),
+                tool.StartedAt,
+                tool.CompletedAt)).ToArray());
 }

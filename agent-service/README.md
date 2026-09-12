@@ -83,7 +83,7 @@ sessions/{sessionId}/
 - `POST /turns/stream`：启动 Turn 并连接首个 live SSE subscriber。
 - `POST /sessions/{sessionId}/turns`：在指定 Session 上执行 Turn。
 - `POST /sessions/{sessionId}/turns/stream`：在指定 Session 上启动 Turn 并连接首个 live SSE subscriber。
-- `GET /sessions/{sessionId}/history`：供 Backend 读取当前 active branch 的 UI-safe 历史 projection。
+- `GET /sessions/{sessionId}/history`：供 Backend 读取当前 active branch 的 UI-safe 历史 projection，以及从 durable Turn / TurnEvent / SessionEntry 重建的 terminal `turnSummaries`。
 - `GET /sessions/{sessionId}/active-turn`：读取当前进程中可 reattach 的 live Turn 及 projection。
 - `GET /turns/{turnId}/stream?after=N`：订阅已有 Turn 的 live stream；不会创建或重新执行 Turn。
 
@@ -99,6 +99,9 @@ Live stream 的 HTTP 409 使用稳定 code：`TURN_STREAM_REPLAY_GAP` 表示 rep
 
 Session 与 Turn 通过 Infrastructure 的 filesystem adapter 分别持久化；API 通过 Application 的 `ExecuteTurn` 访问，不直接操作 Domain Session、Turn 或 Model Gateway。
 历史读取使用独立的 `buildSessionHistoryProjection()`，基于 `Session.getBranch()` 读取完整原始消息；它不复用会受 Compaction 影响的 `buildSessionContext()`，也不改变 JSONL persistence format。
+`buildSessionHistoryProjection()` 只负责 branch history items；`GetSessionHistory` 组合它与
+`buildTurnPresentationSummary()`，因此 live `TurnStreamProjection` 与 historical
+`TurnPresentationSummary` 的职责保持分离。
 
 ## Development
 

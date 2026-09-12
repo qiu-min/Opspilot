@@ -2,6 +2,7 @@ import type { AgentSessionEvent } from '../agent-session/agent-session.js';
 import type { ModelToolCall } from '@opspilot/model-gateway';
 import type { TurnStreamEventDraft, TurnStreamEventDraftPayload } from './turn-stream-event.js';
 import type { ToolDisplayInfo, ToolPresentationResolver } from './tool-presentation.js';
+import { resolveHistoricalToolPresentation } from '../turn-presentation/turn-presentation-summary.js';
 
 export interface TurnStreamProjectorIdentity {
   readonly turnId: string;
@@ -170,17 +171,11 @@ export class TurnStreamProjector {
     const cached = this.toolDisplays.get(toolCall.callId);
     if (cached !== undefined) return cached;
 
-    let resolved: unknown;
-    try {
-      resolved = this.toolPresentationResolver?.({
-        name: toolCall.name,
-        arguments: toolCall.arguments,
-      });
-    } catch {
-      resolved = undefined;
-    }
-
-    const display = normalizeToolDisplayInfo(resolved) ?? { title: toolCall.name };
+    const display = resolveHistoricalToolPresentation({
+      resolver: this.toolPresentationResolver,
+      name: toolCall.name,
+      arguments: toolCall.arguments,
+    });
     this.toolDisplays.set(toolCall.callId, display);
     return display;
   }
@@ -188,21 +183,4 @@ export class TurnStreamProjector {
   private draft(event: TurnStreamEventDraftPayload): TurnStreamEventDraft {
     return { ...event, turnId: this.turnId, sessionId: this.sessionId } as TurnStreamEventDraft;
   }
-}
-
-function normalizeToolDisplayInfo(value: unknown): ToolDisplayInfo | undefined {
-  if (!isRecord(value) || typeof value.title !== 'string' || value.title.trim().length === 0) {
-    return undefined;
-  }
-  if (value.subject !== undefined && typeof value.subject !== 'string') return undefined;
-  if (value.detail !== undefined && typeof value.detail !== 'string') return undefined;
-  return {
-    title: value.title,
-    ...(value.subject === undefined ? {} : { subject: value.subject }),
-    ...(value.detail === undefined ? {} : { detail: value.detail }),
-  };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

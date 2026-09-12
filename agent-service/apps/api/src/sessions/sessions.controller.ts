@@ -4,7 +4,7 @@ import {
   GetActiveTurn,
   GetSessionHistory,
   type ActiveTurnStreamSnapshot,
-  type SessionHistoryProjection,
+  type SessionHistoryResult,
 } from '@opspilot/application';
 
 /** Internal Agent Service endpoint used by Backend to restore a session history. */
@@ -33,7 +33,7 @@ export class SessionsController {
   @Get(':sessionId/history')
   getHistory(
     @Param('sessionId', new ParseUUIDPipe({ version: '4' })) sessionId: string,
-  ): SessionHistoryProjection {
+  ): SessionHistoryResult {
     return this.getSessionHistory.execute(sessionId);
   }
 }

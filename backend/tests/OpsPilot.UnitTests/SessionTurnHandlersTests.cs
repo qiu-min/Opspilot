@@ -43,6 +43,22 @@ public sealed class SessionTurnHandlersTests
             History = new AgentSessionHistory("leaf-1", [
                 new AgentSessionHistoryMessageItem("message-1", "user", "inspect", CreatedAt),
                 new AgentSessionHistoryToolExecutionItem("tool-1", "call-1", "lookup", "completed", CreatedAt.AddSeconds(1)),
+            ], [
+                new AgentTurnPresentationSummary(
+                    TurnId,
+                    SessionId,
+                    "message-1",
+                    "completed",
+                    CreatedAt,
+                    CreatedAt.AddSeconds(5),
+                    new AgentTurnPresentationUsage(100, 40, 140),
+                    [new AgentTurnToolPresentationSummary(
+                        "call-1",
+                        "lookup",
+                        "completed",
+                        new AgentToolDisplayInfo("Look up", "record-1", "Reading record"),
+                        CreatedAt.AddSeconds(1),
+                        CreatedAt.AddSeconds(2))])
             ]),
         };
 
@@ -53,6 +69,17 @@ public sealed class SessionTurnHandlersTests
         Assert.Collection(result.Items,
             item => Assert.IsType<SessionHistoryMessageItemResult>(item),
             item => Assert.IsType<SessionHistoryToolExecutionItemResult>(item));
+        var summary = Assert.Single(result.TurnSummaries);
+        Assert.Equal(TurnId, summary.TurnId);
+        Assert.Equal("message-1", summary.InputEntryId);
+        Assert.Equal("completed", summary.Status);
+        Assert.Equal(CreatedAt, summary.StartedAt);
+        Assert.Equal(CreatedAt.AddSeconds(5), summary.CompletedAt);
+        Assert.Equal(140, summary.Usage!.TotalTokens);
+        var tool = Assert.Single(summary.Tools);
+        Assert.Equal("Look up", tool.Display!.Title);
+        Assert.Equal(CreatedAt.AddSeconds(1), tool.StartedAt);
+        Assert.Equal(CreatedAt.AddSeconds(2), tool.CompletedAt);
         Assert.Equal(SessionId, agent.LastHistorySessionId);
     }
 

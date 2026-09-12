@@ -37,10 +37,27 @@ public sealed class SessionEndpointTests : IClassFixture<SessionTestFactory>
         JsonElement created = await createResponse.Content.ReadFromJsonAsync<JsonElement>();
         Guid sessionId = created.GetProperty("id").GetGuid();
         Assert.Equal(expectedSessionId, sessionId);
+        Guid historicalTurnId = Guid.NewGuid();
 
         factory.Agent.Histories[sessionId] = new AgentSessionHistory("leaf", [
             new AgentSessionHistoryMessageItem("message-1", "user", "inspect", DateTimeOffset.UtcNow),
             new AgentSessionHistoryToolExecutionItem("tool-1", "call-1", "lookup", "completed", DateTimeOffset.UtcNow),
+        ], [
+            new AgentTurnPresentationSummary(
+                historicalTurnId,
+                sessionId,
+                "message-1",
+                "completed",
+                DateTimeOffset.Parse("2026-09-09T12:00:00Z"),
+                DateTimeOffset.Parse("2026-09-09T12:00:05Z"),
+                new AgentTurnPresentationUsage(100, 40, 140),
+                [new AgentTurnToolPresentationSummary(
+                    "call-1",
+                    "lookup",
+                    "completed",
+                    new AgentToolDisplayInfo("Look up", "record-1", "Reading record"),
+                    DateTimeOffset.Parse("2026-09-09T12:00:01Z"),
+                    DateTimeOffset.Parse("2026-09-09T12:00:02Z"))])
         ]);
 
         using HttpResponseMessage listResponse = await SendAsync(HttpMethod.Get, "/api/sessions", login.AccessToken);
@@ -53,6 +70,13 @@ public sealed class SessionEndpointTests : IClassFixture<SessionTestFactory>
         JsonElement detail = await detailResponse.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(sessionId, detail.GetProperty("id").GetGuid());
         Assert.Equal(2, detail.GetProperty("items").GetArrayLength());
+        JsonElement summary = Assert.Single(detail.GetProperty("turnSummaries").EnumerateArray());
+        Assert.Equal(historicalTurnId, summary.GetProperty("turnId").GetGuid());
+        Assert.Equal("message-1", summary.GetProperty("inputEntryId").GetString());
+        Assert.Equal("completed", summary.GetProperty("status").GetString());
+        Assert.Equal(140, summary.GetProperty("usage").GetProperty("totalTokens").GetInt32());
+        Assert.Equal("Look up", summary.GetProperty("tools")[0].GetProperty("display").GetProperty("title").GetString());
+        Assert.Equal(DateTimeOffset.Parse("2026-09-09T12:00:01Z"), summary.GetProperty("tools")[0].GetProperty("startedAt").GetDateTimeOffset());
     }
 
     [Fact]

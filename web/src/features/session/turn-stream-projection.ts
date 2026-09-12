@@ -8,7 +8,7 @@ export function projectTurnStream(state: TurnStreamState, responseId: string): T
   if (state.phase === "idle") return undefined;
   const blocks = state.activity.flatMap<TurnResponseBlock>((activity) => activity.type === "assistant-message" ? projectAssistantBlock(state, activity, responseId) : projectAgentExecutionBlock(state, activity, responseId));
   const metrics = { ...(state.startedAt === undefined ? {} : { startedAt: state.startedAt }), ...(state.completedAt === undefined ? {} : { completedAt: state.completedAt }), usage: aggregateTurnUsage(state.usageEvents), toolCount: state.toolExecutions.length };
-  return { type: "response", id: responseId, status: projectResponseStatus(state), blocks, metrics };
+  return { type: "response", id: responseId, turnId: state.turnId, status: projectResponseStatus(state), blocks, metrics };
 }
 function projectAssistantBlock(state: TurnStreamState, activity: Extract<TurnStreamActivity, { type: "assistant-message" }>, responseId: string): AssistantTextBlock[] {
   const message = state.assistantMessages[activity.messageIndex];

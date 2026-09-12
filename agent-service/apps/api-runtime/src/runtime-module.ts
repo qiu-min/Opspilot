@@ -90,7 +90,11 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     toolPresentationResolver,
   });
   const recoverTurnsOnStartup = new RecoverTurnsOnStartup({ turnStore, resumeTurn });
-  const getSessionHistory = new GetSessionHistory(sessionStore);
+  const getSessionHistory = new GetSessionHistory({
+    sessionStore,
+    turnStore,
+    toolPresentationResolver,
+  });
   const createSession = new CreateSession(sessionStore);
   const getActiveTurn = new GetActiveTurn(turnStreamHub);
   const subscribeTurnStream = new SubscribeTurnStream(turnStreamHub);

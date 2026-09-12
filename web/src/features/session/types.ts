@@ -15,7 +15,7 @@ export type AgentExecutionStep = { id: string; callId: string; name: string; sta
 export type AgentExecutionBlock = { type: "agent_execution"; id: string; batchId: string; steps: AgentExecutionStep[] };
 export type TurnResponseBlock = AssistantTextBlock | AgentExecutionBlock;
 export type TurnResponseMetrics = { startedAt?: string; completedAt?: string; usage: TurnUsage | null; toolCount: number };
-export type TurnResponseItem = { type: "response"; id: string; status: TurnResponseStatus; blocks: TurnResponseBlock[]; metrics?: TurnResponseMetrics };
+export type TurnResponseItem = { type: "response"; id: string; turnId?: string; status: TurnResponseStatus; blocks: TurnResponseBlock[]; metrics?: TurnResponseMetrics };
 export type GeneratedArtifact = { id: string; name: string; detail: string; size: string; kind: AttachmentKind; generatedAt: string };
 export type SessionItem =
   | { type: "message"; id: string; message: ChatMessage }

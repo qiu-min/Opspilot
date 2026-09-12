@@ -1,4 +1,4 @@
-import type { SessionDetailResponse, SessionHistoryItemResponse, SessionSummaryResponse } from "../../api/sessions/session-contracts";
+import type { SessionDetailResponse, SessionHistoryItemResponse, SessionSummaryResponse, TurnPresentationSummaryResponse } from "../../api/sessions/session-contracts";
 import type { AgentExecutionBlock, AssistantTextBlock, AgentExecutionStep, ChatMessage, SessionItem, SessionSummary, TurnResponseBlock, TurnResponseItem } from "./types";
 
 export function toSessionSummary(response: SessionSummaryResponse): SessionSummary { return { id: response.id, title: response.title, updatedAt: response.updatedAtUtc }; }
@@ -6,31 +6,40 @@ export function toSessionSummary(response: SessionSummaryResponse): SessionSumma
 /** Projects durable Agent Service history into the existing visual timeline. */
 export function toSessionItems(response: SessionDetailResponse): SessionItem[] {
   const items: SessionItem[] = [];
+  const summaryByInputEntryId = new Map(response.turnSummaries.map((summary) => [summary.inputEntryId, summary] as const));
   let blocks: TurnResponseBlock[] = [];
   let responseIdSeed: string | null = null;
+  let turnSummary: TurnPresentationSummaryResponse | undefined;
   let tools: AgentExecutionStep[] = [];
   const flushTools = () => { if (tools.length === 0) return; const first = tools[0]; blocks.push({ type: "agent_execution", id: `execution-${first.callId}`, batchId: `tool-batch-${first.callId}`, steps: tools }); tools = []; };
-  const flushResponse = () => { flushTools(); if (blocks.length === 0) return; items.push({ type: "response", id: `response-${responseIdSeed ?? blocks[0].id}`, status: "completed", blocks }); blocks = []; responseIdSeed = null; };
+  const flushResponse = () => {
+    flushTools();
+    if (blocks.length === 0 && turnSummary === undefined) return;
+    const responseId = turnSummary === undefined ? `response-${responseIdSeed ?? blocks[0]?.id ?? "unknown"}` : `turn-${turnSummary.turnId}`;
+    items.push({
+      type: "response",
+      id: responseId,
+      ...(turnSummary === undefined ? {} : { turnId: turnSummary.turnId }),
+      status: turnSummary === undefined ? "completed" : toTurnResponseStatus(turnSummary.status),
+      blocks,
+      ...(turnSummary === undefined ? {} : { metrics: toTurnMetrics(turnSummary) }),
+    });
+    blocks = [];
+    responseIdSeed = null;
+    turnSummary = undefined;
+  };
   for (const item of response.items) {
-    if (item.type === "message" && item.role === "user") { flushResponse(); items.push({ type: "message", id: item.id, message: toChatMessage(item) }); responseIdSeed = item.id; continue; }
-    if (item.type === "tool_execution") { if (responseIdSeed === null) responseIdSeed = item.id; tools.push(toToolStep(item)); continue; }
+    if (item.type === "message" && item.role === "user") { flushResponse(); items.push({ type: "message", id: item.id, message: toChatMessage(item) }); responseIdSeed = item.id; turnSummary = summaryByInputEntryId.get(item.id); continue; }
+    if (item.type === "tool_execution") { if (responseIdSeed === null) responseIdSeed = item.id; tools.push(toToolStep(item, turnSummary)); continue; }
     flushTools(); const block = toAssistantBlock(item); if (block === undefined) continue; if (responseIdSeed === null) responseIdSeed = block.id; blocks.push(block);
   }
   flushResponse();
   return items;
 }
 
-/** Returns the only durable response that appeared after a terminal refresh. */
-export function findNewDurableResponseId(previousItems: SessionItem[], refreshedItems: SessionItem[]): string | undefined {
-  const previousResponseIds = new Set(previousItems.filter((item): item is TurnResponseItem => item.type === "response").map((item) => item.id));
-  const newResponseIds = refreshedItems.filter((item): item is TurnResponseItem => item.type === "response" && !previousResponseIds.has(item.id)).map((item) => item.id);
-  return newResponseIds.length === 1 ? newResponseIds[0] : undefined;
-}
-
-export function mergeLiveTurnResponse(durableItems: SessionItem[], liveResponse: TurnResponseItem | undefined, liveResponseId: string | undefined, durableResponseId?: string): SessionItem[] {
+export function mergeLiveTurnResponse(durableItems: SessionItem[], liveResponse: TurnResponseItem | undefined, liveResponseId: string | undefined): SessionItem[] {
   if (liveResponse === undefined || liveResponseId === undefined) return durableItems;
-  const explicitIndex = durableResponseId === undefined ? -1 : durableItems.findIndex((item) => item.type === "response" && item.id === durableResponseId);
-  const index = explicitIndex >= 0 ? explicitIndex : durableItems.findIndex((item) => item.type === "response" && (item.id === liveResponseId || hasSharedToolCall(item, liveResponse)));
+  const index = durableItems.findIndex((item) => item.type === "response" && (item.id === liveResponseId || hasSharedToolCall(item, liveResponse)));
   if (index < 0) return [...durableItems, liveResponse];
   const next = [...durableItems];
   next[index] = mergeResponseBlocks(next[index] as TurnResponseItem, liveResponse);
@@ -38,15 +47,36 @@ export function mergeLiveTurnResponse(durableItems: SessionItem[], liveResponse:
 }
 
 /** Durable history is authoritative after terminal events; live blocks only preserve current UI identity. */
-export function reconcileSessionItems(durableItems: SessionItem[], liveResponseId?: string, liveResponse?: TurnResponseItem, durableResponseId?: string): SessionItem[] {
+export function reconcileSessionItems(durableItems: SessionItem[], liveResponseId?: string, liveResponse?: TurnResponseItem): SessionItem[] {
   if (liveResponseId === undefined || liveResponse === undefined) return durableItems;
-  return mergeLiveTurnResponse(durableItems, liveResponse, liveResponseId, durableResponseId);
+  return mergeLiveTurnResponse(durableItems, liveResponse, liveResponseId);
 }
 export function formatMessageCreatedAt(createdAt = new Date().toISOString()): string { const date = new Date(createdAt); return Number.isNaN(date.getTime()) ? "Recently" : new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date); }
 
 function toAssistantBlock(item: Extract<SessionHistoryItemResponse, { type: "message" }>): AssistantTextBlock | undefined { return item.role === "assistant" ? { type: "assistant_text", id: `assistant-${item.id}`, text: item.text, completed: true } : undefined; }
-function toToolStep(item: Extract<SessionHistoryItemResponse, { type: "tool_execution" }>): AgentExecutionStep { return { id: item.callId, callId: item.callId, name: item.name, status: item.status }; }
+function toToolStep(item: Extract<SessionHistoryItemResponse, { type: "tool_execution" }>, summary: TurnPresentationSummaryResponse | undefined): AgentExecutionStep {
+  const tool = summary?.tools.find((candidate) => candidate.callId === item.callId);
+  return {
+    id: item.callId,
+    callId: item.callId,
+    name: item.name,
+    status: item.status,
+    ...(tool?.display === undefined ? {} : { display: tool.display }),
+    ...(tool?.startedAt === undefined ? {} : { startedAt: tool.startedAt }),
+    ...(tool?.completedAt === undefined ? {} : { completedAt: tool.completedAt }),
+  };
+}
 function toChatMessage(item: Extract<SessionHistoryItemResponse, { type: "message" }>): ChatMessage { return { id: item.id, role: item.role, body: item.text, createdAt: formatMessageCreatedAt(item.createdAtUtc) }; }
+
+function toTurnMetrics(summary: TurnPresentationSummaryResponse): NonNullable<TurnResponseItem["metrics"]> {
+  return { startedAt: summary.startedAt, completedAt: summary.completedAt, usage: summary.usage, toolCount: summary.tools.length };
+}
+
+function toTurnResponseStatus(status: TurnPresentationSummaryResponse["status"]): TurnResponseItem["status"] {
+  if (status === "failed") return "failed";
+  if (status === "cancelled") return "aborted";
+  return "completed";
+}
 
 function mergeResponseBlocks(durableResponse: TurnResponseItem, liveResponse: TurnResponseItem): TurnResponseItem {
   const durableCallIds = new Set(

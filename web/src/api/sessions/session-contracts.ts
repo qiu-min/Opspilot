@@ -1,3 +1,5 @@
+import type { ToolDisplayInfo } from "./turn-stream-contracts";
+
 export type SessionSummaryResponse = {
   id: string;
   title: string;
@@ -10,11 +12,30 @@ export type SessionDetailResponse = {
   createdAtUtc: string;
   updatedAtUtc: string;
   items: SessionHistoryItemResponse[];
+  turnSummaries: TurnPresentationSummaryResponse[];
 };
 
 export type SessionHistoryItemResponse =
   | { type: "message"; id: string; role: "user" | "assistant"; text: string; createdAtUtc: string }
   | { type: "tool_execution"; id: string; callId: string; name: string; status: "completed" | "failed"; createdAtUtc: string };
+
+export type TurnPresentationSummaryResponse = {
+  turnId: string;
+  sessionId: string;
+  inputEntryId: string;
+  status: "completed" | "failed" | "cancelled";
+  startedAt: string;
+  completedAt: string;
+  usage: { inputTokens: number; outputTokens: number; totalTokens: number } | null;
+  tools: Array<{
+    callId: string;
+    name: string;
+    status: "completed" | "failed";
+    display?: ToolDisplayInfo;
+    startedAt?: string;
+    completedAt?: string;
+  }>;
+};
 
 export type CreateSessionResponse = {
   id: string;
@@ -41,4 +62,3 @@ export type TurnStreamProjectionResponse = {
 export type ActiveTurnResponse = {
   activeTurn: { turnId: string; sessionId: string; status: "running"; projection: TurnStreamProjectionResponse } | null;
 };
-import type { ToolDisplayInfo } from "./turn-stream-contracts";
