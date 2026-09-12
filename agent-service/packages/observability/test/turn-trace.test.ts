@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { TurnEvent } from '@opspilot/domain';
 
-import { projectTurnTrace } from '../src/index.js';
+import { projectTurnTrace, type ToolTraceSpan } from '../src/index.js';
 
 const turnId = 'turn-1';
 const sessionId = 'session-1';
@@ -35,7 +35,7 @@ describe('projectTurnTrace', () => {
     });
     expect(trace.spans.map((span) => span.id)).toEqual([
       'model:model-call-A',
-      'tool:tool-call-X',
+      'tool:tool-call-X:attempt:1',
       'model:model-call-B',
     ]);
     expect(trace.spans[0]).toMatchObject({
@@ -108,7 +108,7 @@ describe('projectTurnTrace', () => {
     ]);
 
     expect(trace.spans[0]).toMatchObject({
-      id: 'tool:tool-call-X',
+      id: 'tool:tool-call-X:attempt:1',
       status: 'incomplete',
       startSequence: 2,
       requestedAt: timestamp(1),
@@ -117,6 +117,42 @@ describe('projectTurnTrace', () => {
       durationMs: null,
       isError: false,
     });
+  });
+
+  it('projects retry-safe Tool executions as separate attempt spans', () => {
+    const trace = projectTurnTrace([
+      turnStarted(0, 1),
+      toolRequested(1, 'tool-call-X', 'lookup', 1),
+      toolStarted(2, 'tool-call-X', 'lookup', 1),
+      turnResumed(3, 2),
+      toolStarted(4, 'tool-call-X', 'lookup', 2),
+      toolCompleted(5, 'tool-call-X', 'lookup', false, 2),
+    ]);
+
+    expect(trace.spans).toHaveLength(2);
+    expect(trace.spans[0]).toMatchObject({
+      id: 'tool:tool-call-X:attempt:1',
+      callId: 'tool-call-X',
+      attempt: 1,
+      status: 'incomplete',
+      startedAt: timestamp(2),
+      endedAt: null,
+      durationMs: null,
+    });
+    expect(trace.spans[1]).toMatchObject({
+      id: 'tool:tool-call-X:attempt:2',
+      callId: 'tool-call-X',
+      attempt: 2,
+      status: 'completed',
+      requestedAt: null,
+      startedAt: timestamp(4),
+      endedAt: timestamp(5),
+      durationMs: 1_000,
+    });
+    const toolSpans = trace.spans.filter((span): span is ToolTraceSpan => span.kind === 'tool');
+    expect(toolSpans[0]?.callId).toBe(toolSpans[1]?.callId);
+    expect(toolSpans[0]?.attempt).not.toBe(toolSpans[1]?.attempt);
+    expect(toolSpans[0]?.id).not.toBe(toolSpans[1]?.id);
   });
 
   it('pairs serial compaction events and preserves completion metadata', () => {
@@ -155,6 +191,21 @@ describe('projectTurnTrace', () => {
       endedAt: null,
       durationMs: null,
     });
+  });
+
+  it('pairs compaction completion only with an open compaction in the same attempt', () => {
+    const trace = projectTurnTrace([
+      turnStarted(0, 1),
+      compactionStarted(1, 1),
+      turnResumed(2, 2),
+      compactionStarted(3, 2),
+      compactionCompleted(4, undefined, undefined, 2),
+    ]);
+
+    expect(trace.spans).toMatchObject([
+      { id: 'compaction:1', attempt: 1, status: 'incomplete', endSequence: null },
+      { id: 'compaction:3', attempt: 2, status: 'completed', endSequence: 4 },
+    ]);
   });
 
   it('keeps model calls from different recovery attempts separate', () => {
@@ -220,7 +271,7 @@ describe('projectTurnTrace', () => {
         durationMs: null,
       },
       {
-        id: 'tool:tool-call-X',
+        id: 'tool:tool-call-X:attempt:1',
         status: 'incomplete',
         startedAt: null,
         endedAt: timestamp(2),
@@ -260,6 +311,13 @@ function turnFailed(sequence: number, message: string, attempt = 1): TurnEvent {
     ...baseEvent(sequence, attempt),
     type: 'turn_failed',
     message,
+  };
+}
+
+function turnResumed(sequence: number, attempt: number): TurnEvent {
+  return {
+    ...baseEvent(sequence, attempt),
+    type: 'turn_resumed',
   };
 }
 
@@ -342,15 +400,15 @@ function compactionStarted(sequence: number, attempt = 1): TurnEvent {
 
 function compactionCompleted(
   sequence: number,
-  entryId: string,
-  sessionLeafId: string,
+  entryId: string | undefined,
+  sessionLeafId: string | undefined,
   attempt = 1,
 ): TurnEvent {
   return {
     ...baseEvent(sequence, attempt),
     type: 'compaction_completed',
-    entryId,
-    sessionLeafId,
+    ...(entryId === undefined ? {} : { entryId }),
+    ...(sessionLeafId === undefined ? {} : { sessionLeafId }),
   };
 }
 

@@ -271,7 +271,8 @@ function getToolState(
   name: string,
   attempt: number,
 ): ToolSpanState {
-  const existing = spans.get(callId);
+  const key = getToolExecutionKey(callId, attempt);
+  const existing = spans.get(key);
   if (existing !== undefined) return existing;
   const created: ToolSpanState = {
     callId,
@@ -286,7 +287,7 @@ function getToolState(
     hasCompletion: false,
     isError: false,
   };
-  spans.set(callId, created);
+  spans.set(key, created);
   return created;
 }
 
@@ -309,7 +310,6 @@ function projectToolStarted(
   const state = getToolState(spans, event.callId, event.name, event.attempt);
   if (state.startedSequence !== null) return;
   state.attempt = event.attempt;
-  state.name = state.name || event.name;
   state.startedSequence = event.sequence;
   state.startedAt = event.timestamp;
 }
@@ -332,7 +332,7 @@ function projectCompactionCompleted(
   spans: CompactionSpanState[],
   event: Extract<TurnEvent, { type: 'compaction_completed' }>,
 ): void {
-  const open = spans.find((span) => !span.hasCompletion);
+  const open = spans.find((span) => !span.hasCompletion && span.attempt === event.attempt);
   if (open === undefined) return;
   open.endSequence = event.sequence;
   open.endedAt = event.timestamp;
@@ -371,7 +371,7 @@ function toToolTraceSpan(state: ToolSpanState): ToolTraceSpan {
     state.endSequence !== null &&
     state.endSequence >= state.startedSequence;
   return {
-    id: `tool:${state.callId}`,
+    id: `tool:${state.callId}:attempt:${state.attempt}`,
     kind: 'tool',
     callId: state.callId,
     name: state.name,
@@ -385,6 +385,11 @@ function toToolTraceSpan(state: ToolSpanState): ToolTraceSpan {
     requestedAt: state.requestedAt,
     isError: state.isError,
   };
+}
+
+/** Keeps one Tool execution span per logical call and durable attempt. */
+function getToolExecutionKey(callId: string, attempt: number): string {
+  return `${callId}:${attempt}`;
 }
 
 /** Converts internal compaction state into the public immutable projection shape. */
