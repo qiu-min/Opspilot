@@ -84,6 +84,7 @@ sessions/{sessionId}/
 - `POST /sessions/{sessionId}/turns`：在指定 Session 上执行 Turn。
 - `POST /sessions/{sessionId}/turns/stream`：在指定 Session 上启动 Turn 并连接首个 live SSE subscriber。
 - `GET /sessions/{sessionId}/history`：供 Backend 读取当前 active branch 的 UI-safe 历史 projection，以及从 durable Turn / TurnEvent / SessionEntry 重建的 terminal `turnSummaries`。
+- `GET /turns/{turnId}/trace`：从 durable `TurnEvent[]` 即时投影并返回该 Turn 的 `TurnTrace`；`TurnEvent` 是事实来源，`TurnTrace` 是只读派生 read model。
 - `GET /sessions/{sessionId}/active-turn`：读取当前进程中可 reattach 的 live Turn 及 projection。
 - `GET /turns/{turnId}/stream?after=N`：订阅已有 Turn 的 live stream；不会创建或重新执行 Turn。
 

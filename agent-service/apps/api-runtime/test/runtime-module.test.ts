@@ -4,7 +4,7 @@ import { join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { ApiModule, EXCEL_RESOURCE_PATH_RESOLVER } from '@opspilot/api';
-import { ExecuteTurn } from '@opspilot/application';
+import { ExecuteTurn, GetTurnTrace } from '@opspilot/application';
 import { describe, expect, it } from 'vitest';
 
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -24,10 +24,7 @@ describe('API runtime composition root', () => {
   it('creates exactly the two Excel discovery tools', () => {
     const tools = createExcelDiscoveryToolDefinitions();
 
-    expect(tools.map((tool) => tool.name)).toEqual([
-      'get_workbook_info',
-      'get_sheet_profile',
-    ]);
+    expect(tools.map((tool) => tool.name)).toEqual(['get_workbook_info', 'get_sheet_profile']);
     expect(tools).toHaveLength(2);
     expect(tools[0]?.parameters).toEqual({
       type: 'object',
@@ -53,6 +50,7 @@ describe('API runtime composition root', () => {
       }).compile();
 
       expect(module.get(ExecuteTurn)).toBeInstanceOf(ExecuteTurn);
+      expect(module.get(GetTurnTrace)).toBeInstanceOf(GetTurnTrace);
       expect(module.get(EXCEL_RESOURCE_PATH_RESOLVER)).toBeInstanceOf(
         FileSystemExcelResourcePathResolver,
       );

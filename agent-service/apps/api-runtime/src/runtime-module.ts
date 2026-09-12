@@ -7,6 +7,7 @@ import {
   GetActiveTurn,
   CreateSession,
   GetSessionHistory,
+  GetTurnTrace,
   ExecuteTurn,
   InMemorySessionRunCoordinator,
   RecoverTurnsOnStartup,
@@ -95,6 +96,7 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     turnStore,
     toolPresentationResolver,
   });
+  const getTurnTrace = new GetTurnTrace({ turnStore });
   const createSession = new CreateSession(sessionStore);
   const getActiveTurn = new GetActiveTurn(turnStreamHub);
   const subscribeTurnStream = new SubscribeTurnStream(turnStreamHub);
@@ -105,6 +107,7 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
       { provide: ResumeTurn, useValue: resumeTurn },
       { provide: RecoverTurnsOnStartup, useValue: recoverTurnsOnStartup },
       { provide: GetSessionHistory, useValue: getSessionHistory },
+      { provide: GetTurnTrace, useValue: getTurnTrace },
       { provide: CreateSession, useValue: createSession },
       { provide: GetActiveTurn, useValue: getActiveTurn },
       { provide: SubscribeTurnStream, useValue: subscribeTurnStream },
@@ -113,6 +116,7 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     exports: [
       ExecuteTurn,
       GetSessionHistory,
+      GetTurnTrace,
       CreateSession,
       GetActiveTurn,
       SubscribeTurnStream,

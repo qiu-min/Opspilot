@@ -5,7 +5,7 @@ export interface TurnStore {
   /** Publishes a new Turn snapshot. */
   create(turn: Turn): void;
 
-  /** Loads one Turn or raises an adapter-specific not-found error. */
+  /** Loads one Turn or raises TurnNotFoundError when its durable state is absent. */
   load(turnId: string): Turn;
 
   /** Replaces the current Turn snapshot. */

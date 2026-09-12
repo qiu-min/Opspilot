@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 
+import { TurnNotFoundError } from '@opspilot/application';
 import type { TurnStore } from '@opspilot/application';
 import {
   Turn,
@@ -272,7 +273,7 @@ export class FileSystemTurnStore implements TurnStore {
 
   private assertCompleteLayout(turnId: string, paths: TurnPaths): void {
     if (!existsSync(paths.directory) || !isDirectory(paths.directory)) {
-      throw new TurnStoreError(`Turn directory does not exist: ${turnId}.`);
+      throw new TurnNotFoundError(turnId);
     }
     if (!existsSync(paths.metadata) || !existsSync(paths.events)) {
       throw new TurnStoreError(

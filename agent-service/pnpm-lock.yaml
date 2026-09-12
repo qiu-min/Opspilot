@@ -348,6 +348,9 @@ importers:
       '@opspilot/model-gateway':
         specifier: workspace:*
         version: link:../model-gateway
+      '@opspilot/observability':
+        specifier: workspace:*
+        version: link:../observability
       '@opspilot/tool-gateway':
         specifier: workspace:*
         version: link:../tool-gateway

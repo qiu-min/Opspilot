@@ -9,6 +9,7 @@ import {
 import type { ExceptionFilter } from '@nestjs/common';
 import type { Response } from 'express';
 import {
+  TurnNotFoundError,
   TurnStreamNotFoundError,
   TurnStreamReplayGapError,
   TurnStreamSessionConflictError,
@@ -48,6 +49,9 @@ export class ApiExceptionFilter implements ExceptionFilter {
 }
 
 function mapException(exception: unknown): MappedError {
+  if (exception instanceof TurnNotFoundError) {
+    return { statusCode: 404, code: 'NOT_FOUND', message: 'Turn not found.' };
+  }
   if (exception instanceof TurnStreamReplayGapError) {
     return {
       statusCode: 409,

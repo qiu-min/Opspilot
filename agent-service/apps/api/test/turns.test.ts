@@ -5,7 +5,12 @@ import {
   ExecuteTurn,
   GetActiveTurn,
   GetSessionHistory,
+  GetTurnTrace,
+  TurnNotFoundError,
   SubscribeTurnStream,
+  type TurnState,
+  type TurnEvent,
+  type TurnStore,
   type TurnStreamEvent,
   type TurnStreamEventDraftPayload,
   type TurnStreamHub,
@@ -251,6 +256,162 @@ describe('Turn API', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it('returns the durable completed TurnTrace projection', async () => {
+    const server = await startServer(
+      unusedExecute(),
+      defaultExcelResourcePathResolver,
+      createScriptedStreamHub([]),
+      createTraceQuery([
+        traceTurnStarted(0),
+        traceModelStarted(1, 'model-call-A'),
+        traceModelCompleted(2, 'model-call-A'),
+        traceUsage(3, 'model-call-A'),
+        traceToolRequested(4, 'tool-call-X', 'lookup'),
+        traceToolStarted(5, 'tool-call-X', 'lookup'),
+        traceToolCompleted(6, 'tool-call-X', 'lookup', false),
+        traceModelStarted(7, 'model-call-B'),
+        traceModelCompleted(8, 'model-call-B'),
+        traceTurnCompleted(9),
+      ]),
+    );
+    app = server.app;
+
+    const response = await getJson(server.port, '/turns/turn-trace-1/trace');
+    const trace = JSON.parse(response.body);
+
+    expect(response.statusCode).toBe(200);
+    expect(trace).toMatchObject({
+      turnId: 'turn-trace-1',
+      sessionId: 'session-trace-1',
+      status: 'completed',
+    });
+    expect(trace.spans.map((span: { readonly kind: string }) => span.kind)).toEqual([
+      'model',
+      'tool',
+      'model',
+    ]);
+    expect(trace.spans[0]).toMatchObject({
+      modelCallId: 'model-call-A',
+      status: 'completed',
+      usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+    });
+    expect(trace.spans[1]).toMatchObject({
+      callId: 'tool-call-X',
+      name: 'lookup',
+      status: 'completed',
+      durationMs: 1_000,
+    });
+    expect(trace.spans[2]).toMatchObject({
+      modelCallId: 'model-call-B',
+      status: 'completed',
+    });
+  });
+
+  it('returns a running Trace with an incomplete model span', async () => {
+    const server = await startServer(
+      unusedExecute(),
+      defaultExcelResourcePathResolver,
+      createScriptedStreamHub([]),
+      createTraceQuery([traceTurnStarted(0), traceModelStarted(1, 'model-call-A')]),
+    );
+    app = server.app;
+
+    const response = await getJson(server.port, '/turns/turn-trace-1/trace');
+    const trace = JSON.parse(response.body);
+
+    expect(response.statusCode).toBe(200);
+    expect(trace.status).toBe('running');
+    expect(trace.spans[0]).toMatchObject({
+      modelCallId: 'model-call-A',
+      status: 'incomplete',
+      endedAt: null,
+      durationMs: null,
+    });
+  });
+
+  it.each([
+    ['failed', traceTurnFailed(2, 'provider failed')],
+    ['cancelled', traceTurnCancelled(2)],
+  ] as const)('returns HTTP 200 for a %s Turn', async (status, terminalEvent) => {
+    const server = await startServer(
+      unusedExecute(),
+      defaultExcelResourcePathResolver,
+      createScriptedStreamHub([]),
+      createTraceQuery([traceTurnStarted(0), traceModelStarted(1, 'model-call-A'), terminalEvent]),
+    );
+    app = server.app;
+
+    const response = await getJson(server.port, '/turns/turn-trace-1/trace');
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body).status).toBe(status);
+  });
+
+  it('returns separate recovery attempt spans through the query boundary', async () => {
+    const server = await startServer(
+      unusedExecute(),
+      defaultExcelResourcePathResolver,
+      createScriptedStreamHub([]),
+      createTraceQuery([
+        traceTurnStarted(0, 1),
+        traceModelStarted(1, 'model-call-A', 1),
+        traceToolRequested(2, 'tool-call-X', 'lookup', 1),
+        traceToolStarted(3, 'tool-call-X', 'lookup', 1),
+        traceTurnResumed(4, 2),
+        traceModelStarted(5, 'model-call-B', 2),
+        traceModelCompleted(6, 'model-call-B', 2),
+        traceToolStarted(7, 'tool-call-X', 'lookup', 2),
+        traceToolCompleted(8, 'tool-call-X', 'lookup', false, 2),
+      ]),
+    );
+    app = server.app;
+
+    const response = await getJson(server.port, '/turns/turn-trace-1/trace');
+    const trace = JSON.parse(response.body);
+
+    expect(response.statusCode).toBe(200);
+    expect(trace.spans).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'model:model-call-A',
+          attempt: 1,
+          status: 'incomplete',
+        }),
+        expect.objectContaining({
+          id: 'tool:tool-call-X:attempt:1',
+          attempt: 1,
+          status: 'incomplete',
+        }),
+        expect.objectContaining({
+          id: 'model:model-call-B',
+          attempt: 2,
+          status: 'completed',
+        }),
+        expect.objectContaining({
+          id: 'tool:tool-call-X:attempt:2',
+          attempt: 2,
+          status: 'completed',
+          requestedAt: null,
+        }),
+      ]),
+    );
+  });
+
+  it('returns 404 instead of an empty Trace when the Turn does not exist', async () => {
+    const server = await startServer(
+      unusedExecute(),
+      defaultExcelResourcePathResolver,
+      createScriptedStreamHub([]),
+      createNotFoundTraceQuery('missing-turn'),
+    );
+    app = server.app;
+
+    const response = await getJson(server.port, '/turns/missing-turn/trace');
+
+    expect(response.statusCode).toBe(404);
+    expect(JSON.parse(response.body)).toMatchObject({ code: 'NOT_FOUND' });
+  });
+
   it('writes Hub TurnStreamEvents in order and ends after a terminal event', async () => {
     const hub = createScriptedStreamHub([
       streamEvent({ type: 'turn_started' }, 0),
@@ -266,6 +427,7 @@ describe('Turn API', () => {
       { execute } as ExecuteTurn,
       defaultExcelResourcePathResolver,
       new SubscribeTurnStream(hub),
+      unusedTurnTraceQuery(),
     );
     const request = new EventEmitter() as Request;
     const response = new FakeResponse();
@@ -396,6 +558,7 @@ describe('Turn API', () => {
       { execute } as ExecuteTurn,
       defaultExcelResourcePathResolver,
       new SubscribeTurnStream(hub),
+      unusedTurnTraceQuery(),
     );
 
     const operation = controller.streamTurn(
@@ -416,6 +579,7 @@ async function startServer(
   execute: ExecuteTurn['execute'],
   excelResourcePathResolver: ExcelResourcePathResolver = defaultExcelResourcePathResolver,
   streamHub: TurnStreamHub = createScriptedStreamHub([]),
+  getTurnTrace: GetTurnTrace = unusedTurnTraceQuery(),
 ): Promise<{
   readonly app: INestApplication;
   readonly port: number;
@@ -432,12 +596,14 @@ async function startServer(
           { provide: EXCEL_RESOURCE_PATH_RESOLVER, useValue: excelResourcePathResolver },
           { provide: GetActiveTurn, useValue: new GetActiveTurn(streamHub) },
           { provide: SubscribeTurnStream, useValue: new SubscribeTurnStream(streamHub) },
+          { provide: GetTurnTrace, useValue: getTurnTrace },
         ],
         exports: [
           ExecuteTurn,
           GetSessionHistory,
           GetActiveTurn,
           SubscribeTurnStream,
+          GetTurnTrace,
           EXCEL_RESOURCE_PATH_RESOLVER,
         ],
       }),
@@ -453,6 +619,53 @@ async function startServer(
     throw new Error('Test server did not expose a TCP address.');
   }
   return { app: testApp, port: address.port };
+}
+
+function unusedTurnTraceQuery(): GetTurnTrace {
+  return {
+    execute: () => {
+      throw new Error('GetTurnTrace is not used by this test.');
+    },
+  } as unknown as GetTurnTrace;
+}
+
+function unusedExecute(): ExecuteTurn['execute'] {
+  return async () => turnResult;
+}
+
+function createTraceQuery(events: readonly TurnEvent[]): GetTurnTrace {
+  const state = createTraceTurnState();
+  const storedTurn = { getState: () => state } as unknown as ReturnType<TurnStore['load']>;
+  const turnStore = {
+    load: () => storedTurn,
+    loadEvents: () => events,
+  } as unknown as TurnStore;
+  return new GetTurnTrace({ turnStore });
+}
+
+function createNotFoundTraceQuery(turnId: string): GetTurnTrace {
+  const turnStore = {
+    load: () => {
+      throw new TurnNotFoundError(turnId);
+    },
+  } as unknown as TurnStore;
+  return new GetTurnTrace({ turnStore });
+}
+
+function createTraceTurnState(): TurnState {
+  return {
+    id: 'turn-trace-1',
+    sessionId: 'session-trace-1',
+    status: 'running',
+    baseLeafId: null,
+    inputEntryId: null,
+    resultLeafId: null,
+    attempt: 1,
+    checkpoint: null,
+    createdAt: timestamp(0),
+    startedAt: timestamp(0),
+    completedAt: null,
+  };
 }
 
 function postJson(port: number, path: string, body: unknown): Promise<HttpResponse> {
@@ -484,6 +697,34 @@ function postBody(port: number, path: string, body: string): Promise<HttpRespons
     );
     request.on('error', reject);
     request.end(body);
+  });
+}
+
+function getJson(port: number, path: string): Promise<HttpResponse> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(
+      {
+        host: '127.0.0.1',
+        port,
+        path,
+        method: 'GET',
+        headers: { accept: 'application/json' },
+      },
+      (response) => {
+        const chunks: string[] = [];
+        response.setEncoding('utf8');
+        response.on('data', (chunk: string) => chunks.push(chunk));
+        response.on('end', () => {
+          resolve({
+            statusCode: response.statusCode ?? 0,
+            headers: response.headers,
+            body: chunks.join(''),
+          });
+        });
+      },
+    );
+    request.on('error', reject);
+    request.end();
   });
 }
 
@@ -525,6 +766,92 @@ function createBlockingStreamHub(onReturn: () => void): TurnStreamHub {
       },
     }),
   } as unknown as TurnStreamHub;
+}
+
+function traceTurnStarted(sequence: number, attempt = 1): TurnEvent {
+  return { ...traceBaseEvent(sequence, attempt), type: 'turn_started' };
+}
+
+function traceTurnResumed(sequence: number, attempt: number): TurnEvent {
+  return { ...traceBaseEvent(sequence, attempt), type: 'turn_resumed' };
+}
+
+function traceTurnCompleted(sequence: number, attempt = 1): TurnEvent {
+  return { ...traceBaseEvent(sequence, attempt), type: 'turn_completed', resultLeafId: null };
+}
+
+function traceTurnFailed(sequence: number, message: string, attempt = 1): TurnEvent {
+  return { ...traceBaseEvent(sequence, attempt), type: 'turn_failed', message };
+}
+
+function traceTurnCancelled(sequence: number, attempt = 1): TurnEvent {
+  return { ...traceBaseEvent(sequence, attempt), type: 'turn_cancelled' };
+}
+
+function traceModelStarted(sequence: number, modelCallId: string, attempt = 1): TurnEvent {
+  return { ...traceBaseEvent(sequence, attempt), type: 'model_started', modelCallId };
+}
+
+function traceModelCompleted(sequence: number, modelCallId: string, attempt = 1): TurnEvent {
+  return { ...traceBaseEvent(sequence, attempt), type: 'model_completed', modelCallId };
+}
+
+function traceUsage(sequence: number, modelCallId: string, attempt = 1): TurnEvent {
+  return {
+    ...traceBaseEvent(sequence, attempt),
+    type: 'usage_recorded',
+    modelCallId,
+    inputTokens: 10,
+    outputTokens: 20,
+    totalTokens: 30,
+  };
+}
+
+function traceToolRequested(
+  sequence: number,
+  callId: string,
+  name: string,
+  attempt = 1,
+): TurnEvent {
+  return { ...traceBaseEvent(sequence, attempt), type: 'tool_requested', callId, name };
+}
+
+function traceToolStarted(sequence: number, callId: string, name: string, attempt = 1): TurnEvent {
+  return { ...traceBaseEvent(sequence, attempt), type: 'tool_started', callId, name };
+}
+
+function traceToolCompleted(
+  sequence: number,
+  callId: string,
+  name: string,
+  isError: boolean,
+  attempt = 1,
+): TurnEvent {
+  return {
+    ...traceBaseEvent(sequence, attempt),
+    type: 'tool_completed',
+    callId,
+    name,
+    isError,
+    resultEntryId: `result-${callId}-${attempt}`,
+    sessionLeafId: `leaf-${callId}-${attempt}`,
+  };
+}
+
+function traceBaseEvent(sequence: number, attempt: number): Omit<TurnEvent, 'type'> {
+  return {
+    version: 2,
+    id: `trace-event-${sequence}-${attempt}`,
+    turnId: 'turn-trace-1',
+    sessionId: 'session-trace-1',
+    sequence,
+    attempt,
+    timestamp: timestamp(sequence),
+  };
+}
+
+function timestamp(sequence: number): string {
+  return new Date(Date.UTC(2026, 0, 1, 0, 0, sequence)).toISOString();
 }
 
 function streamEvent(payload: TurnStreamEventDraftPayload, sequence: number): TurnStreamEvent {

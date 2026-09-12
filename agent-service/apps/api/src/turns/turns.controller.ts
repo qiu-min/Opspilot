@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import {
   ExecuteTurn,
+  GetTurnTrace,
   SubscribeTurnStream,
   type ExcelResource,
   type TurnStreamEvent,
@@ -40,6 +41,7 @@ export class TurnsController {
     @Inject(EXCEL_RESOURCE_PATH_RESOLVER)
     private readonly excelResourcePathResolver: ExcelResourcePathResolver,
     private readonly subscribeTurnStream: SubscribeTurnStream,
+    private readonly getTurnTrace: GetTurnTrace,
   ) {}
 
   @Post('turns')
@@ -78,6 +80,12 @@ export class TurnsController {
     @Res() response: Response,
   ): Promise<void> {
     await this.streamTurnForSession(request, incomingRequest, response, sessionId);
+  }
+
+  /** Returns the deterministic Trace projection rebuilt from a Turn's durable events. */
+  @Get('turns/:turnId/trace')
+  getTrace(@Param('turnId') turnId: string): ReturnType<GetTurnTrace['execute']> {
+    return this.getTurnTrace.execute(turnId);
   }
 
   /** Reattaches to an existing live Turn without starting or cancelling execution. */

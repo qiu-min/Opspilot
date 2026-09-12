@@ -18,6 +18,7 @@
     "@opspilot/agent-runtime": "workspace:*",
     "@opspilot/domain": "workspace:*",
     "@opspilot/model-gateway": "workspace:*",
+    "@opspilot/observability": "workspace:*",
     "@opspilot/tool-gateway": "workspace:*"
   },
   "devDependencies": {

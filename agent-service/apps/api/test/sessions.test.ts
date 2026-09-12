@@ -6,6 +6,7 @@ import {
   ExecuteTurn,
   GetActiveTurn,
   SubscribeTurnStream,
+  GetTurnTrace,
   Session,
   type SessionStore,
   type TurnStore,
@@ -47,7 +48,9 @@ describe('Session history API', () => {
         throw new Error('not used');
       },
     };
-    app = await startServer(new GetSessionHistory({ sessionStore: store, turnStore: emptyTurnStore() }));
+    app = await startServer(
+      new GetSessionHistory({ sessionStore: store, turnStore: emptyTurnStore() }),
+    );
 
     const response = await postJson(app, '/sessions');
 
@@ -116,7 +119,9 @@ describe('Session history API', () => {
         throw new Error('history endpoint must not save metadata');
       },
     };
-    app = await startServer(new GetSessionHistory({ sessionStore: store, turnStore: emptyTurnStore() }));
+    app = await startServer(
+      new GetSessionHistory({ sessionStore: store, turnStore: emptyTurnStore() }),
+    );
 
     const response = await getJson(app, `/sessions/${sessionId}/history`);
 
@@ -186,7 +191,9 @@ describe('Session history API', () => {
         throw new Error('history endpoint must not save metadata');
       },
     };
-    app = await startServer(new GetSessionHistory({ sessionStore: store, turnStore: emptyTurnStore() }));
+    app = await startServer(
+      new GetSessionHistory({ sessionStore: store, turnStore: emptyTurnStore() }),
+    );
 
     const response = await getJson(app, `/sessions/${sessionId}/history`);
     const body = JSON.parse(response.body) as {
@@ -215,7 +222,16 @@ async function startServer(getSessionHistory: GetSessionHistory): Promise<INestA
     imports: [
       ApiModule.register({
         providers: [
-          { provide: CreateSession, useValue: { execute: () => ({ sessionId: "11111111-1111-4111-8111-111111111111", createdAt: "2026-09-09T00:00:00.000Z", updatedAt: "2026-09-09T00:00:00.000Z" }) } },
+          {
+            provide: CreateSession,
+            useValue: {
+              execute: () => ({
+                sessionId: '11111111-1111-4111-8111-111111111111',
+                createdAt: '2026-09-09T00:00:00.000Z',
+                updatedAt: '2026-09-09T00:00:00.000Z',
+              }),
+            },
+          },
           {
             provide: ExecuteTurn,
             useValue: {
@@ -233,6 +249,14 @@ async function startServer(getSessionHistory: GetSessionHistory): Promise<INestA
           },
           { provide: GetActiveTurn, useValue: new GetActiveTurn(streamHub) },
           { provide: SubscribeTurnStream, useValue: new SubscribeTurnStream(streamHub) },
+          {
+            provide: GetTurnTrace,
+            useValue: {
+              execute: () => {
+                throw new Error('not used');
+              },
+            },
+          },
         ],
         exports: [
           ExecuteTurn,
@@ -240,6 +264,7 @@ async function startServer(getSessionHistory: GetSessionHistory): Promise<INestA
           GetSessionHistory,
           GetActiveTurn,
           SubscribeTurnStream,
+          GetTurnTrace,
           EXCEL_RESOURCE_PATH_RESOLVER,
         ],
       }),
