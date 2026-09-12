@@ -1,6 +1,6 @@
 import { Session, type SessionEntry, type SessionMetadata } from '@opspilot/domain';
 
-import type { SessionStore } from '../../src/session-store/session-store.js';
+import type { SessionStore } from '../../src/session/ports/session-store.js';
 
 interface SessionRecord {
   readonly header: ReturnType<Session['getHeader']>;

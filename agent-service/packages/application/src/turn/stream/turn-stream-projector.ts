@@ -1,8 +1,8 @@
-import type { AgentSessionEvent } from '../agent-session/agent-session.js';
+import type { AgentSessionEvent } from '../../session/runtime/agent-session.js';
 import type { ModelToolCall } from '@opspilot/model-gateway';
 import type { TurnStreamEventDraft, TurnStreamEventDraftPayload } from './turn-stream-event.js';
-import type { ToolDisplayInfo, ToolPresentationResolver } from './tool-presentation.js';
-import { resolveToolPresentation } from './tool-presentation.js';
+import type { ToolDisplayInfo, ToolPresentationResolver } from '../presentation/tool-presentation.js';
+import { resolveToolPresentation } from '../presentation/tool-presentation.js';
 
 export interface TurnStreamProjectorIdentity {
   readonly turnId: string;

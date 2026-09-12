@@ -4,7 +4,7 @@ import type { Session, SessionEntry, Turn, TurnEvent } from '@opspilot/domain';
 import {
   resolveToolPresentation,
   type ToolPresentationResolver,
-} from '../turn-stream/tool-presentation.js';
+} from './tool-presentation.js';
 import {
   type TurnPresentationSummary,
   type TurnPresentationUsage,

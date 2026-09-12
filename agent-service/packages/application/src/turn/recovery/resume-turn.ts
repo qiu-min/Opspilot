@@ -2,24 +2,26 @@ import type { AgentMessage } from '@opspilot/agent-runtime';
 import type { Model, ModelGateway } from '@opspilot/model-gateway';
 import { Turn, type Session, type TurnEvent } from '@opspilot/domain';
 
-import { createAgentSession, type AgentSession } from '../agent-session/index.js';
-import type { CompactionService, CompactionSettings, ContextManager } from '../context/index.js';
-import type { SessionStore } from '../session-store/session-store.js';
-import type { ToolDefinition } from '../tools/tool-definition.js';
-import { wrapToolDefinitions } from '../tools/wrap-tool-definition.js';
-import type { TurnExecutionContext, TurnExecutionContextStore } from '../turn-execution/index.js';
-import type { TurnStore } from '../turn-store/turn-store.js';
+import { createAgentSession } from '../../session/runtime/create-agent-session.js';
+import type { AgentSession } from '../../session/runtime/agent-session.js';
+import type { CompactionService, CompactionSettings, ContextManager } from '../../context/index.js';
+import type { SessionStore } from '../../session/ports/session-store.js';
+import type { ToolDefinition } from '../../tools/tool-definition.js';
+import { wrapToolDefinitions } from '../../tools/wrap-tool-definition.js';
+import type { TurnExecutionContext } from '../execution/turn-execution-context.js';
+import type { TurnExecutionContextStore } from '../ports/turn-execution-context-store.js';
+import type { TurnStore } from '../ports/turn-store.js';
 import {
   TurnStreamProjector,
-  type ToolPresentationResolver,
   type TurnStreamHub,
-} from '../turn-stream/index.js';
-import { TurnEventRecorder } from '../turns/turn-event-recorder.js';
-import { withExcelResourceGuidance } from '../system-prompt/index.js';
+} from '../stream/index.js';
+import type { ToolPresentationResolver } from '../presentation/tool-presentation.js';
+import { TurnEventRecorder } from '../execution/turn-event-recorder.js';
+import { withExcelResourceGuidance } from '../../system-prompt/index.js';
 import {
   InMemorySessionRunCoordinator,
   type SessionRunCoordinator,
-} from '../turns/session-run-coordinator.js';
+} from '../execution/session-run-coordinator.js';
 import { TurnRecoveryPlanner } from './turn-recovery-planner.js';
 import type { TurnRecoveryPlan } from './turn-recovery-plan.js';
 

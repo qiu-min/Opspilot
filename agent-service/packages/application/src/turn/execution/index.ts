@@ -12,3 +12,4 @@ export {
 export { ExecuteTurn, type ExecuteTurnDependencies } from './execute-turn.js';
 export { TurnEventRecorder } from './turn-event-recorder.js';
 export { SessionRecoverableTurnConflictError } from './turn-errors.js';
+export type { TurnExecutionContext } from './turn-execution-context.js';

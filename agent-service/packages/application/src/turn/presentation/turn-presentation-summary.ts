@@ -1,4 +1,4 @@
-import type { ToolDisplayInfo } from '../turn-stream/tool-presentation.js';
+import type { ToolDisplayInfo } from './tool-presentation.js';
 
 /** Aggregated final usage for one historical Turn. */
 export interface TurnPresentationUsage {

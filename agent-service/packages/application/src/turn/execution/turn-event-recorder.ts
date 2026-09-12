@@ -4,8 +4,8 @@ import type { AgentMessage } from '@opspilot/agent-runtime';
 import type { ToolResultMessage } from '@opspilot/model-gateway';
 import type { Session, SessionEntry, Turn, TurnEvent, TurnEventBase } from '@opspilot/domain';
 
-import type { AgentSessionEvent } from '../agent-session/agent-session.js';
-import type { TurnStore } from '../turn-store/turn-store.js';
+import type { AgentSessionEvent } from '../../session/runtime/agent-session.js';
+import type { TurnStore } from '../ports/turn-store.js';
 
 /** Records low-frequency durable execution facts for one Application Turn. */
 export class TurnEventRecorder {

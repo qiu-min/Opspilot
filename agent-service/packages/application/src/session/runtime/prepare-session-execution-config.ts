@@ -2,8 +2,8 @@ import { clampThinkingLevel, type Model, type ModelGateway } from '@opspilot/mod
 import type { AgentThinkingLevel } from '@opspilot/agent-runtime';
 import type { Session } from '@opspilot/domain';
 
-import { buildSessionContext } from '../session/session-context.js';
-import type { SessionStore } from '../session-store/session-store.js';
+import { buildSessionContext } from './session-context.js';
+import type { SessionStore } from '../ports/session-store.js';
 
 /** Inputs used to resolve and durably prepare one Turn's runtime configuration. */
 export interface PrepareSessionExecutionConfigOptions {

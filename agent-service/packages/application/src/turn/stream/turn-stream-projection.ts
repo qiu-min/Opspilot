@@ -1,5 +1,5 @@
 import type { TurnStreamEvent } from './turn-stream-event.js';
-import type { ToolDisplayInfo } from './tool-presentation.js';
+import type { ToolDisplayInfo } from '../presentation/tool-presentation.js';
 
 export type TurnStreamProjectionStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 export type TurnStreamToolStatus = 'queued' | 'running' | 'completed' | 'failed';

@@ -12,7 +12,7 @@ import type { CompactionSettings } from './compaction-settings.js';
 import {
   buildSessionMessageProjection,
   type SessionProjectedMessage,
-} from '../session/session-projection.js';
+} from '../session/runtime/session-projection.js';
 import type { SessionEntry } from '@opspilot/domain';
 
 const COMPACTION_SYSTEM_PROMPT = `You summarize conversation history so another assistant can continue the work.

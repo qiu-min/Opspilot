@@ -1,26 +1,24 @@
 import type { Model, ModelGateway } from '@opspilot/model-gateway';
 import { Turn } from '@opspilot/domain';
 
-import {
-  createAgentSession,
-  prepareSessionExecutionConfig,
-  type AgentSession,
-} from '../agent-session/index.js';
-import type { CompactionService, CompactionSettings, ContextManager } from '../context/index.js';
+import { createAgentSession } from '../../session/runtime/create-agent-session.js';
+import { prepareSessionExecutionConfig } from '../../session/runtime/prepare-session-execution-config.js';
+import type { AgentSession } from '../../session/runtime/agent-session.js';
+import type { CompactionService, CompactionSettings, ContextManager } from '../../context/index.js';
 import type { Session } from '@opspilot/domain';
-import type { SessionStore } from '../session-store/session-store.js';
-import type { ToolDefinition } from '../tools/tool-definition.js';
-import { wrapToolDefinitions } from '../tools/wrap-tool-definition.js';
-import type { TurnStore } from '../turn-store/turn-store.js';
-import type { TurnExecutionContextStore } from '../turn-execution/index.js';
+import type { SessionStore } from '../../session/ports/session-store.js';
+import type { ToolDefinition } from '../../tools/tool-definition.js';
+import { wrapToolDefinitions } from '../../tools/wrap-tool-definition.js';
+import type { TurnStore } from '../ports/turn-store.js';
+import type { TurnExecutionContextStore } from '../ports/turn-execution-context-store.js';
 import {
   TurnStreamProjector,
   TurnStreamSessionConflictError,
-  type ToolPresentationResolver,
   type TurnStreamHub,
-} from '../turn-stream/index.js';
+} from '../stream/index.js';
+import type { ToolPresentationResolver } from '../presentation/tool-presentation.js';
 import { TurnEventRecorder } from './turn-event-recorder.js';
-import { withExcelResourceGuidance } from '../system-prompt/index.js';
+import { withExcelResourceGuidance } from '../../system-prompt/index.js';
 import type { ExecuteTurnInput, ExecuteTurnOptions, ExecuteTurnResult } from './turn-types.js';
 import {
   InMemorySessionRunCoordinator,

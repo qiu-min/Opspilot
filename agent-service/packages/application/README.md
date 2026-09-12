@@ -75,6 +75,16 @@ live presentation 相同的 `ToolPresentationResolver` 重新解析，失败时�
 
 当前范围暂不包含动态切换模型或 thinking level、复杂重试、扩展系统和 Session 切换等 Coding Agent 能力。
 
+## 模块布局
+
+应用层按主要业务边界组织：
+
+- `session/`：Session 创建、Runtime projection、history projection 与 Session persistence port。
+- `turn/`：Turn execution、recovery、live stream、presentation 与 persistence port。
+- `context/`、`tools/`、`system-prompt/`：保持为独立的应用能力模块。
+
+其中 `turn/presentation/` 提供 live stream 与历史 Turn presentation 共用的工具展示解析能力；`turn/ports/` 与 `session/ports/` 只定义 Application persistence port，不包含 infrastructure 实现。
+
 ## Context 边界
 
 Domain `Session` 保存完整会话事实与树 invariant；Application 的 `buildSessionContext(session)` 将 durable state 投影成 Agent Runtime 输入。`ContextManager` 只决定本次模型调用使用哪些 `AgentMessage`，不依赖或修改 Domain Session。`createAgentSession` 将 ContextManager 接入 Agent Runtime 的 `transformContext` hook，因此经过 ContextManager 的消息只影响当前模型调用，不影响后续 Session 持久化。

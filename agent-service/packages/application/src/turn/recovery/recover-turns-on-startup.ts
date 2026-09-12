@@ -1,4 +1,4 @@
-import type { TurnStore } from '../turn-store/turn-store.js';
+import type { TurnStore } from '../ports/turn-store.js';
 import type { ResumeTurn, ResumeTurnResult } from './resume-turn.js';
 
 export interface RecoverTurnsOnStartupDependencies {

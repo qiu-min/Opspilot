@@ -7,7 +7,7 @@ import {
   type TurnEvent,
 } from '@opspilot/domain';
 
-import type { ToolDefinition } from '../tools/tool-definition.js';
+import type { ToolDefinition } from '../../tools/tool-definition.js';
 import type { TurnRecoveryPlan } from './turn-recovery-plan.js';
 
 export interface TurnRecoveryPlannerInput {

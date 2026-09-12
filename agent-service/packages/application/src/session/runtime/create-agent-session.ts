@@ -9,9 +9,9 @@ import {
   type CompactionService,
   type CompactionSettings,
   type ContextManager,
-} from '../context/index.js';
-import { buildSessionContext } from '../session/session-context.js';
-import type { SessionStore } from '../session-store/session-store.js';
+} from '../../context/index.js';
+import { buildSessionContext } from './session-context.js';
+import type { SessionStore } from '../ports/session-store.js';
 import { AgentSession } from './agent-session.js';
 
 export interface CreateAgentSessionOptions {

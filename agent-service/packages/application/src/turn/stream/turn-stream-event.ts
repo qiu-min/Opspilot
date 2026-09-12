@@ -1,4 +1,4 @@
-import type { ToolDisplayInfo } from './tool-presentation.js';
+import type { ToolDisplayInfo } from '../presentation/tool-presentation.js';
 
 /** Common fields carried by every ephemeral UI stream event. */
 export interface TurnStreamEventBase {

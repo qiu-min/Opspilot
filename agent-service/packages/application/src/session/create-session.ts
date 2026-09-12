@@ -1,4 +1,4 @@
-import type { SessionStore } from '../session-store/session-store.js';
+import type { SessionStore } from './ports/session-store.js';
 
 /** Result of creating an empty durable Agent Service Session. */
 export interface CreateSessionResult {

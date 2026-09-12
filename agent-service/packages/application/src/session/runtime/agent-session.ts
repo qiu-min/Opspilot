@@ -15,10 +15,10 @@ import {
   type CompactionResult,
   type CompactionService,
   type CompactionSettings,
-} from '../context/index.js';
-import { buildSessionContext } from '../session/session-context.js';
+} from '../../context/index.js';
+import { buildSessionContext } from './session-context.js';
 import type { Session } from '@opspilot/domain';
-import type { SessionStore } from '../session-store/session-store.js';
+import type { SessionStore } from '../ports/session-store.js';
 
 export interface AgentSessionConfig {
   readonly agent: Agent;

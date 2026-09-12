@@ -1,6 +1,6 @@
 import { Turn, type TurnEvent } from '@opspilot/domain';
 
-import type { TurnStore } from '../../src/turn-store/turn-store.js';
+import type { TurnStore } from '../../src/turn/ports/turn-store.js';
 
 /** In-memory TurnStore used by application tests to exercise persistence ordering. */
 export class InMemoryTurnStore implements TurnStore {

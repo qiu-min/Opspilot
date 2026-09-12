@@ -1,8 +1,8 @@
 import type { AgentMessage, AgentThinkingLevel } from '@opspilot/agent-runtime';
 import type { Model } from '@opspilot/model-gateway';
 
-import type { AgentSessionEvent } from '../agent-session/agent-session.js';
-import type { ExcelResource } from '../tools/excel-resource.js';
+import type { AgentSessionEvent } from '../../session/runtime/agent-session.js';
+import type { ExcelResource } from '../../tools/excel-resource.js';
 
 /** Input for one Application-level Turn. */
 export interface ExecuteTurnInput {

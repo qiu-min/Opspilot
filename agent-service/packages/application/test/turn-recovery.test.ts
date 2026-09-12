@@ -241,7 +241,7 @@ it('publishes a terminal live failure when resumed AgentSession construction fai
     openTurn: vi.fn(),
     publish,
     closeTurn,
-  } as unknown as import('../src/turn-stream/turn-stream-hub.js').TurnStreamHub;
+  } as unknown as import('../src/turn/stream/turn-stream-hub.js').TurnStreamHub;
   const registeredGateway = gateway(assistant('unused'));
   const missingModelGateway: ModelGateway = {
     ...registeredGateway,

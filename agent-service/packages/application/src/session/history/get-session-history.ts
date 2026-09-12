@@ -1,10 +1,10 @@
-import type { SessionStore } from '../session-store/session-store.js';
-import type { TurnStore } from '../turn-store/turn-store.js';
-import type { ToolPresentationResolver } from '../turn-stream/tool-presentation.js';
+import type { SessionStore } from '../ports/session-store.js';
+import type { TurnStore } from '../../turn/ports/turn-store.js';
+import type { ToolPresentationResolver } from '../../turn/presentation/tool-presentation.js';
 import {
   buildTurnPresentationSummary,
   type TurnPresentationSummary,
-} from '../turn-presentation/index.js';
+} from '../../turn/presentation/index.js';
 import {
   buildSessionHistoryProjection,
   type SessionHistoryProjection,

@@ -2,7 +2,7 @@ import type { AgentMessage } from '@opspilot/agent-runtime';
 import type { AssistantMessage, TextContent, Usage } from '@opspilot/model-gateway';
 
 import type { CompactionSettings } from './compaction-settings.js';
-import { buildSessionMessageProjection } from '../session/session-projection.js';
+import { buildSessionMessageProjection } from '../session/runtime/session-projection.js';
 import type { SessionEntry } from '@opspilot/domain';
 
 const TOKENS_PER_ESTIMATED_CHARACTER = 4;
