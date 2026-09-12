@@ -251,7 +251,7 @@ export class ExecuteTurn {
     if (turnStreamHub === undefined) return;
     const published = turnStreamHub.publish({ turnId, sessionId, ...event });
     console.info(
-    `[turn-stream][hub-publish] turnId=${published.turnId} sessionId=${published.sessionId} type=${published.type} seq=${published.sequence}`,
+      `[turn-stream][hub-publish] turnId=${published?.turnId ?? turnId} sessionId=${published?.sessionId ?? sessionId} type=${published?.type ?? event.type} seq=${published?.sequence ?? 'unknown'}`,
   );
     // The concrete in-memory Hub closes terminal channels during publish; keeping this
     // explicit makes terminal ownership part of the Application orchestration contract.

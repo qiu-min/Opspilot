@@ -30,8 +30,9 @@ export type TurnStreamProjectionResponse = {
   turnId: string;
   sessionId: string;
   status: "running" | "completed" | "failed" | "cancelled";
+  startedAt?: string;
   assistant: { text: string; messageVisible: boolean; isThinking: boolean };
-  tools: Array<{ callId: string; name: string; status: "queued" | "running" | "completed" | "failed"; display?: ToolDisplayInfo }>;
+  tools: Array<{ callId: string; name: string; status: "queued" | "running" | "completed" | "failed"; display?: ToolDisplayInfo; startedAt?: string; completedAt?: string }>;
   compaction: { status: "idle" | "running" };
   usage: { inputTokens: number; outputTokens: number; totalTokens: number } | null;
   lastSequence: number;

@@ -112,13 +112,17 @@ public sealed class SessionEndpointTests : IClassFixture<SessionTestFactory>
             turnId,
             sessionId,
             "running",
-            new AgentTurnStreamProjection(turnId, sessionId, "running", new AgentTurnAssistantProjection("partial", true, false), [], new AgentTurnCompactionProjection("idle"), null, 7));
+            new AgentTurnStreamProjection(turnId, sessionId, "running", new AgentTurnAssistantProjection("partial", true, false), [new AgentTurnToolProjection("call-1", "lookup", "completed", new AgentToolDisplayInfo("Look up", "record-1", "Reading record"), "2026-09-09T12:00:01Z", "2026-09-09T12:00:02Z")], new AgentTurnCompactionProjection("idle"), null, 7, "2026-09-09T12:00:00Z"));
 
         using HttpResponseMessage response = await SendAsync(HttpMethod.Get, $"/api/sessions/{sessionId}/active-turn", login.AccessToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         JsonElement body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(turnId, body.GetProperty("activeTurn").GetProperty("turnId").GetGuid());
         Assert.Equal(7, body.GetProperty("activeTurn").GetProperty("projection").GetProperty("lastSequence").GetInt64());
+        Assert.Equal("2026-09-09T12:00:00Z", body.GetProperty("activeTurn").GetProperty("projection").GetProperty("startedAt").GetString());
+        Assert.Equal("2026-09-09T12:00:01Z", body.GetProperty("activeTurn").GetProperty("projection").GetProperty("tools")[0].GetProperty("startedAt").GetString());
+        Assert.Equal("2026-09-09T12:00:02Z", body.GetProperty("activeTurn").GetProperty("projection").GetProperty("tools")[0].GetProperty("completedAt").GetString());
+        Assert.Equal("Look up", body.GetProperty("activeTurn").GetProperty("projection").GetProperty("tools")[0].GetProperty("display").GetProperty("title").GetString());
     }
 
     [Fact]

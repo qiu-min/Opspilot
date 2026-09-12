@@ -9,6 +9,8 @@ export interface TurnStreamToolProjection {
   readonly name: string;
   readonly display?: ToolDisplayInfo;
   readonly status: TurnStreamToolStatus;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
 }
 
 /** Transport-neutral, UI-safe state for the currently executing Turn. */
@@ -16,6 +18,7 @@ export interface TurnStreamProjection {
   readonly turnId: string;
   readonly sessionId: string;
   readonly status: TurnStreamProjectionStatus;
+  readonly startedAt?: string;
   readonly assistant: {
     readonly text: string;
     readonly messageVisible: boolean;
@@ -85,7 +88,7 @@ export function applyTurnStreamEvent(
 
   switch (event.type) {
     case 'turn_started':
-      return { ...next, status: 'running' };
+      return { ...next, status: 'running', startedAt: next.startedAt ?? event.timestamp };
     case 'assistant_thinking_started':
       return {
         ...next,
@@ -142,6 +145,7 @@ export function applyTurnStreamEvent(
           name: event.name,
           display: event.display,
           status: 'running',
+          startedAt: event.timestamp,
         }),
       };
     case 'tool_completed':
@@ -152,6 +156,7 @@ export function applyTurnStreamEvent(
           name: event.name,
           display: event.display,
           status: event.isError ? 'failed' : 'completed',
+          completedAt: event.timestamp,
         }),
       };
     case 'compaction_started':
@@ -161,11 +166,7 @@ export function applyTurnStreamEvent(
     case 'usage':
       return {
         ...next,
-        usage: {
-          inputTokens: event.inputTokens,
-          outputTokens: event.outputTokens,
-          totalTokens: event.totalTokens,
-        },
+        usage: aggregateUsage(next.usage, event),
       };
     case 'turn_completed':
       return { ...next, status: 'completed', assistant: { ...next.assistant, isThinking: false } };
@@ -183,7 +184,25 @@ function upsertTool(
   const index = tools.findIndex((tool) => tool.callId === replacement.callId);
   if (index < 0) return [...tools, replacement];
   const existing = tools[index]!;
-  const display = replacement.display ?? existing.display;
-  const next = display === undefined ? replacement : { ...replacement, display };
+  const display = existing.display ?? replacement.display;
+  const startedAt = existing.startedAt ?? replacement.startedAt;
+  const completedAt = existing.completedAt ?? replacement.completedAt;
+  const next = {
+    ...replacement,
+    ...(display === undefined ? {} : { display }),
+    ...(startedAt === undefined ? {} : { startedAt }),
+    ...(completedAt === undefined ? {} : { completedAt }),
+  };
   return tools.map((tool, toolIndex) => (toolIndex === index ? next : tool));
+}
+
+function aggregateUsage(
+  current: TurnStreamProjection['usage'],
+  event: Extract<TurnStreamEvent, { type: 'usage' }>,
+): NonNullable<TurnStreamProjection['usage']> {
+  return {
+    inputTokens: (current?.inputTokens ?? 0) + event.inputTokens,
+    outputTokens: (current?.outputTokens ?? 0) + event.outputTokens,
+    totalTokens: (current?.totalTokens ?? 0) + event.totalTokens,
+  };
 }

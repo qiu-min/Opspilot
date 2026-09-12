@@ -352,13 +352,19 @@ export function SessionPage() {
 
   async function reconcileTerminalSession(sessionId: string, turnId: string) {
     if (!accessToken) return;
+    const liveState = turnStreamStatesRef.current[turnId];
+    const liveResponse = liveState === undefined ? undefined : projectTurnStream(liveState, `turn-${turnId}`);
     try {
       const detail = await getSession(sessionId, accessToken);
-      setTimelinesBySessionId((current) => ({ ...current, [sessionId]: toSessionItems(detail) }));
+      const durableItems = toSessionItems(detail);
+      setTimelinesBySessionId((current) => ({ ...current, [sessionId]: mergeLiveTurnResponse(durableItems, liveResponse, liveResponse?.id) }));
       await refreshSessions();
       setSessionStatus(sessionId, "Response completed");
     } catch (error: unknown) {
       if (invalidateAuthentication(error)) return;
+      if (liveResponse !== undefined) {
+        setTimelinesBySessionId((current) => ({ ...current, [sessionId]: mergeLiveTurnResponse(current[sessionId] ?? [], liveResponse, liveResponse.id) }));
+      }
       setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "Unable to refresh the completed Session.") }));
     } finally {
       setActiveTurnId(sessionId, undefined);

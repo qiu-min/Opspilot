@@ -4,6 +4,8 @@ import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { AssistantMarkdown } from "./assistant-markdown";
 import { AgentExecutionCard } from "./agent-execution-card";
+import { formatTurnMetrics } from "../turn-metrics";
+import { useTurnNow } from "../use-turn-timer";
 import type {
   AssistantTextBlock,
   TurnResponseBlock,
@@ -24,6 +26,9 @@ export function SessionResponseView({
     .filter((block): block is AssistantTextBlock => block.type === "assistant_text")
     .map((block) => block.text)
     .join("\n\n");
+  const now = useTurnNow(response.status === "streaming");
+  const showActions = response.status !== "streaming" && assistantText.length > 0;
+  const metricsLabel = formatTurnMetrics(response.metrics, response.status, now);
 
   return (
     <section
@@ -47,12 +52,13 @@ export function SessionResponseView({
             key={block.id}
             block={block}
             responseStatus={response.status}
+            now={now}
           />
         ))}
       </div>
 
-      {response.status !== "streaming" && assistantText.length > 0 && (
-        <ResponseActions assistantText={assistantText} />
+      {(showActions || metricsLabel !== undefined) && (
+        <ResponseActions assistantText={assistantText} showActions={showActions} metricsLabel={metricsLabel} />
       )}
     </section>
   );
@@ -61,15 +67,17 @@ export function SessionResponseView({
 function ResponseBlockView({
   block,
   responseStatus,
+  now,
 }: {
   block: TurnResponseBlock;
   responseStatus: TurnResponseStatus;
+  now: number;
 }) {
   if (block.type === "assistant_text") {
     return <AssistantTextBlockView block={block} responseStatus={responseStatus} />;
   }
 
-  return <AgentExecutionCard execution={block} />;
+  return <AgentExecutionCard execution={block} now={now} />;
 }
 
 function AssistantTextBlockView({
@@ -89,7 +97,7 @@ function AssistantTextBlockView({
   );
 }
 
-function ResponseActions({ assistantText }: { assistantText: string }) {
+function ResponseActions({ assistantText, showActions, metricsLabel }: { assistantText: string; showActions: boolean; metricsLabel: string | undefined }) {
   const [hasCopied, setHasCopied] = useState(false);
   const [copyError, setCopyError] = useState<string | null>(null);
 
@@ -107,13 +115,16 @@ function ResponseActions({ assistantText }: { assistantText: string }) {
   }
 
   return (
-    <footer className="flex items-center gap-0.5 border-t border-line/80 px-4 py-2">
-      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleCopy} aria-label={hasCopied ? "Copied response" : "Copy response"} title={hasCopied ? "Copied" : "Copy"}>
-        {hasCopied ? <Check size={14} className="text-teal" aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
-      </Button>
-      <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Helpful response" title="Helpful"><ThumbsUp size={14} aria-hidden="true" /></Button>
-      <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Unhelpful response" title="Not helpful"><ThumbsDown size={14} aria-hidden="true" /></Button>
-      {copyError && <span className="ml-2 text-[10px] font-medium text-danger" role="status">{copyError}</span>}
+    <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-line/80 px-4 py-2">
+      {showActions ? <div className="flex items-center gap-0.5">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleCopy} aria-label={hasCopied ? "Copied response" : "Copy response"} title={hasCopied ? "Copied" : "Copy"}>
+          {hasCopied ? <Check size={14} className="text-teal" aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+        </Button>
+        <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Helpful response" title="Helpful"><ThumbsUp size={14} aria-hidden="true" /></Button>
+        <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Unhelpful response" title="Not helpful"><ThumbsDown size={14} aria-hidden="true" /></Button>
+        {copyError && <span className="ml-2 text-[10px] font-medium text-danger" role="status">{copyError}</span>}
+      </div> : <span aria-hidden="true" />}
+      {metricsLabel && <span className="ml-auto text-[11px] tabular-nums text-mutedInk">{metricsLabel}</span>}
     </footer>
   );
 }

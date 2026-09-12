@@ -22,6 +22,17 @@ describe('InMemoryTurnStreamHub', () => {
     expect(hub.getActiveTurn(identity.sessionId)).toBeNull();
   });
 
+  it('clones live timing and display metadata in an active snapshot', () => {
+    const hub = new InMemoryTurnStreamHub();
+    hub.openTurn(identity);
+    hub.publish({ type: 'turn_started', timestamp: '2026-09-09T12:00:00Z', ...identity });
+    hub.publish({ type: 'tool_queued', callId: 'call-1', name: 'lookup', display: { title: 'Look up', subject: 'record-1' }, timestamp: '2026-09-09T12:00:00.500Z', ...identity });
+    hub.publish({ type: 'tool_started', callId: 'call-1', name: 'lookup', timestamp: '2026-09-09T12:00:01Z', ...identity });
+    hub.publish({ type: 'tool_completed', callId: 'call-1', name: 'lookup', isError: false, timestamp: '2026-09-09T12:00:02Z', ...identity });
+
+    expect(hub.getActiveTurn(identity.sessionId)).toMatchObject({ projection: { startedAt: '2026-09-09T12:00:00Z', tools: [{ display: { title: 'Look up', subject: 'record-1' }, startedAt: '2026-09-09T12:00:01Z', completedAt: '2026-09-09T12:00:02Z' }] } });
+  });
+
   it('assigns independent contiguous sequences per Turn', () => {
     const hub = new InMemoryTurnStreamHub();
     hub.openTurn(identity);

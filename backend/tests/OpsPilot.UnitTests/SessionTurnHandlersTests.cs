@@ -148,7 +148,7 @@ public sealed class SessionTurnHandlersTests
     [Fact]
     public async Task ActiveTurn_UsesAgentProjectionAfterOwnershipCheck()
     {
-        var active = new AgentActiveTurnSnapshot(TurnId, SessionId, "running", new AgentTurnStreamProjection(TurnId, SessionId, "running", new AgentTurnAssistantProjection("partial", true, false), [], new AgentTurnCompactionProjection("idle"), null, 7));
+        var active = new AgentActiveTurnSnapshot(TurnId, SessionId, "running", new AgentTurnStreamProjection(TurnId, SessionId, "running", new AgentTurnAssistantProjection("partial", true, false), [new AgentTurnToolProjection("call-1", "lookup", "completed", new AgentToolDisplayInfo("Look up", "record-1", "Reading record"), "2026-09-09T12:00:01Z", "2026-09-09T12:00:02Z")], new AgentTurnCompactionProjection("idle"), null, 7, "2026-09-09T12:00:00Z"));
         var agent = new FakeAgentSessionClient { ActiveTurn = active };
 
         AgentActiveTurnSnapshot? result = await new GetActiveSessionTurnHandler(NewRepository(), new FakeCurrentUser(UserId), agent)
@@ -156,6 +156,10 @@ public sealed class SessionTurnHandlersTests
 
         Assert.Same(active, result);
         Assert.Equal(SessionId, agent.LastActiveSessionId);
+        Assert.Equal("2026-09-09T12:00:00Z", result!.Projection.StartedAt);
+        Assert.Equal("2026-09-09T12:00:01Z", result.Projection.Tools[0].StartedAt);
+        Assert.Equal("2026-09-09T12:00:02Z", result.Projection.Tools[0].CompletedAt);
+        Assert.Equal("Look up", result.Projection.Tools[0].Display!.Title);
     }
 
     [Fact]

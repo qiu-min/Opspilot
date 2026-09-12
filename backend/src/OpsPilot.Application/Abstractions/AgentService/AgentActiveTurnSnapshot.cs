@@ -14,9 +14,16 @@ public sealed record AgentTurnStreamProjection(
     IReadOnlyList<AgentTurnToolProjection> Tools,
     AgentTurnCompactionProjection Compaction,
     AgentTurnUsage? Usage,
-    long LastSequence);
+    long LastSequence,
+    string? StartedAt = null);
 
 public sealed record AgentTurnAssistantProjection(string Text, bool MessageVisible, bool IsThinking);
-public sealed record AgentTurnToolProjection(string CallId, string Name, string Status, AgentToolDisplayInfo? Display = null);
+public sealed record AgentTurnToolProjection(
+    string CallId,
+    string Name,
+    string Status,
+    AgentToolDisplayInfo? Display = null,
+    string? StartedAt = null,
+    string? CompletedAt = null);
 public sealed record AgentTurnCompactionProjection(string Status);
 public sealed record AgentTurnUsage(int InputTokens, int OutputTokens, int TotalTokens);

@@ -23,9 +23,13 @@ export function toSessionItems(response: SessionDetailResponse): SessionItem[] {
 export function mergeLiveTurnResponse(durableItems: SessionItem[], liveResponse: TurnResponseItem | undefined, liveResponseId: string | undefined): SessionItem[] {
   if (liveResponse === undefined || liveResponseId === undefined) return durableItems;
   const index = durableItems.findIndex((item) => item.type === "response" && (item.id === liveResponseId || hasSharedToolCall(item, liveResponse)));
-  if (index < 0) return [...durableItems, liveResponse];
+  const terminalResponseIndex = index < 0 && liveResponse.status !== "streaming" && durableItems.at(-1)?.type === "response"
+    ? durableItems.length - 1
+    : -1;
+  const responseIndex = index >= 0 ? index : terminalResponseIndex;
+  if (responseIndex < 0) return [...durableItems, liveResponse];
   const next = [...durableItems];
-  next[index] = mergeResponseBlocks(next[index] as TurnResponseItem, liveResponse);
+  next[responseIndex] = mergeResponseBlocks(next[responseIndex] as TurnResponseItem, liveResponse);
   return next;
 }
 
@@ -46,6 +50,16 @@ function mergeResponseBlocks(durableResponse: TurnResponseItem, liveResponse: Tu
       .filter((block): block is AgentExecutionBlock => block.type === "agent_execution")
       .flatMap((block) => block.steps.map((step) => step.callId)),
   );
+  const liveStepsByCallId = new Map(
+    liveResponse.blocks
+      .filter((block): block is AgentExecutionBlock => block.type === "agent_execution")
+      .flatMap((block) => block.steps)
+      .map((step) => [step.callId, step] as const),
+  );
+  const enrichedDurableBlocks = durableResponse.blocks.map((block): TurnResponseBlock => {
+    if (block.type !== "agent_execution") return block;
+    return { ...block, steps: block.steps.map((step) => enrichDurableToolStep(step, liveStepsByCallId.get(step.callId))) };
+  });
   const liveBlocks = liveResponse.blocks.flatMap<TurnResponseBlock>((block) => {
     if (block.type !== "agent_execution") return [block];
     const steps = block.steps.filter((step) => !durableCallIds.has(step.callId));
@@ -53,7 +67,12 @@ function mergeResponseBlocks(durableResponse: TurnResponseItem, liveResponse: Tu
   });
   const durableHasCompletedAssistant = durableResponse.blocks.some((block) => block.type === "assistant_text" && block.completed);
   const blocks: TurnResponseBlock[] = liveBlocks.filter((block) => block.type !== "assistant_text" || !block.completed || !durableHasCompletedAssistant);
-  return { ...liveResponse, blocks: [...durableResponse.blocks, ...blocks] };
+  return { ...liveResponse, blocks: [...enrichedDurableBlocks, ...blocks] };
+}
+
+function enrichDurableToolStep(step: AgentExecutionStep, liveStep: AgentExecutionStep | undefined): AgentExecutionStep {
+  if (liveStep === undefined) return step;
+  return { ...step, ...(liveStep.display === undefined ? {} : { display: liveStep.display }), ...(liveStep.startedAt === undefined ? {} : { startedAt: liveStep.startedAt }), ...(liveStep.completedAt === undefined ? {} : { completedAt: liveStep.completedAt }) };
 }
 
 function hasSharedToolCall(durableResponse: TurnResponseItem, liveResponse: TurnResponseItem): boolean {

@@ -54,7 +54,7 @@ describe('TurnStreamProjection reducer', () => {
     for (const next of events) projection = reduce(projection, next);
 
     expect(projection.assistant.text).toBe('result');
-    expect(projection.tools).toEqual([{ callId: 'call-1', name: 'lookup', display: { title: 'Look up', subject: 'record-1' }, status: 'completed' }]);
+    expect(projection.tools).toEqual([{ callId: 'call-1', name: 'lookup', display: { title: 'Look up', subject: 'record-1' }, status: 'completed', startedAt: new Date(4_000).toISOString(), completedAt: new Date(5_000).toISOString() }]);
   });
 
   it('tracks thinking, tools, compaction, usage, and terminal status', () => {
@@ -76,7 +76,7 @@ describe('TurnStreamProjection reducer', () => {
       projection,
       event({ type: 'tool_completed', callId: 'call-1', name: 'lookup', isError: true }, 4),
     );
-    expect(projection.tools).toEqual([{ callId: 'call-1', name: 'lookup', status: 'failed' }]);
+    expect(projection.tools).toEqual([{ callId: 'call-1', name: 'lookup', status: 'failed', startedAt: new Date(3_000).toISOString(), completedAt: new Date(4_000).toISOString() }]);
 
     projection = reduce(projection, event({ type: 'compaction_started', reason: 'threshold' }, 5));
     expect(projection.compaction.status).toBe('running');
@@ -89,10 +89,26 @@ describe('TurnStreamProjection reducer', () => {
       projection,
       event({ type: 'usage', inputTokens: 10, outputTokens: 20, totalTokens: 30 }, 7),
     );
-    expect(projection.usage).toEqual({ inputTokens: 10, outputTokens: 20, totalTokens: 30 });
-    projection = reduce(projection, event({ type: 'turn_completed', resultLeafId: 'leaf-1' }, 8));
+    projection = reduce(projection, event({ type: 'usage', inputTokens: 4, outputTokens: 6, totalTokens: 10 }, 8));
+    expect(projection.usage).toEqual({ inputTokens: 14, outputTokens: 26, totalTokens: 40 });
+    projection = reduce(projection, event({ type: 'turn_completed', resultLeafId: 'leaf-1' }, 9));
     expect(projection.status).toBe('completed');
-    expect(projection.lastSequence).toBe(8);
+    expect(projection.lastSequence).toBe(9);
+  });
+
+  it('records the first turn start and preserves tool lifecycle timestamps across updates', () => {
+    let projection = createInitialTurnStreamProjection(identity);
+    projection = reduce(projection, event({ type: 'turn_started' }, 0));
+    projection = reduce(projection, event({ type: 'turn_started' }, 1));
+    projection = reduce(projection, event({ type: 'tool_queued', callId: 'call-1', name: 'lookup' }, 2));
+    expect(projection.tools[0]).not.toHaveProperty('startedAt');
+    projection = reduce(projection, event({ type: 'tool_started', callId: 'call-1', name: 'lookup' }, 3));
+    projection = reduce(projection, event({ type: 'tool_completed', callId: 'call-1', name: 'lookup', isError: false }, 4));
+    projection = reduce(projection, event({ type: 'tool_started', callId: 'call-1', name: 'lookup' }, 5));
+    projection = reduce(projection, event({ type: 'tool_completed', callId: 'call-1', name: 'lookup', isError: false }, 6));
+
+    expect(projection.startedAt).toBe(new Date(0).toISOString());
+    expect(projection.tools[0]).toMatchObject({ startedAt: new Date(3_000).toISOString(), completedAt: new Date(4_000).toISOString() });
   });
 });
 

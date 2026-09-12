@@ -114,7 +114,7 @@ describe('Turn stream HTTP integration', () => {
     expect(hub.getActiveTurn(sessionId)).toMatchObject({ status: 'running' });
 
     hub.publish({ type: 'assistant_text_delta', delta: 'after disconnect', ...identity });
-    hub.publish({ type: 'tool_started', callId: 'call-1', name: 'lookup', ...identity });
+    hub.publish({ type: 'tool_started', callId: 'call-1', name: 'lookup', timestamp: '2026-09-09T12:00:01Z', ...identity });
     expect(hub.getProjection(identity.turnId)).toMatchObject({
       assistant: { text: 'after disconnect' },
       tools: [{ callId: 'call-1', status: 'running' }],
@@ -126,8 +126,9 @@ describe('Turn stream HTTP integration', () => {
       activeTurn: {
         status: 'running',
         projection: {
+          startedAt: '2026-09-09T12:00:00Z',
           assistant: { text: 'after disconnect' },
-          tools: [{ callId: 'call-1', status: 'running' }],
+          tools: [{ callId: 'call-1', status: 'running', startedAt: '2026-09-09T12:00:01Z' }],
         },
       },
     });
@@ -306,7 +307,7 @@ async function startServer(
 
 function openTurnForTest(hub: InMemoryTurnStreamHub): void {
   hub.openTurn(identity);
-  hub.publish({ type: 'turn_started', ...identity });
+  hub.publish({ type: 'turn_started', timestamp: '2026-09-09T12:00:00Z', ...identity });
 }
 
 function result(): ExecuteTurnResult {

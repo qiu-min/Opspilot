@@ -1,14 +1,16 @@
 import { Check, CircleDashed, LoaderCircle, Terminal, XCircle } from "lucide-react";
 import { Badge } from "../../../components/ui/badge";
 import { cn } from "../../../lib/utils";
-import { getToolPresentation } from "../turn-stream-projection";
+import { getDurationMs, formatDuration } from "../turn-metrics";
+import { humanizeToolName } from "../turn-stream-projection";
 import type { AgentExecutionBlock, TurnResponseBlockStatus } from "../types";
 
 type AgentExecutionCardProps = {
   execution: AgentExecutionBlock;
+  now: number;
 };
 
-export function AgentExecutionCard({ execution }: AgentExecutionCardProps) {
+export function AgentExecutionCard({ execution, now }: AgentExecutionCardProps) {
   const executionStatus = getExecutionStatus(execution);
 
   return (
@@ -37,17 +39,24 @@ export function AgentExecutionCard({ execution }: AgentExecutionCardProps) {
             </div>
             <div className="min-w-0 flex-1 pt-0.5">
               <div className="flex items-center justify-between gap-3">
-                <p className={cn(
-                  "truncate text-xs font-semibold",
+                <div className="min-w-0 flex-1">
+                  <p className={cn(
+                    "truncate text-xs font-semibold",
                   step.status === "queued" || step.status === "interrupted"
                     ? "text-mutedInk"
                     : step.status === "failed"
                       ? "text-danger"
                       : "text-ink",
-                )}>
-                  {getToolPresentation(step.name).title}
-                </p>
-                <Badge tone={getStatusTone(step.status)}>{getStatusLabel(step.status)}</Badge>
+                  )}>
+                    {step.display?.title ?? humanizeToolName(step.name)}
+                  </p>
+                  {step.display?.subject && <p className="mt-0.5 truncate text-[11px] text-mutedInk">{step.display.subject}</p>}
+                  {step.display?.detail && <p className="mt-0.5 truncate text-[11px] text-mutedInk/80">{step.display.detail}</p>}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {getStepDuration(step, now) && <span className="text-[11px] tabular-nums text-mutedInk">{getStepDuration(step, now)}</span>}
+                  <Badge tone={getStatusTone(step.status)}>{getStatusLabel(step.status)}</Badge>
+                </div>
               </div>
             </div>
           </div>
@@ -55,6 +64,11 @@ export function AgentExecutionCard({ execution }: AgentExecutionCardProps) {
       </div>
     </section>
   );
+}
+
+function getStepDuration(step: AgentExecutionBlock["steps"][number], now: number): string | undefined {
+  const end = step.status === "running" ? now : step.completedAt;
+  return formatDuration(getDurationMs(step.startedAt, end));
 }
 
 function StepIcon({ status }: { status: TurnResponseBlockStatus }) {
