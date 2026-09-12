@@ -11,6 +11,9 @@
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@opspilot/domain": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "^26.2.0",
     "typescript": "^5.7.0",
