@@ -1,9 +1,11 @@
 import type { ModelToolCall } from '@opspilot/model-gateway';
 import type { Session, SessionEntry, Turn, TurnEvent } from '@opspilot/domain';
 
-import type { ToolPresentationResolver } from '../turn-stream/tool-presentation.js';
 import {
-  resolveHistoricalToolPresentation,
+  resolveToolPresentation,
+  type ToolPresentationResolver,
+} from '../turn-stream/tool-presentation.js';
+import {
   type TurnPresentationSummary,
   type TurnPresentationUsage,
   type TurnToolPresentationSummary,
@@ -98,7 +100,7 @@ function collectToolSummaries(
     )
     .map((tool) => {
       const toolCall = toolCalls.get(tool.callId);
-      const display = resolveHistoricalToolPresentation({
+      const display = resolveToolPresentation({
         resolver,
         name: tool.name,
         arguments: toolCall?.arguments ?? {},

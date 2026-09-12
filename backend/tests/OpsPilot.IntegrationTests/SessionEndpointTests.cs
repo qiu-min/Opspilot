@@ -76,7 +76,10 @@ public sealed class SessionEndpointTests : IClassFixture<SessionTestFactory>
         Assert.Equal("completed", summary.GetProperty("status").GetString());
         Assert.Equal(140, summary.GetProperty("usage").GetProperty("totalTokens").GetInt32());
         Assert.Equal("Look up", summary.GetProperty("tools")[0].GetProperty("display").GetProperty("title").GetString());
+        Assert.Equal("record-1", summary.GetProperty("tools")[0].GetProperty("display").GetProperty("subject").GetString());
+        Assert.Equal("Reading record", summary.GetProperty("tools")[0].GetProperty("display").GetProperty("detail").GetString());
         Assert.Equal(DateTimeOffset.Parse("2026-09-09T12:00:01Z"), summary.GetProperty("tools")[0].GetProperty("startedAt").GetDateTimeOffset());
+        Assert.Equal(DateTimeOffset.Parse("2026-09-09T12:00:02Z"), summary.GetProperty("tools")[0].GetProperty("completedAt").GetDateTimeOffset());
     }
 
     [Fact]
@@ -97,6 +100,42 @@ public sealed class SessionEndpointTests : IClassFixture<SessionTestFactory>
         Assert.Equal(sessionId, factory.Agent.LastRunSessionId);
         JsonElement body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(sessionId, body.GetProperty("sessionId").GetGuid());
+    }
+
+    [Fact]
+    public async Task Detail_OmitsNullHistoricalToolPresentationFields()
+    {
+        LoginResponse login = await RegisterAndLoginAsync();
+        Guid sessionId = await CreateSessionAsync(login.AccessToken);
+        factory.Agent.Histories[sessionId] = new AgentSessionHistory("leaf", [
+            new AgentSessionHistoryMessageItem("message-1", "user", "lookup", DateTimeOffset.UtcNow),
+        ], [
+            new AgentTurnPresentationSummary(
+                Guid.NewGuid(),
+                sessionId,
+                "message-1",
+                "completed",
+                DateTimeOffset.Parse("2026-09-09T12:00:00Z"),
+                DateTimeOffset.Parse("2026-09-09T12:00:05Z"),
+                null,
+                [new AgentTurnToolPresentationSummary(
+                    "call-1",
+                    "lookup",
+                    "completed",
+                    null,
+                    null,
+                    DateTimeOffset.Parse("2026-09-09T12:00:02Z"))])
+        ]);
+
+        using HttpResponseMessage response = await SendAsync(HttpMethod.Get, $"/api/sessions/{sessionId}", login.AccessToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        JsonElement tool = (await response.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("turnSummaries")[0]
+            .GetProperty("tools")[0];
+
+        Assert.False(tool.TryGetProperty("display", out _));
+        Assert.False(tool.TryGetProperty("startedAt", out _));
+        Assert.Equal(DateTimeOffset.Parse("2026-09-09T12:00:02Z"), tool.GetProperty("completedAt").GetDateTimeOffset());
     }
 
     [Fact]

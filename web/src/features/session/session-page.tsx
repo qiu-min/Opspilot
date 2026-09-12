@@ -13,7 +13,7 @@ import { SessionThread } from "./components/session-thread";
 import { SessionSidebar } from "./session-sidebar";
 import { demoAgentName, demoConnectedTools, demoContextFiles, demoContextStatus, demoEnvironmentLabel, demoRecentOutputs } from "./demo";
 import { isXlsxFile, replacePendingAttachment, uploadPendingAttachment, SessionAttachmentValidationError } from "./session-attachments";
-import { formatMessageCreatedAt, mergeLiveTurnResponse, toSessionItems, toSessionSummary } from "./session-mappers";
+import { formatMessageCreatedAt, mergeLiveTurnResponse, reconcileTerminalSessionItems, toSessionItems, toSessionSummary } from "./session-mappers";
 import { projectTurnStream } from "./turn-stream-projection";
 import { classifyTurnStreamError, isSessionTurnProcessing, planActiveTurnRecovery, removeOptimisticMessage, shouldClearTurnAfterFailure, shouldHydrateTurnProjection, shouldStartTurnSubscription } from "./turn-recovery";
 import { createInitialTurnStreamState, hydrateTurnStreamStateFromProjection, reduceTurnStreamEvent, TurnStreamStateError, type TurnStreamState } from "./turn-stream-state";
@@ -357,13 +357,13 @@ export function SessionPage() {
     try {
       const detail = await getSession(sessionId, accessToken);
       const durableItems = toSessionItems(detail);
-      setTimelinesBySessionId((current) => ({ ...current, [sessionId]: durableItems }));
+      setTimelinesBySessionId((current) => ({ ...current, [sessionId]: reconcileTerminalSessionItems(durableItems, liveResponse, true) }));
       await refreshSessions();
       setSessionStatus(sessionId, "Response completed");
     } catch (error: unknown) {
       if (invalidateAuthentication(error)) return;
       if (liveResponse !== undefined) {
-        setTimelinesBySessionId((current) => ({ ...current, [sessionId]: mergeLiveTurnResponse(current[sessionId] ?? [], liveResponse, liveResponse.id) }));
+        setTimelinesBySessionId((current) => ({ ...current, [sessionId]: reconcileTerminalSessionItems(current[sessionId] ?? [], liveResponse, false) }));
       }
       setErrorsBySessionId((current) => ({ ...current, [sessionId]: errorMessage(error, "Unable to refresh the completed Session.") }));
     } finally {

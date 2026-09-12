@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeLiveTurnResponse, toSessionItems } from "./session-mappers";
+import { mergeLiveTurnResponse, reconcileTerminalSessionItems, toSessionItems } from "./session-mappers";
 
 describe("Session history mapper", () => {
   it("merges a normal assistant Turn only when durable identity matches", () => {
@@ -136,6 +136,82 @@ describe("Session history mapper", () => {
     const live = { type: "response" as const, id: "live-turn", status: "completed" as const, metrics: { startedAt: "2026-09-09T00:00:00Z", completedAt: "2026-09-09T00:00:03Z", usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 }, toolCount: 1 }, blocks: [{ type: "agent_execution" as const, id: "execution-live", batchId: "batch-live", steps: [{ id: "call-1", callId: "call-1", name: "lookup", status: "completed" as const, display: { title: "Lookup record" }, startedAt: "2026-09-09T00:00:01Z", completedAt: "2026-09-09T00:00:02Z" }] }] };
     const merged = mergeLiveTurnResponse(durable, live, "live-turn");
     expect(merged[0]).toMatchObject({ metrics: live.metrics, blocks: [{ type: "agent_execution", steps: [{ callId: "call-1", display: { title: "Lookup record" }, startedAt: "2026-09-09T00:00:01Z" }] }] });
+  });
+
+  it("uses the refreshed durable response as the sole terminal source of truth", () => {
+    const durable = [{
+      type: "response" as const,
+      id: "turn-turn-123",
+      turnId: "turn-123",
+      status: "completed" as const,
+      metrics: {
+        startedAt: "2026-09-09T00:00:00Z",
+        completedAt: "2026-09-09T00:00:05Z",
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+        toolCount: 1,
+      },
+      blocks: [{
+        type: "agent_execution" as const,
+        id: "execution-durable",
+        batchId: "batch-durable",
+        steps: [{
+          id: "call-1",
+          callId: "call-1",
+          name: "lookup",
+          status: "completed" as const,
+          display: { title: "Durable lookup" },
+          startedAt: "2026-09-09T00:00:01Z",
+          completedAt: "2026-09-09T00:00:02Z",
+        }],
+      }],
+    }];
+    const live = {
+      type: "response" as const,
+      id: "turn-turn-123",
+      turnId: "turn-123",
+      status: "failed" as const,
+      metrics: {
+        startedAt: "live-start",
+        completedAt: "live-completed",
+        usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+        toolCount: 1,
+      },
+      blocks: [{
+        type: "agent_execution" as const,
+        id: "execution-live",
+        batchId: "batch-live",
+        steps: [{
+          id: "call-1",
+          callId: "call-1",
+          name: "lookup",
+          status: "failed" as const,
+          display: { title: "Live lookup" },
+          startedAt: "live-started",
+          completedAt: "live-completed",
+        }],
+      }],
+    };
+
+    const reconciled = reconcileTerminalSessionItems(durable, live, true);
+
+    expect(reconciled).toEqual(durable);
+    expect(reconciled).toHaveLength(1);
+    expect(reconciled[0]).toMatchObject({
+      id: "turn-turn-123",
+      status: "completed",
+      metrics: durable[0].metrics,
+      blocks: [{ type: "agent_execution", steps: [{ display: { title: "Durable lookup" }, startedAt: "2026-09-09T00:00:01Z", completedAt: "2026-09-09T00:00:02Z" }] }],
+    });
+  });
+
+  it("keeps the completed live response when terminal detail refresh fails", () => {
+    const durable = [{ type: "message" as const, id: "user-123", message: { id: "user-123", role: "user" as const, body: "inspect", createdAt: "Recently" } }];
+    const live = { type: "response" as const, id: "turn-turn-123", turnId: "turn-123", status: "completed" as const, blocks: [{ type: "assistant_text" as const, id: "assistant-live", text: "done", completed: true }] };
+
+    const reconciled = reconcileTerminalSessionItems(durable, live, false);
+
+    expect(reconciled).toEqual([...durable, live]);
+    expect(reconciled).toContainEqual(live);
   });
 
   it("deduplicates a completed assistant response when response identity matches", () => {

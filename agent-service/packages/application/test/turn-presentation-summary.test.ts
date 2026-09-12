@@ -418,6 +418,117 @@ describe('GetSessionHistory turn summary composition', () => {
     ]);
     expect(result.turnSummaries.map((summary) => summary.turnId)).toEqual(['turn-b', 'turn-c']);
   });
+
+  it('resolves ToolCalls only from assistant entries owned by the current Turn', () => {
+    const session = Session.create({ id: sessionId, timestamp: startedAt });
+    const userA = session.appendMessage({
+      role: 'user',
+      content: [{ type: 'text', text: 'turn A' }],
+    });
+    const assistantA = session.appendMessage({
+      role: 'assistant',
+      api: 'api',
+      provider: 'provider',
+      model: 'model',
+      content: [],
+      toolCalls: [{ callId: 'call-shared', name: 'lookup', arguments: { owner: 'Turn A' } }],
+      finishReason: 'tool_calls',
+    });
+    const userB = session.appendMessage({
+      role: 'user',
+      content: [{ type: 'text', text: 'turn B' }],
+    });
+    const assistantB = session.appendMessage({
+      role: 'assistant',
+      api: 'api',
+      provider: 'provider',
+      model: 'model',
+      content: [],
+      toolCalls: [{ callId: 'call-shared', name: 'lookup', arguments: { owner: 'Turn B' } }],
+      finishReason: 'tool_calls',
+    });
+    const turnA = terminalTurn('turn-owned-a', userA.id, 'completed');
+    const turnB = terminalTurn('turn-owned-b', userB.id, 'completed');
+    const events = new Map<string, TurnEvent[]>([
+      [
+        turnA.getId(),
+        [
+          event(turnA, 0, 'assistant_message_completed', {
+            entryId: assistantA.id,
+            sessionLeafId: assistantA.id,
+          }),
+          event(turnA, 1, 'tool_requested', { callId: 'call-shared', name: 'lookup' }),
+          event(turnA, 2, 'tool_completed', {
+            callId: 'call-shared',
+            name: 'lookup',
+            isError: false,
+            resultEntryId: 'tool-a',
+            sessionLeafId: 'tool-a',
+          }),
+        ],
+      ],
+      [
+        turnB.getId(),
+        [
+          event(turnB, 0, 'assistant_message_completed', {
+            entryId: assistantB.id,
+            sessionLeafId: assistantB.id,
+          }),
+          event(turnB, 1, 'tool_requested', { callId: 'call-shared', name: 'lookup' }),
+          event(turnB, 2, 'tool_completed', {
+            callId: 'call-shared',
+            name: 'lookup',
+            isError: false,
+            resultEntryId: 'tool-b',
+            sessionLeafId: 'tool-b',
+          }),
+        ],
+      ],
+    ]);
+    const sessionStore: SessionStore = {
+      create: () => {
+        throw new Error('not used');
+      },
+      load: () => session,
+      appendEntry: () => {
+        throw new Error('not used');
+      },
+      saveMetadata: () => {
+        throw new Error('not used');
+      },
+    };
+    const turnStore: TurnStore = {
+      create: () => {
+        throw new Error('not used');
+      },
+      load: () => {
+        throw new Error('not used');
+      },
+      save: () => {
+        throw new Error('not used');
+      },
+      appendEvent: () => {
+        throw new Error('not used');
+      },
+      loadEvents: (turnId) => events.get(turnId) ?? [],
+      listBySession: () => [turnB, turnA],
+      listRecoverable: () => [],
+    };
+    const resolver: ToolPresentationResolver = ({ arguments: toolArguments }) => ({
+      title: String(toolArguments.owner),
+    });
+
+    const result = new GetSessionHistory({ sessionStore, turnStore, toolPresentationResolver: resolver }).execute(sessionId);
+
+    expect(result.turnSummaries.map((summary) => summary.turnId)).toEqual([
+      'turn-owned-a',
+      'turn-owned-b',
+    ]);
+    expect(result.turnSummaries.map((summary) => summary.tools[0]?.display)).toEqual([
+      { title: 'Turn A' },
+      { title: 'Turn B' },
+    ]);
+  });
 });
 
 function terminalTurn(

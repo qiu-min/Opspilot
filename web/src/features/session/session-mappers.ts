@@ -51,6 +51,16 @@ export function reconcileSessionItems(durableItems: SessionItem[], liveResponseI
   if (liveResponseId === undefined || liveResponse === undefined) return durableItems;
   return mergeLiveTurnResponse(durableItems, liveResponse, liveResponseId);
 }
+
+/** Keeps durable detail on refresh success and preserves the completed live response on failure. */
+export function reconcileTerminalSessionItems(
+  durableItems: SessionItem[],
+  liveResponse: TurnResponseItem | undefined,
+  refreshSucceeded: boolean,
+): SessionItem[] {
+  if (refreshSucceeded) return durableItems;
+  return mergeLiveTurnResponse(durableItems, liveResponse, liveResponse?.id);
+}
 export function formatMessageCreatedAt(createdAt = new Date().toISOString()): string { const date = new Date(createdAt); return Number.isNaN(date.getTime()) ? "Recently" : new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date); }
 
 function toAssistantBlock(item: Extract<SessionHistoryItemResponse, { type: "message" }>): AssistantTextBlock | undefined { return item.role === "assistant" ? { type: "assistant_text", id: `assistant-${item.id}`, text: item.text, completed: true } : undefined; }

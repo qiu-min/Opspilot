@@ -29,11 +29,14 @@ public sealed record SessionToolPresentationSummaryResponse(
     string CallId,
     string Name,
     string Status,
-    SessionToolDisplayInfoResponse? Display,
-    DateTimeOffset? StartedAt,
-    DateTimeOffset? CompletedAt);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] SessionToolDisplayInfoResponse? Display,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? StartedAt,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? CompletedAt);
 
-public sealed record SessionToolDisplayInfoResponse(string Title, string? Subject, string? Detail);
+public sealed record SessionToolDisplayInfoResponse(
+    string Title,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Subject,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Detail);
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(SessionHistoryMessageItemResponse), "message")]

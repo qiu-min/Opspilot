@@ -31,6 +31,10 @@ export {
   type TurnStreamToolStatus,
 } from './turn-stream-projection.js';
 export { TurnStreamProjector, type TurnStreamProjectorIdentity } from './turn-stream-projector.js';
+export {
+  resolveToolPresentation,
+  type ResolveToolPresentationOptions,
+} from './tool-presentation.js';
 export type {
   ToolDisplayInfo,
   ToolPresentationContext,

@@ -2,7 +2,7 @@ import type { AgentSessionEvent } from '../agent-session/agent-session.js';
 import type { ModelToolCall } from '@opspilot/model-gateway';
 import type { TurnStreamEventDraft, TurnStreamEventDraftPayload } from './turn-stream-event.js';
 import type { ToolDisplayInfo, ToolPresentationResolver } from './tool-presentation.js';
-import { resolveHistoricalToolPresentation } from '../turn-presentation/turn-presentation-summary.js';
+import { resolveToolPresentation } from './tool-presentation.js';
 
 export interface TurnStreamProjectorIdentity {
   readonly turnId: string;
@@ -171,7 +171,7 @@ export class TurnStreamProjector {
     const cached = this.toolDisplays.get(toolCall.callId);
     if (cached !== undefined) return cached;
 
-    const display = resolveHistoricalToolPresentation({
+    const display = resolveToolPresentation({
       resolver: this.toolPresentationResolver,
       name: toolCall.name,
       arguments: toolCall.arguments,
