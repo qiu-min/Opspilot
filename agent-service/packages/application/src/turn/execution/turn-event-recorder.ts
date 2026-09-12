@@ -2,7 +2,14 @@ import { randomUUID } from 'node:crypto';
 
 import type { AgentMessage } from '@opspilot/agent-runtime';
 import type { ToolResultMessage } from '@opspilot/model-gateway';
-import type { Session, SessionEntry, Turn, TurnEvent, TurnEventBase } from '@opspilot/domain';
+import {
+  CURRENT_TURN_EVENT_VERSION,
+  type Session,
+  type SessionEntry,
+  type Turn,
+  type TurnEvent,
+  type TurnEventBase,
+} from '@opspilot/domain';
 
 import type { AgentSessionEvent } from '../../session/runtime/agent-session.js';
 import type { TurnStore } from '../ports/turn-store.js';
@@ -43,14 +50,14 @@ export class TurnEventRecorder {
     this.advanceCheckpoint(event, sessionLeafId, 'input_committed');
   }
 
-  /** Records a model call start fact. */
-  public recordModelStarted(): void {
-    this.append({ type: 'model_started' });
+  /** Records a model call start fact with the identity allocated by Agent Runtime. */
+  public recordModelStarted(modelCallId: string): void {
+    this.append({ type: 'model_started', modelCallId });
   }
 
   /** Records a completed model response before recording its durable message commit. */
-  public recordModelCompleted(): void {
-    this.append({ type: 'model_completed' });
+  public recordModelCompleted(modelCallId: string): void {
+    this.append({ type: 'model_completed', modelCallId });
   }
 
   /** Records a durable assistant message and advances the assistant checkpoint. */
@@ -92,8 +99,13 @@ export class TurnEventRecorder {
   }
 
   /** Records one model call's final usage contribution when stable token counts are available. */
-  public recordUsage(inputTokens: number, outputTokens: number, totalTokens: number): void {
-    this.append({ type: 'usage_recorded', inputTokens, outputTokens, totalTokens });
+  public recordUsage(
+    modelCallId: string,
+    inputTokens: number,
+    outputTokens: number,
+    totalTokens: number,
+  ): void {
+    this.append({ modelCallId, type: 'usage_recorded', inputTokens, outputTokens, totalTokens });
   }
 
   /** Records the start of a compaction operation. */
@@ -141,10 +153,10 @@ export class TurnEventRecorder {
   public recordAgentSessionEvent(event: AgentSessionEvent): void {
     switch (event.type) {
       case 'step_start':
-        this.recordModelStarted();
+        this.recordModelStarted(event.modelCallId);
         return;
       case 'message_end':
-        this.recordMessageCompleted(event.message);
+        this.recordMessageCompleted(event.message, event.modelCallId);
         return;
       case 'tool_execution_start':
         this.recordToolStarted(event.toolCall.callId, event.toolCall.name);
@@ -160,12 +172,16 @@ export class TurnEventRecorder {
     }
   }
 
-  private recordMessageCompleted(message: AgentMessage): void {
+  private recordMessageCompleted(message: AgentMessage, modelCallId?: string): void {
     if (message.role === 'assistant') {
       if (message.finishReason === 'error' || message.finishReason === 'aborted') return;
-      this.recordModelCompleted();
+      if (modelCallId === undefined) {
+        throw new Error('A completed assistant message must identify its model call.');
+      }
+      this.recordModelCompleted(modelCallId);
       if (message.usage !== undefined) {
         this.recordUsage(
+          modelCallId,
           message.usage.inputTokens,
           message.usage.outputTokens,
           message.usage.totalTokens,
@@ -184,7 +200,7 @@ export class TurnEventRecorder {
   private append(payload: TurnEventPayload): TurnEvent {
     const state = this.turn.getState();
     const event = {
-      version: 1 as const,
+      version: CURRENT_TURN_EVENT_VERSION,
       id: randomUUID(),
       turnId: state.id,
       sessionId: state.sessionId,

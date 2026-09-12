@@ -52,6 +52,7 @@ describe('buildTurnPresentationSummary', () => {
       toolPresentationResolver: resolver,
       events: [
         event(turn, 4, 'usage_recorded', {
+          modelCallId: 'model-call-1',
           inputTokens: 1_600,
           outputTokens: 300,
           totalTokens: 1_900,
@@ -70,6 +71,7 @@ describe('buildTurnPresentationSummary', () => {
           sessionLeafId: 'tool-1',
         }),
         event(turn, 5, 'usage_recorded', {
+          modelCallId: 'model-call-2',
           inputTokens: 1_000,
           outputTokens: 100,
           totalTokens: 1_100,
@@ -553,7 +555,7 @@ function event(
   attempt = 1,
 ): TurnEvent {
   return {
-    version: 1,
+    version: 2,
     id: `${turn.getId()}-event-${sequence}-${attempt}`,
     turnId: turn.getId(),
     sessionId: turn.getSessionId(),

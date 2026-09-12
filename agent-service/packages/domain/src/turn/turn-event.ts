@@ -1,7 +1,7 @@
 import { TurnEventError } from './turn-errors.js';
 
 /** Current durable TurnEvent record version. */
-export const CURRENT_TURN_EVENT_VERSION = 1 as const;
+export const CURRENT_TURN_EVENT_VERSION = 2 as const;
 
 /** Common fields present on every append-only TurnEvent. */
 export interface TurnEventBase {
@@ -20,10 +20,12 @@ export interface TurnStartedEvent extends TurnEventBase {
 
 export interface ModelStartedEvent extends TurnEventBase {
   readonly type: 'model_started';
+  readonly modelCallId: string;
 }
 
 export interface ModelCompletedEvent extends TurnEventBase {
   readonly type: 'model_completed';
+  readonly modelCallId: string;
 }
 
 export interface InputCommittedEvent extends TurnEventBase {
@@ -72,6 +74,7 @@ export interface CompactionCompletedEvent extends TurnEventBase {
 
 export interface UsageRecordedEvent extends TurnEventBase {
   readonly type: 'usage_recorded';
+  readonly modelCallId: string;
   readonly inputTokens: number;
   readonly outputTokens: number;
   readonly totalTokens: number;
@@ -139,11 +142,13 @@ export function validateTurnEvent(event: unknown): asserts event is TurnEvent {
 
   switch (event.type) {
     case 'turn_started':
-    case 'model_started':
-    case 'model_completed':
     case 'compaction_started':
     case 'turn_resumed':
     case 'turn_cancelled':
+      return;
+    case 'model_started':
+    case 'model_completed':
+      assertModelCallId(event.modelCallId);
       return;
     case 'input_committed':
       assertEntryId(event.entryId, 'input_committed entryId');
@@ -174,6 +179,7 @@ export function validateTurnEvent(event: unknown): asserts event is TurnEvent {
       }
       return;
     case 'usage_recorded':
+      assertModelCallId(event.modelCallId);
       assertNonNegativeInteger(event.inputTokens, 'inputTokens');
       assertNonNegativeInteger(event.outputTokens, 'outputTokens');
       assertNonNegativeInteger(event.totalTokens, 'totalTokens');
@@ -203,6 +209,12 @@ export function isTurnEvent(value: unknown): value is TurnEvent {
 
 function assertCallId(value: unknown): asserts value is string {
   if (!isNonEmptyString(value)) throw new TurnEventError('TurnEvent callId must be non-empty.');
+}
+
+function assertModelCallId(value: unknown): asserts value is string {
+  if (!isNonEmptyString(value)) {
+    throw new TurnEventError('TurnEvent modelCallId must be non-empty.');
+  }
 }
 
 function assertName(value: unknown): asserts value is string {

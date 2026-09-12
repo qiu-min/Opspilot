@@ -1071,6 +1071,11 @@ step_start
 step_end
 ```
 
+每个 `step_start` 都携带一个由 Runtime 在模型请求前生成的 `modelCallId`。对应的模型
+assistant `message_end` 也携带同一个 ID；用户消息和 ToolResult 的 `message_end` 不携带
+该字段。新的 Step 会生成新的 ID，Runtime 不把它与 Step 序号、消息 ID 或 Tool `callId`
+混用。
+
 ### Message
 
 ```text

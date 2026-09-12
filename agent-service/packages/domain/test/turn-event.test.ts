@@ -3,13 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { TurnEventError, isTurnEvent, validateTurnEvent } from '../src/index.js';
 
 const baseEvent = {
-  version: 1 as const,
+  version: 2 as const,
   id: 'event-1',
   turnId: 'turn-1',
   sessionId: 'session-1',
   sequence: 0,
   attempt: 1,
   timestamp: '2026-01-01T00:00:00.000Z',
+  modelCallId: 'model-call-1',
 };
 
 describe('TurnEvent validation', () => {
@@ -72,6 +73,28 @@ describe('TurnEvent validation', () => {
   it('keeps model_completed as a valid execution fact', () => {
     expect(() => validateTurnEvent({ ...baseEvent, type: 'model_completed' })).not.toThrow();
   });
+
+  it.each(['model_started', 'model_completed', 'usage_recorded'] as const)(
+    'requires a non-empty modelCallId for %s',
+    (type) => {
+      const event =
+        type === 'usage_recorded'
+          ? {
+              ...baseEvent,
+              type,
+              inputTokens: 1,
+              outputTokens: 2,
+              totalTokens: 3,
+            }
+          : { ...baseEvent, type };
+
+      expect(() => validateTurnEvent({ ...event, modelCallId: undefined })).toThrow(
+        TurnEventError,
+      );
+      expect(() => validateTurnEvent({ ...event, modelCallId: '' })).toThrow(TurnEventError);
+      expect(() => validateTurnEvent(event)).not.toThrow();
+    },
+  );
 
   it.each([
     ['unknown type', { ...baseEvent, type: 'unknown' }],

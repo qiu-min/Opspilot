@@ -248,7 +248,10 @@ describe('steering and follow-up loop', () => {
     const followUpStart = events.findIndex(
       (event) => event.type === 'message_start' && event.message === followUp,
     );
-    expect(events[followUpStart - 1]).toEqual({ type: 'step_start' });
+    expect(events[followUpStart - 1]).toEqual({
+      type: 'step_start',
+      modelCallId: expect.any(String),
+    });
     expect(events[followUpStart + 1]).toEqual({ type: 'message_end', message: followUp });
   });
 
@@ -280,7 +283,10 @@ describe('steering and follow-up loop', () => {
     const steeringEnd = events.findIndex(
       (event) => event.type === 'message_end' && event.message === steering,
     );
-    expect(events[steeringStart - 1]).toEqual({ type: 'step_start' });
+    expect(events[steeringStart - 1]).toEqual({
+      type: 'step_start',
+      modelCallId: expect.any(String),
+    });
     expect(steeringEnd).toBe(steeringStart + 1);
     expect(events[steeringEnd + 1]).toMatchObject({
       type: 'message_start',

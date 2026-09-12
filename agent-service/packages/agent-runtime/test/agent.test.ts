@@ -187,7 +187,11 @@ describe('Agent', () => {
     ]);
     expect(events[2]).toEqual({ type: 'message_start', message: prompt });
     expect(events[3]).toEqual({ type: 'message_end', message: prompt });
-    expect(events[6]).toEqual({ type: 'message_end', message: assistant });
+    expect(events[6]).toEqual({
+      type: 'message_end',
+      message: assistant,
+      modelCallId: expect.any(String),
+    });
   });
 
   it('stops delivering events after unsubscribe', async () => {

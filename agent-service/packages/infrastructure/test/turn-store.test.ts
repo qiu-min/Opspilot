@@ -30,7 +30,7 @@ function eventId(sequence: number, attempt: number): string {
 
 function turnStartedEvent(turn: Turn, sequence = 0, attempt = turn.getState().attempt): TurnEvent {
   return {
-    version: 1,
+    version: 2,
     id: eventId(sequence, attempt),
     turnId: turn.getId(),
     sessionId: turn.getSessionId(),
@@ -47,7 +47,7 @@ function modelStartedEvent(
   attempt = turn.getState().attempt,
 ): TurnEvent {
   return {
-    version: 1,
+    version: 2,
     id: eventId(sequence, attempt),
     turnId: turn.getId(),
     sessionId: turn.getSessionId(),
@@ -55,6 +55,7 @@ function modelStartedEvent(
     attempt,
     timestamp: startedAt,
     type: 'model_started',
+    modelCallId: `model-call-${attempt}`,
   };
 }
 
@@ -64,7 +65,7 @@ function modelCompletedEvent(
   attempt = turn.getState().attempt,
 ): TurnEvent {
   return {
-    version: 1,
+    version: 2,
     id: eventId(sequence, attempt),
     turnId: turn.getId(),
     sessionId: turn.getSessionId(),
@@ -72,6 +73,7 @@ function modelCompletedEvent(
     attempt,
     timestamp: '2026-01-01T00:00:02.000Z',
     type: 'model_completed',
+    modelCallId: `model-call-${attempt}`,
   };
 }
 
@@ -81,7 +83,7 @@ function inputCommittedEvent(
   attempt = turn.getState().attempt,
 ): TurnEvent {
   return {
-    version: 1,
+    version: 2,
     id: eventId(sequence, attempt),
     turnId: turn.getId(),
     sessionId: turn.getSessionId(),
@@ -100,7 +102,7 @@ function assistantMessageCompletedEvent(
   attempt = turn.getState().attempt,
 ): TurnEvent {
   return {
-    version: 1,
+    version: 2,
     id: eventId(sequence, attempt),
     turnId: turn.getId(),
     sessionId: turn.getSessionId(),
@@ -119,7 +121,7 @@ function toolRequestedEvent(
   attempt = turn.getState().attempt,
 ): TurnEvent {
   return {
-    version: 1,
+    version: 2,
     id: eventId(sequence, attempt),
     turnId: turn.getId(),
     sessionId: turn.getSessionId(),
@@ -138,7 +140,7 @@ function toolCompletedEvent(
   attempt = turn.getState().attempt,
 ): TurnEvent {
   return {
-    version: 1,
+    version: 2,
     id: eventId(sequence, attempt),
     turnId: turn.getId(),
     sessionId: turn.getSessionId(),
@@ -160,7 +162,7 @@ function turnCompletedEvent(
   attempt = turn.getState().attempt,
 ): TurnEvent {
   return {
-    version: 1,
+    version: 2,
     id: eventId(sequence, attempt),
     turnId: turn.getId(),
     sessionId: turn.getSessionId(),
@@ -174,7 +176,7 @@ function turnCompletedEvent(
 
 function turnFailedEvent(turn: Turn, sequence = 1, attempt = turn.getState().attempt): TurnEvent {
   return {
-    version: 1,
+    version: 2,
     id: eventId(sequence, attempt),
     turnId: turn.getId(),
     sessionId: turn.getSessionId(),
@@ -192,7 +194,7 @@ function turnCancelledEvent(
   attempt = turn.getState().attempt,
 ): TurnEvent {
   return {
-    version: 1,
+    version: 2,
     id: eventId(sequence, attempt),
     turnId: turn.getId(),
     sessionId: turn.getSessionId(),
@@ -204,6 +206,14 @@ function turnCancelledEvent(
 }
 
 function writeEvents(root: string, turnId: string, events: readonly TurnEvent[]): void {
+  writeFileSync(
+    join(root, 'turns', turnId, 'events.jsonl'),
+    `${events.map((event) => JSON.stringify(event)).join('\n')}\n`,
+    'utf8',
+  );
+}
+
+function writeRawEvents(root: string, turnId: string, events: readonly unknown[]): void {
   writeFileSync(
     join(root, 'turns', turnId, 'events.jsonl'),
     `${events.map((event) => JSON.stringify(event)).join('\n')}\n`,
@@ -287,6 +297,69 @@ describe('FileSystemTurnStore', () => {
       modelStartedEvent(crashTurn, 1, 1),
     ]);
     expect(crashWindow.store.load(crashTurn.getId()).getState().attempt).toBe(2);
+  });
+
+  it('loads v1 event logs by deterministically assigning legacy model call identities', () => {
+    const { root, store } = createStore();
+    const turn = createStartedTurn();
+    store.create(turn);
+    store.save(turn);
+
+    const base = {
+      version: 1,
+      turnId: turn.getId(),
+      sessionId: turn.getSessionId(),
+      attempt: 1,
+    };
+    writeRawEvents(root, turn.getId(), [
+      {
+        ...base,
+        id: 'legacy-turn-started',
+        sequence: 0,
+        timestamp: startedAt,
+        type: 'turn_started',
+      },
+      {
+        ...base,
+        id: 'legacy-model-started',
+        sequence: 1,
+        timestamp: startedAt,
+        type: 'model_started',
+      },
+      {
+        ...base,
+        id: 'legacy-model-completed',
+        sequence: 2,
+        timestamp: '2026-01-01T00:00:02.000Z',
+        type: 'model_completed',
+      },
+      {
+        ...base,
+        id: 'legacy-usage',
+        sequence: 3,
+        timestamp: '2026-01-01T00:00:02.000Z',
+        type: 'usage_recorded',
+        inputTokens: 1,
+        outputTokens: 2,
+        totalTokens: 3,
+      },
+    ]);
+
+    const events = store.loadEvents(turn.getId());
+    const modelEvents = events.filter(
+      (event): event is Extract<TurnEvent, { type: 'model_started' | 'model_completed' | 'usage_recorded' }> =>
+        event.type === 'model_started' ||
+        event.type === 'model_completed' ||
+        event.type === 'usage_recorded',
+    );
+
+    expect(events.every((event) => event.version === 2)).toBe(true);
+    expect(new Set(modelEvents.map((event) => event.modelCallId))).toEqual(
+      new Set(['legacy-model-call-legacy-model-started']),
+    );
+    expect(readFileSync(join(root, 'turns', turn.getId(), 'events.jsonl'), 'utf8')).toContain(
+      '"version":1',
+    );
   });
 
   it.each([

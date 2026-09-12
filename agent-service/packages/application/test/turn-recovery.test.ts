@@ -121,8 +121,8 @@ it('resumes a durable assistant tool-call batch without duplicating the assistan
   };
   const assistantEntry = session.appendMessage(assistantWithTool);
   sessionStore.appendEntry(session.getId(), assistantEntry);
-  recorder.recordModelStarted();
-  recorder.recordModelCompleted();
+  recorder.recordModelStarted('model-call-initial');
+  recorder.recordModelCompleted('model-call-initial');
   recorder.recordAssistantMessageCompleted(assistantWithTool);
   recorder.recordToolRequested(call.callId, call.name);
 
@@ -163,6 +163,24 @@ it('resumes a durable assistant tool-call batch without duplicating the assistan
   ).toHaveLength(1);
   expect(messages.filter((message) => message.role === 'tool')).toHaveLength(1);
   expect(turnStore.loadEvents(turn.getId()).map((event) => event.type)).toContain('turn_resumed');
+
+  const modelStartedEvents = turnStore
+    .loadEvents(turn.getId())
+    .filter(
+      (event): event is Extract<typeof event, { type: 'model_started' }> =>
+        event.type === 'model_started',
+    );
+  const modelCompletedEvents = turnStore
+    .loadEvents(turn.getId())
+    .filter(
+      (event): event is Extract<typeof event, { type: 'model_completed' }> =>
+        event.type === 'model_completed',
+    );
+  expect(modelStartedEvents).toHaveLength(2);
+  expect(modelStartedEvents[0]).toMatchObject({ attempt: 1, modelCallId: 'model-call-initial' });
+  expect(modelStartedEvents[1]?.attempt).toBe(2);
+  expect(modelStartedEvents[1]?.modelCallId).not.toBe(modelStartedEvents[0]?.modelCallId);
+  expect(modelCompletedEvents.at(-1)?.modelCallId).toBe(modelStartedEvents[1]?.modelCallId);
 });
 
 it('reconciles a terminal event without incrementing the attempt or calling the model', async () => {
@@ -183,7 +201,7 @@ it('reconciles a terminal event without incrementing the attempt or calling the 
   const recorder = new TurnEventRecorder(turn, turnStore, session);
   recorder.recordTurnStarted();
   turnStore.appendEvent(turn.getId(), {
-    version: 1,
+    version: 2,
     id: 'terminal-event',
     turnId: turn.getId(),
     sessionId: session.getId(),
@@ -294,8 +312,8 @@ it('restores the Excel resource, tools, and guidance when resuming a Turn', asyn
   };
   const assistantEntry = session.appendMessage(assistantWithTool);
   sessionStore.appendEntry(session.getId(), assistantEntry);
-  recorder.recordModelStarted();
-  recorder.recordModelCompleted();
+  recorder.recordModelStarted('model-call-initial');
+  recorder.recordModelCompleted('model-call-initial');
   recorder.recordAssistantMessageCompleted(assistantWithTool);
   recorder.recordToolRequested(call.callId, call.name);
 

@@ -197,6 +197,8 @@ export type AgentEvent =
   // 单个 Step 生命周期
   | {
       readonly type: 'step_start';
+      /** Identity of the model request started by this Step. */
+      readonly modelCallId: string;
     }
   | {
       readonly type: 'step_end';
@@ -217,6 +219,8 @@ export type AgentEvent =
   | {
       readonly type: 'message_end';
       readonly message: AgentMessage;
+      /** Present when the message is the response of a model request. */
+      readonly modelCallId?: string;
     }
 
   // 工具执行生命周期

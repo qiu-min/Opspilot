@@ -278,7 +278,7 @@ describe('runAgentLoop tool loop', () => {
     expect(events[8]).toEqual({ type: 'message_start', message: toolResult });
     expect(events[9]).toEqual({ type: 'message_end', message: toolResult });
     expect(events[10]).toEqual({ type: 'step_end', message: assistant1, toolResults: [toolResult] });
-    expect(events[11]).toEqual({ type: 'step_start' });
+    expect(events[11]).toEqual({ type: 'step_start', modelCallId: expect.any(String) });
   });
 
   it('stops after a complete tool step when policy requests it', async () => {
@@ -740,7 +740,11 @@ describe('runAgentLoop tool loop', () => {
       'agent_end',
     ]);
     expect(events[4]).toEqual({ type: 'message_start', message: { ...failure } });
-    expect(events[5]).toEqual({ type: 'message_end', message: failure });
+    expect(events[5]).toEqual({
+      type: 'message_end',
+      message: failure,
+      modelCallId: expect.any(String),
+    });
     expect(getSteeringMessages).toHaveBeenCalledTimes(1);
     expect(getFollowUpMessages).not.toHaveBeenCalled();
     expect(prepareNextStep).not.toHaveBeenCalled();

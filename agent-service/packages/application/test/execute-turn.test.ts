@@ -315,6 +315,31 @@ describe('ExecuteTurn', () => {
     });
   });
 
+  it('associates one model call with its completion and usage events', async () => {
+    const { store, turnStore } = createStore();
+    const response: AssistantMessage = {
+      ...assistantMessage('done'),
+      usage: { inputTokens: 4, outputTokens: 5, totalTokens: 9 },
+    };
+    const runner = new TestExecuteTurn({
+      sessionStore: store,
+      turnStore,
+      modelGateway: createGateway([assistantStream(response, model)]),
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+
+    const result = await runner.execute({ message: userMessage('measure usage') });
+    const events = turnStore.loadEvents(result.turnId);
+    const started = events.find((event) => event.type === 'model_started');
+    const completed = events.find((event) => event.type === 'model_completed');
+    const usage = events.find((event) => event.type === 'usage_recorded');
+
+    expect(started?.modelCallId).toEqual(expect.any(String));
+    expect(completed?.modelCallId).toBe(started?.modelCallId);
+    expect(usage?.modelCallId).toBe(started?.modelCallId);
+  });
+
   it('persists the input SessionEntry before its TurnEvent and checkpoint snapshot', async () => {
     const baseSessionStore = new InMemorySessionStore();
     const baseTurnStore = new InMemoryTurnStore();
@@ -491,8 +516,20 @@ describe('ExecuteTurn', () => {
       sessionStore: store,
       turnStore,
       modelGateway: createGateway([
-        assistantStream(assistantMessage('', model, [call]), model),
-        assistantStream(assistantMessage('done'), model),
+        assistantStream(
+          {
+            ...assistantMessage('', model, [call]),
+            usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+          },
+          model,
+        ),
+        assistantStream(
+          {
+            ...assistantMessage('done'),
+            usage: { inputTokens: 4, outputTokens: 5, totalTokens: 9 },
+          },
+          model,
+        ),
       ]),
       toolDefinitions: [
         {
@@ -518,12 +555,14 @@ describe('ExecuteTurn', () => {
       'input_committed',
       'model_started',
       'model_completed',
+      'usage_recorded',
       'assistant_message_completed',
       'tool_requested',
       'tool_started',
       'tool_completed',
       'model_started',
       'model_completed',
+      'usage_recorded',
       'assistant_message_completed',
       'turn_completed',
     ]);
@@ -532,6 +571,35 @@ describe('ExecuteTurn', () => {
       type: 'tool_completed',
       resultEntryId: toolEntry?.id,
       sessionLeafId: toolEntry?.id,
+    });
+    const modelStartedEvents = events.filter(
+      (event): event is Extract<typeof event, { type: 'model_started' }> =>
+        event.type === 'model_started',
+    );
+    const modelCompletedEvents = events.filter(
+      (event): event is Extract<typeof event, { type: 'model_completed' }> =>
+        event.type === 'model_completed',
+    );
+    const usageEvents = events.filter(
+      (event): event is Extract<typeof event, { type: 'usage_recorded' }> =>
+        event.type === 'usage_recorded',
+    );
+    expect(modelStartedEvents).toHaveLength(2);
+    expect(modelStartedEvents[0]?.modelCallId).not.toBe(modelStartedEvents[1]?.modelCallId);
+    expect(modelCompletedEvents.map((event) => event.modelCallId)).toEqual(
+      modelStartedEvents.map((event) => event.modelCallId),
+    );
+    expect(usageEvents.map((event) => event.modelCallId)).toEqual(
+      modelStartedEvents.map((event) => event.modelCallId),
+    );
+    expect(events.find((event) => event.type === 'tool_requested')).toMatchObject({
+      callId: call.callId,
+    });
+    expect(events.find((event) => event.type === 'tool_started')).toMatchObject({
+      callId: call.callId,
+    });
+    expect(events.find((event) => event.type === 'tool_completed')).toMatchObject({
+      callId: call.callId,
     });
     expect(turnStore.load(result.turnId).getState().checkpoint).toMatchObject({
       phase: 'assistant_committed',
@@ -559,6 +627,10 @@ describe('ExecuteTurn', () => {
     const events = turnStore.loadEvents(result.turnId);
 
     expect(turn.getState().status).toBe('failed');
+    expect(events.find((event) => event.type === 'model_started')?.modelCallId).toEqual(
+      expect.any(String),
+    );
+    expect(events.some((event) => event.type === 'model_completed')).toBe(false);
     expect(events.at(-1)).toMatchObject({ type: 'turn_failed', message: 'provider failed' });
     expect(messageEntries(store.load(result.sessionId))).toHaveLength(2);
   });

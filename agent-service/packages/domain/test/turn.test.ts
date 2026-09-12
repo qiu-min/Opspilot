@@ -166,7 +166,7 @@ describe('Turn', () => {
     'requires %s on tool_completed events',
     (field) => {
       const event: Record<string, unknown> = {
-        version: 1,
+        version: 2,
         id: 'event-1',
         turnId: 'turn-1',
         sessionId: 'session-1',
@@ -189,7 +189,7 @@ describe('Turn', () => {
   it('accepts tool_completed only with durable result identity', () => {
     expect(() =>
       validateTurnEvent({
-        version: 1,
+        version: 2,
         id: 'event-1',
         turnId: 'turn-1',
         sessionId: 'session-1',

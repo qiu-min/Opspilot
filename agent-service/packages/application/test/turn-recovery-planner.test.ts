@@ -20,8 +20,8 @@ describe('TurnRecoveryPlanner', () => {
     const events: TurnEvent[] = [
       event(turn, 0, { type: 'turn_started' }),
       event(turn, 1, { type: 'input_committed', entryId: input.id, sessionLeafId: input.id }),
-      event(turn, 2, { type: 'model_started' }),
-      event(turn, 3, { type: 'model_completed' }),
+      event(turn, 2, { type: 'model_started', modelCallId: 'model-call-1' }),
+      event(turn, 3, { type: 'model_completed', modelCallId: 'model-call-1' }),
       event(turn, 4, {
         type: 'assistant_message_completed',
         entryId: assistantEntry.id,
@@ -181,7 +181,7 @@ function toolMessage(callId: string, name: string): ToolResultMessage {
 
 function event(turn: Turn, sequence: number, payload: object): TurnEvent {
   return {
-    version: 1,
+    version: 2,
     id: `event-${sequence}`,
     turnId: turn.getId(),
     sessionId: turn.getSessionId(),

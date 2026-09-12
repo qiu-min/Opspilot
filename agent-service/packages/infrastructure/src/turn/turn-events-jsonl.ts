@@ -1,7 +1,11 @@
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-import { isTurnEvent, type TurnEvent } from '@opspilot/domain';
+import {
+  CURRENT_TURN_EVENT_VERSION,
+  isTurnEvent,
+  type TurnEvent,
+} from '@opspilot/domain';
 
 /** Errors raised by the append-only Turn event file adapter. */
 export class TurnEventsJsonlError extends Error {
@@ -63,7 +67,7 @@ export function parseTurnEventsJsonl(content: string): TurnEvent[] {
   if (lines.at(-1) === '') lines.pop();
   if (lines.length === 0) return [];
 
-  return lines.map((line, index) => {
+  const values = lines.map((line, index) => {
     if (line.trim() === '') {
       throw new TurnEventsJsonlError(`Turn events file contains an empty line at ${index + 1}.`);
     }
@@ -77,9 +81,43 @@ export function parseTurnEventsJsonl(content: string): TurnEvent[] {
       });
     }
 
+    return value;
+  });
+
+  return migrateLegacyTurnEvents(values).map((value, index) => {
     if (!isTurnEvent(value)) {
       throw new TurnEventsJsonlError(`Invalid TurnEvent at line ${index + 1}.`);
     }
     return value;
   });
+}
+
+/** Upgrades v1 event records in memory before the current strict validator runs. */
+function migrateLegacyTurnEvents(values: readonly unknown[]): readonly unknown[] {
+  let activeModelCallId: string | undefined;
+
+  return values.map((value) => {
+    if (!isRecord(value) || value.version !== 1) return value;
+
+    const migrated = { ...value, version: CURRENT_TURN_EVENT_VERSION };
+    if (value.type === 'model_started') {
+      activeModelCallId = legacyModelCallId(value.id);
+      return { ...migrated, modelCallId: activeModelCallId };
+    }
+    if (value.type === 'model_completed' || value.type === 'usage_recorded') {
+      return {
+        ...migrated,
+        modelCallId: activeModelCallId ?? legacyModelCallId(value.id),
+      };
+    }
+    return migrated;
+  });
+}
+
+function legacyModelCallId(eventId: unknown): string {
+  return `legacy-model-call-${String(eventId)}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

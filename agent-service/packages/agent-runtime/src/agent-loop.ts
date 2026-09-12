@@ -14,6 +14,7 @@ import type {
   ToolResultMessage,
 } from '@opspilot/model-gateway';
 import type { Options } from '@opspilot/model-gateway';
+import { randomUUID } from 'node:crypto';
 import { executeToolCalls } from './tool-executor.js';
 import { defaultConvertToLlm } from './convert-to-llm.js';
 
@@ -111,14 +112,23 @@ export async function runAgentLoopWithOutcome(
     }
   }
 
-  await emit({ type: 'step_start' });
+  const initialModelCallId = randomUUID();
+  await emit({ type: 'step_start', modelCallId: initialModelCallId });
 
   for (const prompt of prompts) {
     await emit({ type: 'message_start', message: prompt });
     await emit({ type: 'message_end', message: prompt });
   }
 
-  const termination = await runLoop(currentContext, newMessages, config, streamFn, emit, signal);
+  const termination = await runLoop(
+    currentContext,
+    newMessages,
+    config,
+    streamFn,
+    emit,
+    initialModelCallId,
+    signal,
+  );
 
   return {
     messages: newMessages,
@@ -141,6 +151,7 @@ async function runLoop(
   initialConfig: AgentLoopConfig,
   streamFn: StreamFn,
   emit: AgentEventSink,
+  initialModelCallId: string,
   signal?: AbortSignal,
 ): Promise<AgentLoopTermination | undefined> {
   let currentContext = initialContext;
@@ -148,16 +159,16 @@ async function runLoop(
   const initialSteeringMessages = await config.getSteeringMessages?.(signal);
   let pendingMessages: AgentMessage[] = [...(initialSteeringMessages ?? [])];
   let firstStep = true;
+  let nextModelCallId: string | undefined = initialModelCallId;
 
   while (true) {
     let hasMoreToolCalls = true;
 
     while (hasMoreToolCalls || pendingMessages.length > 0) {
-      if (firstStep) {
-        firstStep = false;
-      } else {
-        await emit({ type: 'step_start' });
-      }
+      const modelCallId = nextModelCallId ?? randomUUID();
+      nextModelCallId = undefined;
+      if (firstStep) firstStep = false;
+      else await emit({ type: 'step_start', modelCallId });
 
       for (const pendingMessage of pendingMessages) {
         currentContext.messages.push(pendingMessage);
@@ -173,6 +184,7 @@ async function runLoop(
         config,
         streamFn,
         emit,
+        modelCallId,
         signal,
       );
       newMessages.push(assistantMessage);
@@ -288,6 +300,7 @@ async function streamAssistantResponse(
   config: AgentLoopConfig,
   streamFn: StreamFn,
   emit: AgentEventSink,
+  modelCallId: string,
   signal?: AbortSignal,
 ): Promise<AssistantMessage> {
   const sourceMessages = context.messages;
@@ -320,7 +333,7 @@ async function streamAssistantResponse(
       await emit({ type: 'message_start', message: { ...finalMessage } });
     }
 
-    await emit({ type: 'message_end', message: finalMessage });
+    await emit({ type: 'message_end', message: finalMessage, modelCallId });
     return finalMessage;
   };
 
