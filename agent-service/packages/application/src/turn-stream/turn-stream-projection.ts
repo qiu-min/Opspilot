@@ -184,7 +184,7 @@ function upsertTool(
   const index = tools.findIndex((tool) => tool.callId === replacement.callId);
   if (index < 0) return [...tools, replacement];
   const existing = tools[index]!;
-  const display = existing.display ?? replacement.display;
+  const display = replacement.display ?? existing.display;
   const startedAt = existing.startedAt ?? replacement.startedAt;
   const completedAt = existing.completedAt ?? replacement.completedAt;
   const next = {
@@ -196,6 +196,7 @@ function upsertTool(
   return tools.map((tool, toolIndex) => (toolIndex === index ? next : tool));
 }
 
+/** Sums final usage contributions, with one contribution expected per model call. */
 function aggregateUsage(
   current: TurnStreamProjection['usage'],
   event: Extract<TurnStreamEvent, { type: 'usage' }>,

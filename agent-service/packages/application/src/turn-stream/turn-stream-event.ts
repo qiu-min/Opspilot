@@ -70,6 +70,7 @@ export interface CompactionCompletedStreamEvent extends TurnStreamEventBase {
   readonly willRetry?: boolean;
 }
 
+/** Final token usage contribution for one completed model call. */
 export interface UsageStreamEvent extends TurnStreamEventBase {
   readonly type: 'usage';
   readonly inputTokens: number;

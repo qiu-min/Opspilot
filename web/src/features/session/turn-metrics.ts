@@ -1,5 +1,6 @@
 import type { TurnResponseMetrics, TurnResponseStatus, TurnUsage } from "./types";
 
+/** Sums final per-model-call usage contributions from the current live Turn. */
 export function aggregateTurnUsage(usageEvents: readonly TurnUsage[]): TurnUsage | null {
   if (usageEvents.length === 0) return null;
   return usageEvents.reduce<TurnUsage>((total, usage) => ({

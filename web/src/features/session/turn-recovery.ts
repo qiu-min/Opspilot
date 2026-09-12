@@ -1,4 +1,6 @@
 import type { ActiveTurnResponse } from "../../api/sessions/session-contracts";
+import type { TurnStreamProjectionResponse } from "../../api/sessions/session-contracts";
+import type { TurnStreamState } from "./turn-stream-state";
 import type { SessionItem } from "./types";
 
 export type TurnStreamConflictKind = "replay_gap" | "session_active_turn" | "other_conflict" | "other";
@@ -6,8 +8,19 @@ export type ActiveTurnRecoveryPlan =
   | { kind: "reload_history" }
   | { kind: "reattach"; turnId: string; afterSequence: number };
 
-export function shouldHydrateTurnProjection(localSequence: number | undefined, projectionSequence: number): boolean {
-  return localSequence === undefined || projectionSequence >= localSequence;
+export function shouldHydrateTurnProjection(
+  local: Pick<TurnStreamState, "lastSequence" | "startedAt"> | undefined,
+  projection: Pick<TurnStreamProjectionResponse, "lastSequence" | "startedAt">,
+): boolean {
+  if (local === undefined) return true;
+  if (
+    local.startedAt !== undefined &&
+    projection.startedAt !== undefined &&
+    local.startedAt !== projection.startedAt
+  ) {
+    return true;
+  }
+  return projection.lastSequence >= local.lastSequence;
 }
 
 export function planActiveTurnRecovery(active: ActiveTurnResponse, expectedTurnId?: string): ActiveTurnRecoveryPlan {

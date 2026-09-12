@@ -23,13 +23,9 @@ export function toSessionItems(response: SessionDetailResponse): SessionItem[] {
 export function mergeLiveTurnResponse(durableItems: SessionItem[], liveResponse: TurnResponseItem | undefined, liveResponseId: string | undefined): SessionItem[] {
   if (liveResponse === undefined || liveResponseId === undefined) return durableItems;
   const index = durableItems.findIndex((item) => item.type === "response" && (item.id === liveResponseId || hasSharedToolCall(item, liveResponse)));
-  const terminalResponseIndex = index < 0 && liveResponse.status !== "streaming" && durableItems.at(-1)?.type === "response"
-    ? durableItems.length - 1
-    : -1;
-  const responseIndex = index >= 0 ? index : terminalResponseIndex;
-  if (responseIndex < 0) return [...durableItems, liveResponse];
+  if (index < 0) return [...durableItems, liveResponse];
   const next = [...durableItems];
-  next[responseIndex] = mergeResponseBlocks(next[responseIndex] as TurnResponseItem, liveResponse);
+  next[index] = mergeResponseBlocks(next[index] as TurnResponseItem, liveResponse);
   return next;
 }
 

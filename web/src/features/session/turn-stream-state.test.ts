@@ -22,6 +22,14 @@ describe("TurnStreamState", () => {
     expect(state.toolExecutions[0]).toMatchObject({ status: "completed", display: { title: "Inspect Worksheet", subject: "Sheet1" }, startedAt: "2026-09-09T00:00:01Z", completedAt: "2026-09-09T00:00:02Z" });
   });
 
+  it("lets a later display replace the old one while keeping first timestamps", () => {
+    let state = hydrateTurnStreamStateFromProjection({ ...identity, status: "running", assistant: { text: "", messageVisible: false, isThinking: false }, tools: [], compaction: { status: "idle" }, usage: null, lastSequence: -1 });
+    state = reduceTurnStreamEvent(state, { ...identity, type: "tool_queued", sequence: 0, timestamp: "2026-09-09T00:00:00Z", callId: "call-1", name: "lookup", display: { title: "Queued" } });
+    state = reduceTurnStreamEvent(state, { ...identity, type: "tool_started", sequence: 1, timestamp: "2026-09-09T00:00:01Z", callId: "call-1", name: "lookup", display: { title: "Running" } });
+    state = reduceTurnStreamEvent(state, { ...identity, type: "tool_started", sequence: 2, timestamp: "2026-09-09T00:00:02Z", callId: "call-1", name: "lookup", display: { title: "Replayed" } });
+    expect(state.toolExecutions[0]).toMatchObject({ display: { title: "Replayed" }, startedAt: "2026-09-09T00:00:01Z" });
+  });
+
   it("records the first turn timestamp and terminal timestamp", () => {
     let state = hydrateTurnStreamStateFromProjection({ ...identity, status: "running", assistant: { text: "", messageVisible: false, isThinking: false }, tools: [], compaction: { status: "idle" }, usage: null, lastSequence: -1 });
     state = reduceTurnStreamEvent(state, { ...identity, type: "turn_started", sequence: 0, timestamp: "2026-09-09T00:00:00Z" });

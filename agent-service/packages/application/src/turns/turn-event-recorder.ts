@@ -91,7 +91,7 @@ export class TurnEventRecorder {
     this.append({ type: 'tool_requested', callId, name });
   }
 
-  /** Records usage when the provider supplied stable token counts. */
+  /** Records one model call's final usage contribution when stable token counts are available. */
   public recordUsage(inputTokens: number, outputTokens: number, totalTokens: number): void {
     this.append({ type: 'usage_recorded', inputTokens, outputTokens, totalTokens });
   }

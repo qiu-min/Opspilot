@@ -97,14 +97,9 @@ export class TurnStreamProjector {
       case 'tool-call.completed':
         return this.projectToolQueued(event.event.toolCall);
       case 'usage':
-        return [
-          this.draft({
-            type: 'usage',
-            inputTokens: event.event.usage.inputTokens,
-            outputTokens: event.event.usage.outputTokens,
-            totalTokens: event.event.usage.totalTokens,
-          }),
-        ];
+        // Provider streams may report cumulative/intermediate usage updates. The
+        // completed assistant message below is the one final contribution for this call.
+        return [];
       default:
         return [];
     }
@@ -139,6 +134,16 @@ export class TurnStreamProjector {
     this.assistantText = '';
     for (const toolCall of message.toolCalls ?? []) {
       events.push(...this.projectToolQueued(toolCall));
+    }
+    if (message.finishReason !== 'error' && message.finishReason !== 'aborted' && message.usage !== undefined) {
+      events.push(
+        this.draft({
+          type: 'usage',
+          inputTokens: message.usage.inputTokens,
+          outputTokens: message.usage.outputTokens,
+          totalTokens: message.usage.totalTokens,
+        }),
+      );
     }
     return events;
   }

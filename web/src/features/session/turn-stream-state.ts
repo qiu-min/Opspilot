@@ -79,7 +79,7 @@ export function reduceTurnStreamEvent(state: TurnStreamState, event: TurnStreamE
 function updateTool(state: TurnStreamState, tool: TurnStreamToolExecution): TurnStreamState {
   const index = state.toolExecutions.findIndex((item) => item.callId === tool.callId);
   const existing = index < 0 ? undefined : state.toolExecutions[index];
-  const display = existing?.display ?? tool.display;
+  const display = tool.display ?? existing?.display;
   const startedAt = existing?.startedAt ?? tool.startedAt;
   const completedAt = existing?.completedAt ?? tool.completedAt;
   const nextTool = { ...tool, ...(display === undefined ? {} : { display }), ...(startedAt === undefined ? {} : { startedAt }), ...(completedAt === undefined ? {} : { completedAt }) };

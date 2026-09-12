@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../api/client";
 import type { ActiveTurnResponse } from "../../api/sessions/session-contracts";
+import { hydrateTurnStreamStateFromProjection, reduceTurnStreamEvent } from "./turn-stream-state";
 import { classifyTurnStreamError, isSessionTurnProcessing, planActiveTurnRecovery, removeOptimisticMessage, shouldClearTurnAfterFailure, shouldHydrateTurnProjection, shouldStartTurnSubscription } from "./turn-recovery";
 
-const projection = (lastSequence: number) => ({
+const projection = (lastSequence: number, startedAt?: string) => ({
   turnId: "t1", sessionId: "s1", status: "running" as const,
   assistant: { text: "latest", messageVisible: true, isThinking: false }, tools: [],
   compaction: { status: "idle" as const }, usage: null, lastSequence,
+  ...(startedAt === undefined ? {} : { startedAt }),
 });
 const active = (lastSequence: number): ActiveTurnResponse => ({ activeTurn: { turnId: "t1", sessionId: "s1", status: "running", projection: projection(lastSequence) } });
 
@@ -22,11 +24,35 @@ describe("turn recovery coordinator", () => {
 
   it("rehydrates after a replay gap when the projection is newer", () => {
     expect(classifyTurnStreamError(new ApiError(409, "Conflict", "gap", "TURN_STREAM_REPLAY_GAP"))).toBe("replay_gap");
-    expect(shouldHydrateTurnProjection(20, 137)).toBe(true);
+    expect(shouldHydrateTurnProjection({ lastSequence: 20, startedAt: "A" }, projection(137, "A"))).toBe(true);
   });
 
   it("does not let an older projection move live state backwards", () => {
-    expect(shouldHydrateTurnProjection(100, 90)).toBe(false);
+    expect(shouldHydrateTurnProjection({ lastSequence: 100, startedAt: "A" }, projection(90, "A"))).toBe(false);
+  });
+
+  it("hydrates a new live epoch even when its sequence is smaller", () => {
+    const serverProjection = projection(3, "B");
+    expect(shouldHydrateTurnProjection({ lastSequence: 100, startedAt: "A" }, serverProjection)).toBe(true);
+
+    let state = hydrateTurnStreamStateFromProjection(serverProjection);
+    state = reduceTurnStreamEvent(state, {
+      turnId: "t1",
+      sessionId: "s1",
+      type: "assistant_text_delta",
+      delta: " resumed",
+      sequence: 4,
+      timestamp: "2026-09-09T00:00:04Z",
+    });
+
+    expect(state.lastSequence).toBe(4);
+    expect(state.startedAt).toBe("B");
+    expect(state.assistantMessages[0]?.text).toBe("latest resumed");
+  });
+
+  it("keeps sequence-only comparison for projections from the legacy contract", () => {
+    expect(shouldHydrateTurnProjection({ lastSequence: 10 }, projection(11))).toBe(true);
+    expect(shouldHydrateTurnProjection({ lastSequence: 10 }, projection(9))).toBe(false);
   });
 
   it("classifies active-session conflict and removes its optimistic message", () => {

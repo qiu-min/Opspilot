@@ -87,10 +87,10 @@ describe('TurnStreamProjection reducer', () => {
     expect(projection.compaction.status).toBe('idle');
     projection = reduce(
       projection,
-      event({ type: 'usage', inputTokens: 10, outputTokens: 20, totalTokens: 30 }, 7),
+      event({ type: 'usage', inputTokens: 30, outputTokens: 0, totalTokens: 30 }, 7),
     );
-    projection = reduce(projection, event({ type: 'usage', inputTokens: 4, outputTokens: 6, totalTokens: 10 }, 8));
-    expect(projection.usage).toEqual({ inputTokens: 14, outputTokens: 26, totalTokens: 40 });
+    projection = reduce(projection, event({ type: 'usage', inputTokens: 10, outputTokens: 0, totalTokens: 10 }, 8));
+    expect(projection.usage).toEqual({ inputTokens: 40, outputTokens: 0, totalTokens: 40 });
     projection = reduce(projection, event({ type: 'turn_completed', resultLeafId: 'leaf-1' }, 9));
     expect(projection.status).toBe('completed');
     expect(projection.lastSequence).toBe(9);
@@ -110,9 +110,54 @@ describe('TurnStreamProjection reducer', () => {
     expect(projection.startedAt).toBe(new Date(0).toISOString());
     expect(projection.tools[0]).toMatchObject({ startedAt: new Date(3_000).toISOString(), completedAt: new Date(4_000).toISOString() });
   });
+
+  it('prefers a later display while preserving the first valid tool timestamp', () => {
+    let projection = createInitialTurnStreamProjection(identity);
+    projection = reduce(projection, event({ type: 'tool_queued', callId: 'call-1', name: 'lookup', display: { title: 'Queued' } }, 0));
+    projection = reduce(projection, event({ type: 'tool_started', callId: 'call-1', name: 'lookup', display: { title: 'Running' } }, 1));
+    projection = reduce(projection, event({ type: 'tool_started', callId: 'call-1', name: 'lookup', display: { title: 'Replayed' } }, 2));
+
+    expect(projection.tools[0]).toMatchObject({ display: { title: 'Replayed' }, startedAt: new Date(1_000).toISOString() });
+  });
 });
 
 describe('TurnStreamProjector', () => {
+  it('publishes one final usage contribution per completed model call', () => {
+    const projector = new TurnStreamProjector(identity);
+    const intermediateUsage = { inputTokens: 30, outputTokens: 5, totalTokens: 35 };
+    const laterIntermediateUsage = { inputTokens: 35, outputTokens: 5, totalTokens: 40 };
+
+    expect(projector.project({
+      type: 'message_update',
+      event: { type: 'usage', usage: intermediateUsage, partial: { ...assistantMessage(), usage: intermediateUsage } },
+      message: { ...assistantMessage(), usage: intermediateUsage },
+    } satisfies AgentSessionEvent)).toEqual([]);
+    expect(projector.project({
+      type: 'message_update',
+      event: { type: 'usage', usage: laterIntermediateUsage, partial: { ...assistantMessage(), usage: laterIntermediateUsage } },
+      message: { ...assistantMessage(), usage: laterIntermediateUsage },
+    } satisfies AgentSessionEvent)).toEqual([]);
+
+    const final = projector.project({
+      type: 'message_end',
+      message: { ...assistantMessage(), finishReason: 'stop', usage: laterIntermediateUsage },
+    } satisfies AgentSessionEvent);
+    expect(final.filter((event) => event.type === 'usage')).toEqual([
+      expect.objectContaining({ type: 'usage', inputTokens: 35, outputTokens: 5, totalTokens: 40 }),
+    ]);
+  });
+
+  it('emits one usage event for each model call so turn totals can be summed', () => {
+    const projector = new TurnStreamProjector(identity);
+    const usageEvents = [30, 10].flatMap((inputTokens) => projector.project({
+      type: 'message_end',
+      message: { ...assistantMessage(), finishReason: 'stop', usage: { inputTokens, outputTokens: 0, totalTokens: inputTokens } },
+    } satisfies AgentSessionEvent).filter((event) => event.type === 'usage'));
+
+    expect(usageEvents).toHaveLength(2);
+    expect(usageEvents.map((event) => event.totalTokens)).toEqual([30, 10]);
+  });
+
   it('maps reasoning to lifecycle markers without exposing reasoning text', () => {
     const projector = new TurnStreamProjector(identity);
     const thinking = projector.project({

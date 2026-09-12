@@ -159,7 +159,7 @@ export function SessionPage() {
     setActiveTurnId(sessionId, turnId);
     setPendingTurnStart(sessionId, false);
     const local = turnStreamStatesRef.current[turnId];
-    if (shouldHydrateTurnProjection(local?.lastSequence, projection.lastSequence)) {
+    if (shouldHydrateTurnProjection(local, projection)) {
       setTurnState(turnId, hydrateTurnStreamStateFromProjection(projection));
     }
     return { turnId, afterSequence: projection.lastSequence };
