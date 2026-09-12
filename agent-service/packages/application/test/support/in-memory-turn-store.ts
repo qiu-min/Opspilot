@@ -1,5 +1,6 @@
 import { Turn, type TurnEvent } from '@opspilot/domain';
 
+import { TurnNotFoundError } from '../../src/turn/errors/turn-not-found-error.js';
 import type { TurnStore } from '../../src/turn/ports/turn-store.js';
 
 /** In-memory TurnStore used by application tests to exercise persistence ordering. */
@@ -15,7 +16,7 @@ export class InMemoryTurnStore implements TurnStore {
 
   public load(turnId: string): Turn {
     const turn = this.turns.get(turnId);
-    if (turn === undefined) throw new Error(`Turn not found: ${turnId}`);
+    if (turn === undefined) throw new TurnNotFoundError(turnId);
     return Turn.restore(turn.getState());
   }
 
@@ -35,7 +36,7 @@ export class InMemoryTurnStore implements TurnStore {
 
   public loadEvents(turnId: string): readonly TurnEvent[] {
     const events = this.events.get(turnId);
-    if (events === undefined) throw new Error(`Turn not found: ${turnId}`);
+    if (events === undefined) throw new TurnNotFoundError(turnId);
     return structuredClone(events);
   }
 

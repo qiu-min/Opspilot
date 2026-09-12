@@ -3,14 +3,6 @@ import { projectTurnTrace, type TurnTrace } from '@opspilot/observability';
 
 import type { TurnStore } from '../ports/turn-store.js';
 
-/** Raised when a Trace query targets a Turn without durable state. */
-export class TurnNotFoundError extends Error {
-  public constructor(public readonly turnId: string) {
-    super(`Turn not found: ${turnId}`);
-    this.name = 'TurnNotFoundError';
-  }
-}
-
 export interface GetTurnTraceDependencies {
   readonly turnStore: TurnStore;
 }

@@ -1,5 +1,1 @@
-export {
-  GetTurnTrace,
-  TurnNotFoundError,
-  type GetTurnTraceDependencies,
-} from './get-turn-trace.js';
+export { GetTurnTrace, type GetTurnTraceDependencies } from './get-turn-trace.js';
