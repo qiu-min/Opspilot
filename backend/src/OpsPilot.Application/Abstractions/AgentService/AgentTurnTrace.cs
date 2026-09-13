@@ -35,8 +35,28 @@ public sealed record AgentModelTraceSpan(
     DateTimeOffset? EndedAt,
     long? DurationMs,
     string ModelCallId,
-    AgentModelTraceUsage? Usage)
-    : AgentTraceSpan(Id, Attempt, Status, StartSequence, EndSequence, StartedAt, EndedAt, DurationMs);
+    AgentModelTraceUsage? Usage,
+    AgentModelTraceError? Error = null)
+    : AgentTraceSpan(Id, Attempt, Status, StartSequence, EndSequence, StartedAt, EndedAt, DurationMs)
+{
+    public IReadOnlyList<AgentModelRetryTrace> Retries { get; init; } =
+        Array.Empty<AgentModelRetryTrace>();
+}
+
+public sealed record AgentModelTraceError(
+    string Kind,
+    string Code,
+    string Message,
+    bool Retryable,
+    int? StatusCode = null,
+    string? ProviderCode = null);
+
+public sealed record AgentModelRetryTrace(
+    int FailedAttempt,
+    int NextAttempt,
+    int DelayMs,
+    AgentModelTraceError Error,
+    DateTimeOffset Timestamp);
 
 public sealed record AgentModelTraceUsage(
     int InputTokens,

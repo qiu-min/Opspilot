@@ -85,6 +85,12 @@ public sealed class AgentServiceTurnContractTests
                 var model = Assert.IsType<AgentModelTraceSpan>(span);
                 Assert.Equal("model-call-A", model.ModelCallId);
                 Assert.Equal(140, model.Usage!.TotalTokens);
+                Assert.Null(model.Error);
+                var retry = Assert.Single(model.Retries);
+                Assert.Equal(1, retry.FailedAttempt);
+                Assert.Equal(2, retry.NextAttempt);
+                Assert.Equal(429, retry.Error.StatusCode);
+                Assert.Equal("provider_rate_limit", retry.Error.ProviderCode);
             },
             span =>
             {
@@ -112,6 +118,26 @@ public sealed class AgentServiceTurnContractTests
         await Assert.ThrowsAsync<ApplicationNotFoundException>(() => client.GetTurnTraceAsync(
             TurnId,
             CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task GetActiveTurn_DeserializesRetryProjection()
+    {
+        using var httpClient = new HttpClient(new ActiveTurnHandler())
+        {
+            BaseAddress = new Uri("http://agent-service.test/"),
+        };
+        var client = new AgentServiceClient(httpClient);
+
+        AgentActiveTurnSnapshot active = Assert.IsType<AgentActiveTurnSnapshot>(
+            await client.GetActiveTurnAsync(SessionId, CancellationToken.None));
+
+        Assert.Equal(TurnId, active.TurnId);
+        Assert.Equal("model-call-A", active.Projection.Retry?.ModelCallId);
+        Assert.Equal(1, active.Projection.Retry?.FailedAttempt);
+        Assert.Equal(2, active.Projection.Retry?.NextAttempt);
+        Assert.Equal(500, active.Projection.Retry?.DelayMs);
+        Assert.Equal("rate_limit", active.Projection.Retry?.Kind);
     }
 
     private sealed class CapturingHandler : HttpMessageHandler
@@ -189,7 +215,24 @@ public sealed class AgentServiceTurnContractTests
                       "endedAt":"2026-09-09T12:00:02Z",
                       "durationMs":1000,
                       "modelCallId":"model-call-A",
-                      "usage":{"inputTokens":100,"outputTokens":40,"totalTokens":140}
+                      "usage":{"inputTokens":100,"outputTokens":40,"totalTokens":140},
+                      "error":null,
+                      "retries":[
+                        {
+                          "failedAttempt":1,
+                          "nextAttempt":2,
+                          "delayMs":500,
+                          "timestamp":"2026-09-09T12:00:00.500Z",
+                          "error":{
+                            "kind":"rate_limit",
+                            "code":"MODEL_RATE_LIMIT",
+                            "message":"Model provider rate limit exceeded.",
+                            "retryable":true,
+                            "statusCode":429,
+                            "providerCode":"provider_rate_limit"
+                          }
+                        }
+                      ]
                     },
                     {
                       "id":"tool:call-1:attempt:1",
@@ -235,5 +278,47 @@ public sealed class AgentServiceTurnContractTests
             HttpRequestMessage request,
             CancellationToken cancellationToken) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+    }
+
+    private sealed class ActiveTurnHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Assert.Equal(HttpMethod.Get, request.Method);
+            Assert.Equal($"/sessions/{SessionId:D}/active-turn", request.RequestUri?.AbsolutePath);
+            string response = $$"""
+                {
+                  "activeTurn":{
+                    "turnId":"{{TurnId:D}}",
+                    "sessionId":"{{SessionId:D}}",
+                    "status":"running",
+                    "projection":{
+                      "turnId":"{{TurnId:D}}",
+                      "sessionId":"{{SessionId:D}}",
+                      "status":"running",
+                      "startedAt":"2026-09-09T12:00:00Z",
+                      "assistant":{"text":"","messageVisible":false,"isThinking":true},
+                      "tools":[],
+                      "compaction":{"status":"idle"},
+                      "usage":null,
+                      "retry":{
+                        "modelCallId":"model-call-A",
+                        "failedAttempt":1,
+                        "nextAttempt":2,
+                        "delayMs":500,
+                        "kind":"rate_limit"
+                      },
+                      "lastSequence":7
+                    }
+                  }
+                }
+                """;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(response, Encoding.UTF8, "application/json"),
+            });
+        }
     }
 }

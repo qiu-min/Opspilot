@@ -31,7 +31,11 @@ public static class SessionTraceResponseMapper
                 : new SessionTraceUsageResponse(
                     model.Usage.InputTokens,
                     model.Usage.OutputTokens,
-                    model.Usage.TotalTokens)),
+                    model.Usage.TotalTokens),
+            model.Error is null
+                ? null
+                : MapModelError(model.Error),
+            model.Retries.Select(MapModelRetry).ToArray()),
         AgentToolTraceSpan tool => new SessionToolTraceSpanResponse(
             tool.Id,
             tool.Attempt,
@@ -59,4 +63,10 @@ public static class SessionTraceResponseMapper
         _ => throw new InvalidOperationException(
             $"Unsupported Agent Service trace span: {span.GetType().Name}.")
     };
+
+    private static SessionModelTraceErrorResponse MapModelError(AgentModelTraceError error) =>
+        new(error.Kind, error.Code, error.Message, error.Retryable, error.StatusCode, error.ProviderCode);
+
+    private static SessionModelRetryTraceResponse MapModelRetry(AgentModelRetryTrace retry) =>
+        new(retry.FailedAttempt, retry.NextAttempt, retry.DelayMs, MapModelError(retry.Error), retry.Timestamp);
 }

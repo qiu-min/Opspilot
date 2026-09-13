@@ -84,6 +84,43 @@ public sealed class AgentServiceStreamEventParserTests
         Assert.Null(toolStarted.Display);
     }
 
+    [Fact]
+    public async Task StartTurnStream_ParsesModelRetry()
+    {
+        using var httpClient = CreateHttpClient(
+            "model_retry",
+            CreateModelRetryPayload());
+
+        AgentModelRetry retry = Assert.IsType<AgentModelRetry>(
+            Assert.Single(await ReadEventsAsync(new AgentServiceClient(httpClient))));
+
+        Assert.Equal("model-call-1", retry.ModelCallId);
+        Assert.Equal(1, retry.FailedAttempt);
+        Assert.Equal(2, retry.NextAttempt);
+        Assert.Equal(500, retry.DelayMs);
+        Assert.Equal("rate_limit", retry.Kind);
+    }
+
+    [Theory]
+    [InlineData(0, 2, "rate_limit", "failedAttempt must be greater than or equal to 1.")]
+    [InlineData(1, 3, "rate_limit", "nextAttempt must equal failedAttempt + 1.")]
+    [InlineData(1, 2, "not-a-kind", "kind must be a known ModelFailureKind.")]
+    public async Task StartTurnStream_RejectsMalformedModelRetry(
+        int failedAttempt,
+        int nextAttempt,
+        string kind,
+        string expectedMessage)
+    {
+        using var httpClient = CreateHttpClient(
+            "model_retry",
+            CreateModelRetryPayload(failedAttempt, nextAttempt, kind));
+
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(
+            () => ReadEventsAsync(new AgentServiceClient(httpClient)));
+
+        Assert.Contains(expectedMessage, exception.Message);
+    }
+
     [Theory]
     [InlineData("display must be a JSON object.", "not-an-object")]
     [InlineData("display.title must be a non-empty string.", "missing-title")]
@@ -154,6 +191,14 @@ public sealed class AgentServiceStreamEventParserTests
             payload["callId"] = "call-1";
             payload["name"] = "read_workbook";
         }
+        else if (eventName == "model_retry")
+        {
+            payload["modelCallId"] = "model-call-1";
+            payload["failedAttempt"] = 1;
+            payload["nextAttempt"] = 2;
+            payload["delayMs"] = 500;
+            payload["kind"] = "rate_limit";
+        }
 
         if (invalidField is not null)
         {
@@ -167,6 +212,24 @@ public sealed class AgentServiceStreamEventParserTests
 
         return JsonSerializer.Serialize(payload);
     }
+
+    private static string CreateModelRetryPayload(
+        int failedAttempt = 1,
+        int nextAttempt = 2,
+        string kind = "rate_limit") =>
+        JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["type"] = "model_retry",
+            ["turnId"] = TurnId,
+            ["sessionId"] = SessionId,
+            ["sequence"] = 0,
+            ["timestamp"] = "2026-09-09T12:00:00.0000000+00:00",
+            ["modelCallId"] = "model-call-1",
+            ["failedAttempt"] = failedAttempt,
+            ["nextAttempt"] = nextAttempt,
+            ["delayMs"] = 500,
+            ["kind"] = kind,
+        });
 
     private sealed class SseHandler(string eventName, string payload) : HttpMessageHandler
     {

@@ -30,6 +30,8 @@ public sealed record AgentCompactionCompleted(Guid TurnId, Guid SessionId, long 
     : AgentTurnStreamEvent(TurnId, SessionId, Sequence, Timestamp) { public override string Type => "compaction_completed"; }
 public sealed record AgentUsage(Guid TurnId, Guid SessionId, long Sequence, DateTimeOffset Timestamp, int InputTokens, int OutputTokens, int TotalTokens)
     : AgentTurnStreamEvent(TurnId, SessionId, Sequence, Timestamp) { public override string Type => "usage"; }
+public sealed record AgentModelRetry(Guid TurnId, Guid SessionId, long Sequence, DateTimeOffset Timestamp, string ModelCallId, int FailedAttempt, int NextAttempt, int DelayMs, string Kind)
+    : AgentTurnStreamEvent(TurnId, SessionId, Sequence, Timestamp) { public override string Type => "model_retry"; }
 public sealed record AgentTurnCompleted(Guid TurnId, Guid SessionId, long Sequence, DateTimeOffset Timestamp, string? ResultLeafId)
     : AgentTurnStreamEvent(TurnId, SessionId, Sequence, Timestamp) { public override string Type => "turn_completed"; }
 public sealed record AgentTurnFailed(Guid TurnId, Guid SessionId, long Sequence, DateTimeOffset Timestamp, string Message)

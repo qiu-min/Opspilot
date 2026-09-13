@@ -15,7 +15,8 @@ public sealed record AgentTurnStreamProjection(
     AgentTurnCompactionProjection Compaction,
     AgentTurnUsage? Usage,
     long LastSequence,
-    string? StartedAt = null);
+    string? StartedAt = null,
+    AgentTurnRetryProjection? Retry = null);
 
 public sealed record AgentTurnAssistantProjection(string Text, bool MessageVisible, bool IsThinking);
 public sealed record AgentTurnToolProjection(
@@ -27,3 +28,9 @@ public sealed record AgentTurnToolProjection(
     string? CompletedAt = null);
 public sealed record AgentTurnCompactionProjection(string Status);
 public sealed record AgentTurnUsage(int InputTokens, int OutputTokens, int TotalTokens);
+public sealed record AgentTurnRetryProjection(
+    string ModelCallId,
+    int FailedAttempt,
+    int NextAttempt,
+    int DelayMs,
+    string Kind);

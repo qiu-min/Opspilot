@@ -127,7 +127,24 @@ public sealed class SessionEndpointTests : IClassFixture<SessionTestFactory>
                     startedAt.AddSeconds(2),
                     1000,
                     "model-call-A",
-                    new AgentModelTraceUsage(100, 40, 140)),
+                    new AgentModelTraceUsage(100, 40, 140))
+                {
+                    Retries =
+                    [
+                        new AgentModelRetryTrace(
+                            1,
+                            2,
+                            500,
+                            new AgentModelTraceError(
+                                "rate_limit",
+                                "MODEL_RATE_LIMIT",
+                                "Model provider rate limit exceeded.",
+                                true,
+                                429,
+                                "provider_rate_limit"),
+                            startedAt.AddMilliseconds(500)),
+                    ],
+                },
                 new AgentToolTraceSpan(
                     "tool:call-1:attempt:1",
                     1,
@@ -170,6 +187,13 @@ public sealed class SessionEndpointTests : IClassFixture<SessionTestFactory>
         Assert.Equal(["model", "tool", "compaction"], spans.Select(span => span.GetProperty("kind").GetString()!).ToArray());
         Assert.Equal("model-call-A", spans[0].GetProperty("modelCallId").GetString());
         Assert.Equal(140, spans[0].GetProperty("usage").GetProperty("totalTokens").GetInt32());
+        Assert.True(spans[0].GetProperty("error").ValueKind == JsonValueKind.Null);
+        JsonElement retry = Assert.Single(spans[0].GetProperty("retries").EnumerateArray());
+        Assert.Equal(1, retry.GetProperty("failedAttempt").GetInt32());
+        Assert.Equal(2, retry.GetProperty("nextAttempt").GetInt32());
+        Assert.Equal(500, retry.GetProperty("delayMs").GetInt32());
+        Assert.Equal("rate_limit", retry.GetProperty("error").GetProperty("kind").GetString());
+        Assert.Equal(429, retry.GetProperty("error").GetProperty("statusCode").GetInt32());
         Assert.Equal(1, spans[0].GetProperty("attempt").GetInt32());
         Assert.Equal("lookup", spans[1].GetProperty("name").GetString());
         Assert.Equal("call-1", spans[1].GetProperty("callId").GetString());
@@ -288,8 +312,9 @@ public sealed class SessionEndpointTests : IClassFixture<SessionTestFactory>
         Guid turnId = Guid.NewGuid();
         factory.Agent.StartEvents = [
             new AgentTurnStarted(turnId, sessionId, 0, DateTimeOffset.UtcNow),
-            new AgentAssistantTextDelta(turnId, sessionId, 1, DateTimeOffset.UtcNow, "hello"),
-            new AgentTurnCompleted(turnId, sessionId, 2, DateTimeOffset.UtcNow, "leaf"),
+            new AgentModelRetry(turnId, sessionId, 1, DateTimeOffset.UtcNow, "model-call-1", 1, 2, 500, "rate_limit"),
+            new AgentAssistantTextDelta(turnId, sessionId, 2, DateTimeOffset.UtcNow, "hello"),
+            new AgentTurnCompleted(turnId, sessionId, 3, DateTimeOffset.UtcNow, "leaf"),
         ];
 
         using HttpRequestMessage request = new(HttpMethod.Post, $"/api/sessions/{sessionId}/turns/stream")
@@ -302,6 +327,13 @@ public sealed class SessionEndpointTests : IClassFixture<SessionTestFactory>
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Contains("id: 0", body, StringComparison.Ordinal);
+        Assert.Contains("id: 1", body, StringComparison.Ordinal);
+        Assert.Contains("event: model_retry", body, StringComparison.Ordinal);
+        Assert.Contains("\"modelCallId\":\"model-call-1\"", body, StringComparison.Ordinal);
+        Assert.Contains("\"failedAttempt\":1", body, StringComparison.Ordinal);
+        Assert.Contains("\"nextAttempt\":2", body, StringComparison.Ordinal);
+        Assert.Contains("\"delayMs\":500", body, StringComparison.Ordinal);
+        Assert.Contains("\"kind\":\"rate_limit\"", body, StringComparison.Ordinal);
         Assert.Contains("event: assistant_text_delta", body, StringComparison.Ordinal);
         Assert.Contains("\"type\":\"assistant_text_delta\"", body, StringComparison.Ordinal);
         Assert.DoesNotContain("response_started", body, StringComparison.Ordinal);
@@ -317,7 +349,7 @@ public sealed class SessionEndpointTests : IClassFixture<SessionTestFactory>
             turnId,
             sessionId,
             "running",
-            new AgentTurnStreamProjection(turnId, sessionId, "running", new AgentTurnAssistantProjection("partial", true, false), [new AgentTurnToolProjection("call-1", "lookup", "completed", new AgentToolDisplayInfo("Look up", "record-1", "Reading record"), "2026-09-09T12:00:01Z", "2026-09-09T12:00:02Z")], new AgentTurnCompactionProjection("idle"), null, 7, "2026-09-09T12:00:00Z"));
+            new AgentTurnStreamProjection(turnId, sessionId, "running", new AgentTurnAssistantProjection("partial", true, false), [new AgentTurnToolProjection("call-1", "lookup", "completed", new AgentToolDisplayInfo("Look up", "record-1", "Reading record"), "2026-09-09T12:00:01Z", "2026-09-09T12:00:02Z")], new AgentTurnCompactionProjection("idle"), null, 7, "2026-09-09T12:00:00Z", new AgentTurnRetryProjection("model-call-1", 1, 2, 500, "rate_limit")));
 
         using HttpResponseMessage response = await SendAsync(HttpMethod.Get, $"/api/sessions/{sessionId}/active-turn", login.AccessToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -325,6 +357,12 @@ public sealed class SessionEndpointTests : IClassFixture<SessionTestFactory>
         Assert.Equal(turnId, body.GetProperty("activeTurn").GetProperty("turnId").GetGuid());
         Assert.Equal(7, body.GetProperty("activeTurn").GetProperty("projection").GetProperty("lastSequence").GetInt64());
         Assert.Equal("2026-09-09T12:00:00Z", body.GetProperty("activeTurn").GetProperty("projection").GetProperty("startedAt").GetString());
+        JsonElement retry = body.GetProperty("activeTurn").GetProperty("projection").GetProperty("retry");
+        Assert.Equal("model-call-1", retry.GetProperty("modelCallId").GetString());
+        Assert.Equal(1, retry.GetProperty("failedAttempt").GetInt32());
+        Assert.Equal(2, retry.GetProperty("nextAttempt").GetInt32());
+        Assert.Equal(500, retry.GetProperty("delayMs").GetInt32());
+        Assert.Equal("rate_limit", retry.GetProperty("kind").GetString());
         Assert.Equal("2026-09-09T12:00:01Z", body.GetProperty("activeTurn").GetProperty("projection").GetProperty("tools")[0].GetProperty("startedAt").GetString());
         Assert.Equal("2026-09-09T12:00:02Z", body.GetProperty("activeTurn").GetProperty("projection").GetProperty("tools")[0].GetProperty("completedAt").GetString());
         Assert.Equal("Look up", body.GetProperty("activeTurn").GetProperty("projection").GetProperty("tools")[0].GetProperty("display").GetProperty("title").GetString());

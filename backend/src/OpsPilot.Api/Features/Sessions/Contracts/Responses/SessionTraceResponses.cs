@@ -35,13 +35,30 @@ public sealed record SessionModelTraceSpanResponse(
     DateTimeOffset? EndedAt,
     long? DurationMs,
     string ModelCallId,
-    SessionTraceUsageResponse? Usage)
+    SessionTraceUsageResponse? Usage,
+    SessionModelTraceErrorResponse? Error,
+    IReadOnlyList<SessionModelRetryTraceResponse> Retries)
     : SessionTraceSpanResponse(Id, Attempt, Status, StartSequence, EndSequence, StartedAt, EndedAt, DurationMs);
 
 public sealed record SessionTraceUsageResponse(
     int InputTokens,
     int OutputTokens,
     int TotalTokens);
+
+public sealed record SessionModelTraceErrorResponse(
+    string Kind,
+    string Code,
+    string Message,
+    bool Retryable,
+    int? StatusCode,
+    string? ProviderCode);
+
+public sealed record SessionModelRetryTraceResponse(
+    int FailedAttempt,
+    int NextAttempt,
+    int DelayMs,
+    SessionModelTraceErrorResponse Error,
+    DateTimeOffset Timestamp);
 
 public sealed record SessionToolTraceSpanResponse(
     string Id,

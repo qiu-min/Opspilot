@@ -11,7 +11,13 @@ internal static class AgentServiceStreamEventParser
         "turn_started", "assistant_thinking_started", "assistant_thinking_completed",
         "assistant_message_started", "assistant_text_delta", "assistant_message_completed",
         "tool_queued", "tool_started", "tool_completed", "compaction_started",
-        "compaction_completed", "usage", "turn_completed", "turn_failed", "turn_cancelled",
+        "compaction_completed", "usage", "model_retry", "turn_completed", "turn_failed", "turn_cancelled",
+    ];
+
+    private static readonly HashSet<string> ModelFailureKinds =
+    [
+        "authentication", "invalid_request", "rate_limit", "timeout", "network",
+        "server_error", "protocol_error", "context_overflow", "unknown",
     ];
 
     public static AgentTurnStreamEvent Parse(SseFrame frame)
@@ -44,11 +50,31 @@ internal static class AgentServiceStreamEventParser
             "compaction_started" => new AgentCompactionStarted(turnId, sessionId, sequence, timestamp, OptionalString(data, "reason", frame)),
             "compaction_completed" => new AgentCompactionCompleted(turnId, sessionId, sequence, timestamp, OptionalString(data, "reason", frame), OptionalBoolean(data, "aborted", frame), OptionalBoolean(data, "failed", frame), OptionalBoolean(data, "willRetry", frame)),
             "usage" => new AgentUsage(turnId, sessionId, sequence, timestamp, RequiredInt(data, "inputTokens", frame), RequiredInt(data, "outputTokens", frame), RequiredInt(data, "totalTokens", frame)),
+            "model_retry" => ParseModelRetry(data, turnId, sessionId, sequence, timestamp, frame),
             "turn_completed" => new AgentTurnCompleted(turnId, sessionId, sequence, timestamp, OptionalString(data, "resultLeafId", frame)),
             "turn_failed" => new AgentTurnFailed(turnId, sessionId, sequence, timestamp, RequiredString(data, "message", frame)),
             "turn_cancelled" => new AgentTurnCancelled(turnId, sessionId, sequence, timestamp),
             _ => throw Malformed(frame, "unsupported event type."),
         };
+    }
+
+    private static AgentModelRetry ParseModelRetry(
+        JsonElement data,
+        Guid turnId,
+        Guid sessionId,
+        long sequence,
+        DateTimeOffset timestamp,
+        SseFrame frame)
+    {
+        string modelCallId = RequiredString(data, "modelCallId", frame);
+        int failedAttempt = RequiredInt(data, "failedAttempt", frame);
+        if (failedAttempt < 1) throw Malformed(frame, "failedAttempt must be greater than or equal to 1.");
+        int nextAttempt = RequiredInt(data, "nextAttempt", frame);
+        if (nextAttempt != failedAttempt + 1) throw Malformed(frame, "nextAttempt must equal failedAttempt + 1.");
+        int delayMs = RequiredInt(data, "delayMs", frame);
+        string kind = RequiredString(data, "kind", frame);
+        if (!ModelFailureKinds.Contains(kind)) throw Malformed(frame, "kind must be a known ModelFailureKind.");
+        return new AgentModelRetry(turnId, sessionId, sequence, timestamp, modelCallId, failedAttempt, nextAttempt, delayMs, kind);
     }
 
     private static JsonDocument ParseJson(SseFrame frame)
