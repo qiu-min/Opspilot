@@ -293,9 +293,10 @@ function TraceErrorState({ onRetry }: { onRetry: () => void }) {
 }
 
 function getTraceSpanIdentity(span: TraceSpanResponse): string {
-  if (span.kind === "model") return span.modelCallId;
-  if (span.kind === "tool") return span.name;
-  return span.entryId ?? span.sessionLeafId ?? "Compaction span";
+  if (span.kind === "model") return formatTraceIdentifier(span.modelCallId);
+  if (span.kind === "tool") return formatTraceIdentifier(span.callId);
+  const identifier = span.entryId ?? span.sessionLeafId;
+  return identifier === undefined || identifier === null ? "Compaction span" : formatTraceIdentifier(identifier);
 }
 
 function getSpanIconClasses(status: TraceSpanStatus): string {
@@ -332,6 +333,13 @@ function getTurnStatusLabel(status: TurnTraceStatus): string {
 
 export function formatTraceDuration(durationMs: number | null): string {
   return formatDuration(durationMs ?? undefined) ?? "—";
+}
+
+export function formatTraceIdentifier(identifier: string): string {
+  const prefixLength = 10;
+  const suffixLength = 4;
+  if (identifier.length <= prefixLength + suffixLength + 1) return identifier;
+  return `${identifier.slice(0, prefixLength)}…${identifier.slice(-suffixLength)}`;
 }
 
 function formatTokens(tokens: number | undefined): string {

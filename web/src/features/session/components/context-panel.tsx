@@ -1,4 +1,4 @@
-import { Activity, Check, ChevronRight, Database, FileSpreadsheet, FileText, Gauge, Info, MoreHorizontal, Sparkles, X } from "lucide-react";
+import { Check, ChevronRight, Database, FileSpreadsheet, FileText, Gauge, Info, MoreHorizontal, Sparkles, X } from "lucide-react";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { cn } from "../../../lib/utils";
@@ -9,8 +9,6 @@ type ContextPanelProps = {
   files: ContextFile[];
   tools: ConnectedTool[];
   outputs: RecentOutput[];
-  traceTurnId?: string;
-  onOpenTrace?: (turnId: string) => void;
   isMobile?: boolean;
   onClose?: () => void;
 };
@@ -30,15 +28,12 @@ function getToolIcon(icon: ConnectedTool["icon"]) {
   return icon === "sparkles" ? Sparkles : Database;
 }
 
-export function ContextPanel({ status, files, tools, outputs, traceTurnId, onOpenTrace, isMobile = false, onClose }: ContextPanelProps) {
+export function ContextPanel({ status, files, tools, outputs, isMobile = false, onClose }: ContextPanelProps) {
   return (
     <aside className={cn("flex w-full shrink-0 flex-col border-line bg-[#f8fafc] xl:w-[320px] xl:border-l", isMobile ? "fixed inset-y-0 right-0 z-40 max-w-[360px] border-l bg-[#f8fafc] shadow-panel" : "hidden xl:flex")} aria-label="Run context">
       <div className="flex min-h-16 items-center justify-between border-b border-line px-5">
         <div><p className="text-xs font-semibold text-ink">Run context</p><p className="mt-0.5 text-[11px] text-mutedInk">{status.updatedLabel}</p></div>
-        <div className="flex items-center gap-0.5">
-          {traceTurnId !== undefined && onOpenTrace && <Button variant="ghost" size="sm" className="h-8 px-2 text-[11px]" onClick={() => onOpenTrace(traceTurnId)} aria-label="Open developer trace" title="Developer trace"><Activity size={14} aria-hidden="true" />Trace</Button>}
-          {isMobile ? <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close run context" title="Close"><X size={17} aria-hidden="true" /></Button> : <Button variant="ghost" size="icon" aria-label="More run context actions" title="More actions"><MoreHorizontal size={17} aria-hidden="true" /></Button>}
-        </div>
+        {isMobile ? <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close run context" title="Close"><X size={17} aria-hidden="true" /></Button> : <Button variant="ghost" size="icon" aria-label="More run context actions" title="More actions"><MoreHorizontal size={17} aria-hidden="true" /></Button>}
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-5">

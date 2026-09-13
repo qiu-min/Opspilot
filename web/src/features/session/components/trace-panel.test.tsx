@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { TracePanel, formatTraceDuration, getTraceSpanDetails, getTraceSpanLabel, getTraceSummary, groupTraceSpansByAttempt } from "./trace-panel";
+import { TracePanel, formatTraceDuration, formatTraceIdentifier, getTraceSpanDetails, getTraceSpanLabel, getTraceSummary, groupTraceSpansByAttempt } from "./trace-panel";
 import type { TraceSpanResponse, TurnTraceResponse } from "../../../api/sessions/turn-trace-contracts";
 
 const modelSpan: TraceSpanResponse = {
@@ -75,6 +75,8 @@ describe("TracePanel helpers", () => {
     expect(getTraceSpanDetails(toolSpan).map((detail) => detail.label)).toEqual(expect.arrayContaining(["Call ID", "Name", "Requested", "Error"]));
     expect(getTraceSpanDetails(compactionSpan).map((detail) => detail.label)).toEqual(expect.arrayContaining(["Entry ID", "Session leaf ID"]));
     expect(formatTraceDuration(null)).toBe("—");
+    expect(formatTraceIdentifier("model-call-123456dc4e")).toBe("model-call…dc4e");
+    expect(formatTraceIdentifier("short-id")).toBe("short-id");
   });
 });
 
@@ -89,6 +91,21 @@ describe("TracePanel", () => {
     expect(markup).toContain("Attempt 1");
     expect(markup).toContain("Attempt 2");
     expect(markup).toContain("Incomplete");
+  });
+
+  it("shortens long timeline identifiers while keeping full detail values", () => {
+    const longModelId = "model-call-123456dc4e";
+    const longCallId = "call-abcdefghijklz5649";
+    const longModel = { ...modelSpan, id: `model:${longModelId}`, modelCallId: longModelId };
+    const longTool = { ...toolSpan, id: `tool:${longCallId}:attempt:1`, callId: longCallId };
+    const markup = renderToStaticMarkup(<TracePanel turnId="turn-1" trace={{ ...trace, spans: [longModel, longTool] }} isLoading={false} error={null} onRefresh={vi.fn()} />);
+
+    expect(markup).toContain("model-call…dc4e");
+    expect(markup).toContain("call-abcde…5649");
+    expect(markup).not.toContain(longModelId);
+    expect(markup).not.toContain(longCallId);
+    expect(getTraceSpanDetails(longModel).some((detail) => detail.value === longModelId)).toBe(true);
+    expect(getTraceSpanDetails(longTool).some((detail) => detail.value === longCallId)).toBe(true);
   });
 
   it("renders loading, empty, and retryable error states", () => {
