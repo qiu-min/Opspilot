@@ -166,6 +166,23 @@ describe('OpenAI Chat Completions adapter', () => {
     });
   });
 
+  it('lets an explicit 4xx status override the timeout message heuristic', () => {
+    expect(
+      classifyProviderError(Object.assign(new Error('invalid timeout parameter'), { status: 422 })),
+    ).toMatchObject({
+      kind: 'invalid_request',
+      retryable: false,
+      statusCode: 422,
+    });
+  });
+
+  it('classifies a statusless timeout message as timeout', () => {
+    expect(classifyProviderError(new Error('request timeout'))).toMatchObject({
+      kind: 'timeout',
+      retryable: true,
+    });
+  });
+
   it('keeps unknown Provider messages stable and free of raw exception details', () => {
     const result = classifyProviderError(
       new Error('request failed https://example.com?token=secret /home/user/private'),

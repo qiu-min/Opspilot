@@ -108,7 +108,10 @@ export function classifyProviderError(error: unknown): ModelErrorInfo {
       statusCode,
       providerCode,
     );
-  if (isTimeoutError(error, record, errorMessage))
+  if (
+    isStrongTimeoutError(error, record) ||
+    (statusCode === undefined && isTimeoutMessage(errorMessage))
+  )
     return createModelError(
       'timeout',
       'Model provider request timed out.',
@@ -197,17 +200,18 @@ function getProviderCode(value: unknown): string | undefined {
   return /^[A-Za-z0-9_.:-]{1,200}$/.test(code) ? code : undefined;
 }
 
-function isTimeoutError(
+function isStrongTimeoutError(
   error: unknown,
   record: Record<string, unknown> | undefined,
-  message: string,
 ): boolean {
   if (error instanceof APIConnectionTimeoutError || record?.name === 'APIConnectionTimeoutError')
     return true;
   if (record?.code === 'ETIMEDOUT' || record?.code === 'UND_ERR_CONNECT_TIMEOUT') return true;
-  return typeof record?.name === 'string' && /timeout/i.test(record.name)
-    ? true
-    : /\btimeout\b/i.test(message);
+  return typeof record?.name === 'string' && /timeout/i.test(record.name);
+}
+
+function isTimeoutMessage(message: string): boolean {
+  return /\btimeout\b/i.test(message);
 }
 
 function isNetworkError(error: unknown, record: Record<string, unknown> | undefined): boolean {
