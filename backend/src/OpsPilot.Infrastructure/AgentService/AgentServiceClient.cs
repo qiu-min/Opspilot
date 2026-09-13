@@ -14,6 +14,7 @@ public sealed class AgentServiceClient(HttpClient httpClient) : IAgentSessionCli
         JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        AllowOutOfOrderMetadataProperties = true,
     };
 
     public async Task<AgentSessionCreated> CreateSessionAsync(CancellationToken cancellationToken)
@@ -34,6 +35,22 @@ public sealed class AgentServiceClient(HttpClient httpClient) : IAgentSessionCli
 
         return result
             ?? throw new HttpRequestException("Agent Service returned an empty history response.");
+    }
+
+    public async Task<AgentTurnTrace> GetTurnTraceAsync(
+        Guid turnId,
+        CancellationToken cancellationToken)
+    {
+        using HttpResponseMessage response = await httpClient.GetAsync(
+            $"turns/{turnId:D}/trace",
+            cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+        AgentTurnTrace? result = await response.Content.ReadFromJsonAsync<AgentTurnTrace>(
+            JsonSerializerOptions,
+            cancellationToken);
+
+        return result
+            ?? throw new HttpRequestException("Agent Service returned an empty trace response.");
     }
 
     public async Task<AgentTurnResult> RunTurnAsync(

@@ -10,6 +10,7 @@ using OpsPilot.Application.Sessions.List;
 using OpsPilot.Application.Sessions.Live;
 using OpsPilot.Application.Sessions.RunTurn;
 using OpsPilot.Application.Sessions.StreamTurn;
+using OpsPilot.Application.Sessions.Trace;
 
 namespace OpsPilot.Api.Features.Sessions;
 
@@ -24,6 +25,7 @@ public sealed class SessionsController(
     StreamSessionTurnHandler streamSessionTurnHandler,
     GetActiveSessionTurnHandler getActiveSessionTurnHandler,
     ReattachSessionTurnStreamHandler reattachSessionTurnStreamHandler,
+    GetSessionTurnTraceHandler getSessionTurnTraceHandler,
     ILogger<SessionsController> logger) : ControllerBase
 {
     [HttpPost]
@@ -65,6 +67,18 @@ public sealed class SessionsController(
     {
         AgentActiveTurnSnapshot? activeTurn = await getActiveSessionTurnHandler.HandleAsync(sessionId, cancellationToken);
         return Ok(new { activeTurn });
+    }
+
+    [HttpGet("{sessionId:guid}/turns/{turnId:guid}/trace")]
+    public async Task<ActionResult<SessionTurnTraceResponse>> GetTurnTrace(
+        Guid sessionId,
+        Guid turnId,
+        CancellationToken cancellationToken)
+    {
+        GetSessionTurnTraceResult result = await getSessionTurnTraceHandler.HandleAsync(
+            new GetSessionTurnTraceQuery(sessionId, turnId),
+            cancellationToken);
+        return Ok(SessionTraceResponseMapper.Map(result.Trace));
     }
 
     [HttpPost("{sessionId:guid}/turns/stream")]

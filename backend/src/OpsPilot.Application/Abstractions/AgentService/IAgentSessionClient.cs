@@ -4,6 +4,7 @@ public interface IAgentSessionClient
 {
     Task<AgentSessionCreated> CreateSessionAsync(CancellationToken cancellationToken);
     Task<AgentSessionHistory> GetHistoryAsync(Guid sessionId, CancellationToken cancellationToken);
+    Task<AgentTurnTrace> GetTurnTraceAsync(Guid turnId, CancellationToken cancellationToken);
     Task<AgentTurnResult> RunTurnAsync(Guid sessionId, AgentTurnRequest request, CancellationToken cancellationToken);
     IAsyncEnumerable<AgentTurnStreamEvent> StartTurnStreamAsync(Guid sessionId, AgentTurnRequest request, CancellationToken cancellationToken);
     Task<AgentActiveTurnSnapshot?> GetActiveTurnAsync(Guid sessionId, CancellationToken cancellationToken);

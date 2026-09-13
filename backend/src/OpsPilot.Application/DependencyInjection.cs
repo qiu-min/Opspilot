@@ -7,6 +7,7 @@ using OpsPilot.Application.Sessions.List;
 using OpsPilot.Application.Sessions.Live;
 using OpsPilot.Application.Sessions.RunTurn;
 using OpsPilot.Application.Sessions.StreamTurn;
+using OpsPilot.Application.Sessions.Trace;
 using OpsPilot.Application.Users.Login;
 using OpsPilot.Application.Users.Register;
 
@@ -25,6 +26,7 @@ public static class DependencyInjection
         services.AddScoped<StreamSessionTurnHandler>();
         services.AddScoped<GetActiveSessionTurnHandler>();
         services.AddScoped<ReattachSessionTurnStreamHandler>();
+        services.AddScoped<GetSessionTurnTraceHandler>();
         services.AddScoped<UploadFileHandler>();
         services.AddScoped<LoginUserHandler>();
         services.AddScoped<RegisterUserHandler>();

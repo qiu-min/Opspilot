@@ -9,6 +9,7 @@ using OpsPilot.Application.Sessions.List;
 using OpsPilot.Application.Sessions.Live;
 using OpsPilot.Application.Sessions.RunTurn;
 using OpsPilot.Application.Sessions.StreamTurn;
+using OpsPilot.Application.Sessions.Trace;
 using OpsPilot.Domain.Files;
 using OpsPilot.Domain.Sessions;
 
@@ -91,6 +92,65 @@ public sealed class SessionTurnHandlersTests
 
         await Assert.ThrowsAsync<ApplicationNotFoundException>(() => new GetSessionDetailHandler(repository, new FakeCurrentUser(UserId), new FakeAgentSessionClient())
             .HandleAsync(new GetSessionDetailQuery(SessionId), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task GetTrace_RequiresOwnershipAndValidatesAgentSessionIdentity()
+    {
+        var trace = new AgentTurnTrace(
+            TurnId,
+            SessionId,
+            "completed",
+            new DateTimeOffset(CreatedAt),
+            new DateTimeOffset(CreatedAt.AddSeconds(5)),
+            5000,
+            []);
+        var agent = new FakeAgentSessionClient { Trace = trace };
+        var handler = new GetSessionTurnTraceHandler(NewRepository(), new FakeCurrentUser(UserId), agent);
+
+        GetSessionTurnTraceResult result = await handler.HandleAsync(
+            new GetSessionTurnTraceQuery(SessionId, TurnId),
+            CancellationToken.None);
+
+        Assert.Same(trace, result.Trace);
+        Assert.Equal(TurnId, agent.LastTraceTurnId);
+    }
+
+    [Fact]
+    public async Task GetTrace_DoesNotCallAgentForAnUnownedSession()
+    {
+        var repository = NewRepository();
+        repository.Session = null;
+        var agent = new FakeAgentSessionClient();
+
+        await Assert.ThrowsAsync<ApplicationNotFoundException>(() => new GetSessionTurnTraceHandler(
+                repository,
+                new FakeCurrentUser(UserId),
+                agent)
+            .HandleAsync(new GetSessionTurnTraceQuery(SessionId, TurnId), CancellationToken.None));
+
+        Assert.Null(agent.LastTraceTurnId);
+    }
+
+    [Fact]
+    public async Task GetTrace_RejectsAnAgentTraceForAnotherSession()
+    {
+        var agent = new FakeAgentSessionClient
+        {
+            Trace = new AgentTurnTrace(
+                TurnId,
+                Guid.NewGuid(),
+                "completed",
+                null,
+                null,
+                null,
+                []),
+        };
+        var handler = new GetSessionTurnTraceHandler(NewRepository(), new FakeCurrentUser(UserId), agent);
+
+        await Assert.ThrowsAsync<ApplicationNotFoundException>(() => handler.HandleAsync(
+            new GetSessionTurnTraceQuery(SessionId, TurnId),
+            CancellationToken.None));
     }
 
     [Fact]
@@ -267,11 +327,13 @@ public sealed class SessionTurnHandlersTests
     private sealed class FakeAgentSessionClient : IAgentSessionClient
     {
         public AgentSessionHistory History { get; init; } = new(null, []);
+        public AgentTurnTrace? Trace { get; init; }
         public AgentTurnResult TurnResult { get; init; } = new(SessionId, TurnId, null, "completed", "done");
         public AgentActiveTurnSnapshot? ActiveTurn { get; init; }
         public IReadOnlyList<AgentTurnStreamEvent> StartEvents { get; init; } = [];
         public IReadOnlyList<AgentTurnStreamEvent> ReattachEvents { get; init; } = [];
         public Guid? LastHistorySessionId { get; private set; }
+        public Guid? LastTraceTurnId { get; private set; }
         public Guid? LastRunSessionId { get; private set; }
         public AgentTurnRequest? LastRunRequest { get; private set; }
         public AgentTurnRequest? LastStreamRequest { get; private set; }
@@ -282,6 +344,7 @@ public sealed class SessionTurnHandlersTests
 
         public Task<AgentSessionCreated> CreateSessionAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<AgentSessionHistory> GetHistoryAsync(Guid sessionId, CancellationToken cancellationToken) { LastHistorySessionId = sessionId; return Task.FromResult(History); }
+        public Task<AgentTurnTrace> GetTurnTraceAsync(Guid turnId, CancellationToken cancellationToken) { LastTraceTurnId = turnId; return Task.FromResult(Trace!); }
         public Task<AgentTurnResult> RunTurnAsync(Guid sessionId, AgentTurnRequest request, CancellationToken cancellationToken) { LastRunSessionId = sessionId; LastRunRequest = request; RunTurnCalls++; return Task.FromResult(TurnResult); }
         public IAsyncEnumerable<AgentTurnStreamEvent> StartTurnStreamAsync(Guid sessionId, AgentTurnRequest request, CancellationToken cancellationToken) { LastStreamRequest = request; return Yield(StartEvents, cancellationToken); }
         public Task<AgentActiveTurnSnapshot?> GetActiveTurnAsync(Guid sessionId, CancellationToken cancellationToken) { LastActiveSessionId = sessionId; return Task.FromResult(ActiveTurn); }

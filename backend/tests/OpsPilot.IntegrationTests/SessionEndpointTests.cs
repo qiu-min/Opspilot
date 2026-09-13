@@ -103,6 +103,148 @@ public sealed class SessionEndpointTests : IClassFixture<SessionTestFactory>
     }
 
     [Fact]
+    public async Task Trace_ReturnsModelToolAndCompactionSpansWithoutReprojection()
+    {
+        LoginResponse login = await RegisterAndLoginAsync();
+        Guid sessionId = await CreateSessionAsync(login.AccessToken);
+        Guid turnId = Guid.NewGuid();
+        DateTimeOffset startedAt = DateTimeOffset.Parse("2026-09-09T12:00:00Z");
+        factory.Agent.Traces[turnId] = new AgentTurnTrace(
+            turnId,
+            sessionId,
+            "completed",
+            startedAt,
+            startedAt.AddSeconds(5),
+            5000,
+            [
+                new AgentModelTraceSpan(
+                    "model:model-call-A",
+                    1,
+                    "completed",
+                    1,
+                    2,
+                    startedAt.AddSeconds(1),
+                    startedAt.AddSeconds(2),
+                    1000,
+                    "model-call-A",
+                    new AgentModelTraceUsage(100, 40, 140)),
+                new AgentToolTraceSpan(
+                    "tool:call-1:attempt:1",
+                    1,
+                    "completed",
+                    4,
+                    6,
+                    startedAt.AddSeconds(1),
+                    startedAt.AddSeconds(3),
+                    2000,
+                    "call-1",
+                    "lookup",
+                    startedAt,
+                    false),
+                new AgentCompactionTraceSpan(
+                    "compaction:7",
+                    1,
+                    "completed",
+                    7,
+                    8,
+                    startedAt.AddSeconds(3),
+                    startedAt.AddSeconds(4),
+                    1000,
+                    "entry-1",
+                    "leaf-1"),
+            ]);
+
+        using HttpResponseMessage response = await SendAsync(
+            HttpMethod.Get,
+            $"/api/sessions/{sessionId}/turns/{turnId}/trace",
+            login.AccessToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        JsonElement body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(turnId, body.GetProperty("turnId").GetGuid());
+        Assert.Equal(sessionId, body.GetProperty("sessionId").GetGuid());
+        Assert.Equal("completed", body.GetProperty("status").GetString());
+        Assert.Equal(5000, body.GetProperty("durationMs").GetInt64());
+
+        JsonElement[] spans = body.GetProperty("spans").EnumerateArray().ToArray();
+        Assert.Equal(["model", "tool", "compaction"], spans.Select(span => span.GetProperty("kind").GetString()!).ToArray());
+        Assert.Equal("model-call-A", spans[0].GetProperty("modelCallId").GetString());
+        Assert.Equal(140, spans[0].GetProperty("usage").GetProperty("totalTokens").GetInt32());
+        Assert.Equal(1, spans[0].GetProperty("attempt").GetInt32());
+        Assert.Equal("lookup", spans[1].GetProperty("name").GetString());
+        Assert.Equal("call-1", spans[1].GetProperty("callId").GetString());
+        Assert.False(spans[1].GetProperty("isError").GetBoolean());
+        Assert.Equal("entry-1", spans[2].GetProperty("entryId").GetString());
+        Assert.Equal("leaf-1", spans[2].GetProperty("sessionLeafId").GetString());
+    }
+
+    [Theory]
+    [InlineData("running")]
+    [InlineData("failed")]
+    [InlineData("cancelled")]
+    public async Task Trace_ReturnsOkForEveryTurnStatus(string status)
+    {
+        LoginResponse login = await RegisterAndLoginAsync();
+        Guid sessionId = await CreateSessionAsync(login.AccessToken);
+        Guid turnId = Guid.NewGuid();
+        factory.Agent.Traces[turnId] = new AgentTurnTrace(
+            turnId,
+            sessionId,
+            status,
+            null,
+            null,
+            null,
+            []);
+
+        using HttpResponseMessage response = await SendAsync(
+            HttpMethod.Get,
+            $"/api/sessions/{sessionId}/turns/{turnId}/trace",
+            login.AccessToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        JsonElement body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(status, body.GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task Trace_WhenAgentTurnDoesNotExistReturnsNotFound()
+    {
+        LoginResponse login = await RegisterAndLoginAsync();
+        Guid sessionId = await CreateSessionAsync(login.AccessToken);
+        Guid turnId = Guid.NewGuid();
+
+        using HttpResponseMessage response = await SendAsync(
+            HttpMethod.Get,
+            $"/api/sessions/{sessionId}/turns/{turnId}/trace",
+            login.AccessToken);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Trace_WhenAgentSessionDoesNotMatchRouteReturnsNotFound()
+    {
+        LoginResponse login = await RegisterAndLoginAsync();
+        Guid sessionId = await CreateSessionAsync(login.AccessToken);
+        Guid turnId = Guid.NewGuid();
+        factory.Agent.Traces[turnId] = new AgentTurnTrace(
+            turnId,
+            Guid.NewGuid(),
+            "completed",
+            null,
+            null,
+            null,
+            []);
+
+        using HttpResponseMessage response = await SendAsync(
+            HttpMethod.Get,
+            $"/api/sessions/{sessionId}/turns/{turnId}/trace",
+            login.AccessToken);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Detail_OmitsNullHistoricalToolPresentationFields()
     {
         LoginResponse login = await RegisterAndLoginAsync();
@@ -218,12 +360,16 @@ public sealed class SessionEndpointTests : IClassFixture<SessionTestFactory>
         LoginResponse other = await RegisterAndLoginAsync();
         Guid sessionId = await CreateSessionAsync(owner.AccessToken);
         Guid turnId = Guid.NewGuid();
+        int traceCallsBefore = factory.Agent.TraceCalls;
 
         using HttpResponseMessage detail = await SendAsync(HttpMethod.Get, $"/api/sessions/{sessionId}", other.AccessToken);
         using HttpResponseMessage reattach = await SendAsync(HttpMethod.Get, $"/api/sessions/{sessionId}/turns/{turnId}/stream?after=0", other.AccessToken);
+        using HttpResponseMessage trace = await SendAsync(HttpMethod.Get, $"/api/sessions/{sessionId}/turns/{turnId}/trace", other.AccessToken);
 
         Assert.Equal(HttpStatusCode.NotFound, detail.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, reattach.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, trace.StatusCode);
+        Assert.Equal(traceCallsBefore, factory.Agent.TraceCalls);
     }
 
     private async Task<Guid> CreateSessionAsync(string token)
@@ -293,6 +439,7 @@ public sealed class FakeAgentSessionClient : IAgentSessionClient
     private int sessionSequence;
     public Guid NextSessionId => Guid.Parse($"88888888-8888-4888-8888-{(sessionSequence + 1):D12}");
     public Dictionary<Guid, AgentSessionHistory> Histories { get; } = [];
+    public Dictionary<Guid, AgentTurnTrace> Traces { get; } = [];
     public Dictionary<Guid, AgentActiveTurnSnapshot> ActiveTurns { get; } = [];
     public IReadOnlyList<AgentTurnStreamEvent> StartEvents { get; set; } = [];
     public IReadOnlyList<AgentTurnStreamEvent> ReattachEvents { get; set; } = [];
@@ -300,6 +447,7 @@ public sealed class FakeAgentSessionClient : IAgentSessionClient
     public Guid? LastRunSessionId { get; private set; }
     public long? LastAfterSequence { get; private set; }
     public int RunTurnCalls { get; private set; }
+    public int TraceCalls { get; private set; }
 
     public Task<AgentSessionCreated> CreateSessionAsync(CancellationToken cancellationToken)
     {
@@ -310,6 +458,14 @@ public sealed class FakeAgentSessionClient : IAgentSessionClient
 
     public Task<AgentSessionHistory> GetHistoryAsync(Guid sessionId, CancellationToken cancellationToken) =>
         Task.FromResult(Histories.GetValueOrDefault(sessionId, new AgentSessionHistory(null, [])));
+
+    public Task<AgentTurnTrace> GetTurnTraceAsync(Guid turnId, CancellationToken cancellationToken)
+    {
+        TraceCalls++;
+        if (!Traces.TryGetValue(turnId, out AgentTurnTrace? trace))
+            throw new OpsPilot.Application.Exceptions.ApplicationNotFoundException("Agent Service resource was not found.");
+        return Task.FromResult(trace);
+    }
 
     public Task<AgentTurnResult> RunTurnAsync(Guid sessionId, AgentTurnRequest request, CancellationToken cancellationToken)
     {

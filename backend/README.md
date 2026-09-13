@@ -49,8 +49,11 @@ GET  /api/sessions/{sessionId}
 POST /api/sessions/{sessionId}/turns
 POST /api/sessions/{sessionId}/turns/stream
 GET  /api/sessions/{sessionId}/active-turn
+GET  /api/sessions/{sessionId}/turns/{turnId}/trace
 GET  /api/sessions/{sessionId}/turns/{turnId}/stream?after=N
 ```
+
+Trace endpoint 会验证 Session ownership，按 `turnId` 读取 Agent Service 的 `TurnTrace`，校验返回的 Session identity，并原样转发 Trace；Backend 不重新计算或持久化 Trace。
 
 Backend stream adapter 原样转发 Agent Service PR2 `TurnStreamEvent`，保留 `turnId`、`sessionId`、`sequence`、`timestamp`，SSE `id` 等于 `sequence`。Backend 只负责 ownership、文件资源解析、错误映射和 SSE transport，不再次推断 thinking、assistant、tool 或 compaction semantics。
 
