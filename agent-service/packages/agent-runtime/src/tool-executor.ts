@@ -17,6 +17,8 @@ import type {
   AgentToolResult,
   ToolExecutionMode,
 } from './types.js';
+import type { AgentSpan } from './tracing.js';
+import { markAgentSpanAborted, markAgentSpanError, withAgentSpan } from './tracing.js';
 
 const INTERNAL_ERROR_MESSAGE = 'Tool execution failed due to an internal error.';
 const INTERNAL_ERROR_CODE = 'TOOL_INTERNAL_ERROR';
@@ -32,6 +34,7 @@ export interface ExecuteToolCallOptions {
   readonly context: AgentContext;
   readonly beforeToolCall?: AgentLoopConfig['beforeToolCall'];
   readonly afterToolCall?: AgentLoopConfig['afterToolCall'];
+  readonly tracer?: AgentLoopConfig['tracer'];
   readonly signal?: AbortSignal;
 }
 
@@ -110,7 +113,7 @@ async function executeToolCallsSequential(
     }
 
     await options.emit({ type: 'tool_execution_start', toolCall });
-    const outcome = await executeToolCallWithOutcome(toolCall, options.tools, options);
+    const outcome = await executeToolCallWithSpan(toolCall, options.tools, options);
     await options.emit({ type: 'tool_execution_end', toolCall, result: outcome.result });
     await emitToolResultMessage(outcome.result, options.emit);
     messages.push(outcome.result);
@@ -174,8 +177,7 @@ async function executeToolCallsParallel(
     entries.map(async (entry): Promise<{ readonly index: number; readonly outcome: ToolCallOutcome }> => {
       if (entry.kind === 'immediate') return { index: entry.index, outcome: entry };
 
-      const executed = await executePreparedToolCall(entry.preparation, options.signal);
-      const outcome = await finalizeExecutedToolCall(entry.preparation, executed, options);
+      const outcome = await executePreparedToolCallWithSpan(entry.preparation, options);
       await options.emit({
         type: 'tool_execution_end',
         toolCall: entry.preparation.toolCall,
@@ -419,8 +421,76 @@ export async function executeToolCall(
   tools: readonly AgentTool[],
   options?: ExecuteToolCallOptions,
 ): Promise<ToolResultMessage> {
-  const outcome = await executeToolCallWithOutcome(toolCall, tools, options);
+  const outcome = await executeToolCallWithSpan(toolCall, tools, options);
   return outcome.result;
+}
+
+/** Runs one complete sequential ToolCall inside its provider-neutral telemetry span. */
+async function executeToolCallWithSpan(
+  toolCall: ModelToolCall,
+  tools: readonly AgentTool[],
+  options?: ExecuteToolCallOptions,
+): Promise<ToolCallOutcome> {
+  return await withAgentSpan(
+    options?.tracer,
+    'agent.tool_execution',
+    {
+      attributes: createToolSpanAttributes(toolCall),
+    },
+    async (span) => {
+      const outcome = await executeToolCallWithOutcome(toolCall, tools, options);
+      recordToolOutcome(span, outcome);
+      return outcome;
+    },
+  );
+}
+
+/** Runs one already-prepared parallel ToolCall inside an independent sibling span. */
+async function executePreparedToolCallWithSpan(
+  prepared: PreparedToolCall,
+  options: ExecuteToolCallsOptions,
+): Promise<ToolCallOutcome> {
+  return await withAgentSpan(
+    options.tracer,
+    'agent.tool_execution',
+    {
+      attributes: createToolSpanAttributes(prepared.toolCall),
+    },
+    async (span) => {
+      const executed = await executePreparedToolCall(prepared, options.signal);
+      const outcome = await finalizeExecutedToolCall(prepared, executed, options);
+      recordToolOutcome(span, outcome);
+      return outcome;
+    },
+  );
+}
+
+/** Creates stable correlation attributes for a Tool span. */
+function createToolSpanAttributes(toolCall: ModelToolCall): Record<string, string> {
+  return {
+    'agent.tool.call_id': toolCall.callId,
+    'agent.tool.name': toolCall.name,
+  };
+}
+
+/** Marks failed Tool results while preserving recoverable and aborted Runtime semantics. */
+function recordToolOutcome(span: AgentSpan, outcome: ToolCallOutcome): void {
+  if (outcome.stopReason === 'aborted') {
+    markAgentSpanAborted(span, 'Tool execution was aborted.');
+    return;
+  }
+  if (outcome.stopReason === 'error') {
+    markAgentSpanError(
+      span,
+      outcome.cause ?? new Error('Tool execution failed due to an internal error.'),
+    );
+    return;
+  }
+  if (outcome.result.isError) {
+    markAgentSpanError(span, new Error('Tool returned an error result.'));
+    return;
+  }
+  span.setStatus('ok');
 }
 
 async function executeToolCallWithOutcome(

@@ -13,6 +13,7 @@ import type {
   Tool,
   ToolResultMessage,
 } from '@opspilot/model-gateway';
+import type { AgentTracer } from './tracing.js';
 
 export type AgentThinkingLevel = ModelThinkingLevel;
 
@@ -116,6 +117,7 @@ export interface AgentOptions {
   readonly beforeToolCall?: AgentLoopConfig['beforeToolCall'];
   readonly afterToolCall?: AgentLoopConfig['afterToolCall'];
   readonly toolExecution?: ToolExecutionMode;
+  readonly tracer?: AgentTracer;
 }
 
 export interface ShouldStopAfterStepContext {
@@ -175,6 +177,7 @@ export interface AgentLoopConfig {
     signal?: AbortSignal,
   ) => AfterToolCallResult | undefined | Promise<AfterToolCallResult | undefined>;
   readonly toolExecution?: ToolExecutionMode;
+  readonly tracer?: AgentTracer;
 }
 
 export type MessageUpdateModelEvent = Extract<

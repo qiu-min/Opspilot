@@ -1512,3 +1512,12 @@ Next Step / Agent End
 * Event、State 与 transcript 生命周期一致
 * Tool 实现与 Runtime 保持解耦
 * 上层业务可以通过配置和 Hook 扩展，而不污染通用 Runtime
+
+## Runtime Telemetry
+
+Runtime exposes the provider-neutral `AgentTracer` port from `src/tracing.ts`. It defaults to
+`NoopAgentTracer`, so tracing is optional and does not affect execution, errors, cancellation, or
+transcript state. When supplied, the Runtime creates `agent.run`, `agent.model_call`, and
+`agent.tool_execution` spans. Model spans cover consumption of the complete model event stream and
+record `modelCallId` plus available usage; tool spans record `callId` and tool name. The Runtime
+does not depend on OpenTelemetry or the Observability package.

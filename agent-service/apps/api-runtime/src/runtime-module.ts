@@ -24,6 +24,7 @@ import {
 } from '@opspilot/infrastructure';
 import { createModelGateway, loadModelGatewayConfig } from '@opspilot/model-gateway';
 import { ExcelJsDiscoveryAdapter } from '@opspilot/tool-gateway';
+import { OpenTelemetryAgentTracer } from '@opspilot/observability';
 
 import { ApiModule, EXCEL_RESOURCE_PATH_RESOLVER } from '@opspilot/api';
 import { FileSystemExcelResourcePathResolver } from './files/excel-resource-path-resolver.js';
@@ -42,6 +43,7 @@ export function createExcelDiscoveryToolDefinitions(): readonly ToolDefinition[]
 export async function createApiRuntimeModule(config: RuntimeConfig): Promise<DynamicModule> {
   const modelGatewayConfig = await loadModelGatewayConfig(config.modelConfigPath);
   const modelGateway = createModelGateway(modelGatewayConfig);
+  const agentTracer = new OpenTelemetryAgentTracer();
   const defaultModel = modelGateway.getModel(config.defaultProviderId, config.defaultModelId);
 
   if (defaultModel === undefined) {
@@ -78,6 +80,7 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     turnStreamHub,
     toolPresentationResolver,
     sessionRunCoordinator,
+    tracer: agentTracer,
   });
   const resumeTurn = new ResumeTurn({
     sessionStore,
@@ -89,6 +92,7 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     sessionRunCoordinator,
     turnStreamHub,
     toolPresentationResolver,
+    tracer: agentTracer,
   });
   const recoverTurnsOnStartup = new RecoverTurnsOnStartup({ turnStore, resumeTurn });
   const getSessionHistory = new GetSessionHistory({

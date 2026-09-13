@@ -1,4 +1,4 @@
-import type { AgentMessage } from '@opspilot/agent-runtime';
+import type { AgentMessage, AgentTracer } from '@opspilot/agent-runtime';
 import type { Model, ModelGateway } from '@opspilot/model-gateway';
 import { Turn, type Session, type TurnEvent } from '@opspilot/domain';
 
@@ -42,6 +42,7 @@ export interface ResumeTurnDependencies {
   readonly turnStreamHub?: TurnStreamHub;
   readonly toolPresentationResolver?: ToolPresentationResolver;
   readonly planner?: TurnRecoveryPlanner;
+  readonly tracer?: AgentTracer;
 }
 
 export type ResumeTurnResultKind =
@@ -72,6 +73,7 @@ export class ResumeTurn {
   private readonly turnStreamHub?: TurnStreamHub;
   private readonly toolPresentationResolver?: ToolPresentationResolver;
   private readonly planner: TurnRecoveryPlanner;
+  private readonly tracer?: AgentTracer;
 
   public constructor(options: ResumeTurnDependencies) {
     this.sessionStore = options.sessionStore;
@@ -89,6 +91,7 @@ export class ResumeTurn {
     this.turnStreamHub = options.turnStreamHub;
     this.toolPresentationResolver = options.toolPresentationResolver;
     this.planner = options.planner ?? new TurnRecoveryPlanner();
+    this.tracer = options.tracer;
   }
 
   /** Loads the Turn inside the shared Session critical section before planning recovery. */
@@ -254,6 +257,7 @@ export class ResumeTurn {
         contextManager: this.contextManager,
         compactionService: this.compactionService,
         compactionSettings: this.compactionSettings,
+        tracer: this.tracer,
       });
       unsubscribe = agentSession.subscribe(async (event) => {
         recorder.recordAgentSessionEvent(event);

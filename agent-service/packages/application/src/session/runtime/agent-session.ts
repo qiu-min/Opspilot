@@ -4,7 +4,16 @@ import {
   type AssistantMessage,
   type Message,
 } from '@opspilot/model-gateway';
-import type { Agent, AgentEvent, AgentMessage, AgentState } from '@opspilot/agent-runtime';
+import {
+  markAgentSpanAborted,
+  markAgentSpanError,
+  withAgentSpan,
+  type Agent,
+  type AgentEvent,
+  type AgentMessage,
+  type AgentState,
+  type AgentTracer,
+} from '@opspilot/agent-runtime';
 import type { ModelToolCall } from '@opspilot/model-gateway';
 
 import {
@@ -26,6 +35,7 @@ export interface AgentSessionConfig {
   readonly sessionStore?: SessionStore;
   readonly compactionService?: CompactionService;
   readonly compactionSettings?: CompactionSettings;
+  readonly tracer?: AgentTracer;
 }
 
 export type AgentSessionEvent =
@@ -48,6 +58,11 @@ export type AgentSessionEvent =
 
 export type CompactionReason = 'threshold' | 'overflow';
 
+type CompactionOperationOutcome =
+  | { readonly kind: 'success'; readonly value: boolean }
+  | { readonly kind: 'aborted'; readonly value: false }
+  | { readonly kind: 'failure'; readonly value: false; readonly error: unknown };
+
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void | Promise<void>;
 
 /** 应用层的最小 Agent 生命周期包装器，负责将完成消息写入 Session。 */
@@ -60,6 +75,7 @@ export class AgentSession {
   private readonly compactionService?: CompactionService;
   private readonly compactionSettings?: CompactionSettings;
   private readonly sessionStore?: SessionStore;
+  private readonly tracer?: AgentTracer;
   private autoCompactionAbortController?: AbortController;
   private disposed = false;
   private promptActive = false;
@@ -72,6 +88,7 @@ export class AgentSession {
     this.sessionStore = config.sessionStore;
     this.compactionService = config.compactionService;
     this.compactionSettings = config.compactionSettings;
+    this.tracer = config.tracer;
     this.unsubscribeAgent = this.agent.subscribe(
       async (event) => await this.handleAgentEvent(event),
     );
@@ -288,9 +305,34 @@ export class AgentSession {
     willRetry: boolean,
     retryTarget?: AssistantMessage,
   ): Promise<boolean> {
+    return await withAgentSpan(
+      this.tracer,
+      'agent.compaction',
+      { attributes: { 'agent.compaction.reason': reason } },
+      async (span) => {
+        const outcome = await this.executeCompaction(reason, preparation, willRetry, retryTarget);
+        if (outcome.kind === 'aborted') {
+          markAgentSpanAborted(span, 'Compaction was aborted.');
+        } else if (outcome.kind === 'failure') {
+          markAgentSpanError(span, outcome.error);
+        } else {
+          span.setStatus('ok');
+        }
+        return outcome.value;
+      },
+    );
+  }
+
+  /** Executes one real compaction operation without deciding whether compaction is needed. */
+  private async executeCompaction(
+    reason: CompactionReason,
+    preparation: CompactionPreparation,
+    willRetry: boolean,
+    retryTarget?: AssistantMessage,
+  ): Promise<CompactionOperationOutcome> {
     const compactionService = this.compactionService;
     const state = this.agent.state;
-    if (compactionService === undefined) return false;
+    if (compactionService === undefined) return { kind: 'success', value: false };
 
     const controller = new AbortController();
     this.autoCompactionAbortController = controller;
@@ -338,7 +380,7 @@ export class AgentSession {
           aborted: true,
           willRetry: false,
         });
-        return false;
+        return { kind: 'aborted', value: false };
       }
 
       if (operationOutcome.kind === 'failure') {
@@ -351,7 +393,7 @@ export class AgentSession {
               ? operationOutcome.error.message
               : String(operationOutcome.error),
         });
-        return false;
+        return { kind: 'failure', value: false, error: operationOutcome.error };
       }
 
       await this.emitCompactionEnd(reason, {
@@ -359,7 +401,10 @@ export class AgentSession {
         aborted: false,
         willRetry,
       });
-      return willRetry && !this.disposed && !controller.signal.aborted;
+      return {
+        kind: 'success',
+        value: willRetry && !this.disposed && !controller.signal.aborted,
+      };
     } finally {
       if (this.autoCompactionAbortController === controller) {
         this.autoCompactionAbortController = undefined;

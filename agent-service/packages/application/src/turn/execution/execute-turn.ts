@@ -1,3 +1,4 @@
+import type { AgentTracer } from '@opspilot/agent-runtime';
 import type { Model, ModelGateway } from '@opspilot/model-gateway';
 import { Turn } from '@opspilot/domain';
 
@@ -43,6 +44,7 @@ export interface ExecuteTurnDependencies {
   readonly sessionRunCoordinator?: SessionRunCoordinator;
   readonly turnStreamHub?: TurnStreamHub;
   readonly toolPresentationResolver?: ToolPresentationResolver;
+  readonly tracer?: AgentTracer;
 }
 
 /** Orchestrates Session input commit, Agent Runtime execution, and Turn durability. */
@@ -60,6 +62,7 @@ export class ExecuteTurn {
   private readonly sessionRunCoordinator: SessionRunCoordinator;
   private readonly turnStreamHub?: TurnStreamHub;
   private readonly toolPresentationResolver?: ToolPresentationResolver;
+  private readonly tracer?: AgentTracer;
 
   public constructor(options: ExecuteTurnDependencies) {
     this.sessionStore = options.sessionStore;
@@ -76,6 +79,7 @@ export class ExecuteTurn {
       options.sessionRunCoordinator ?? new InMemorySessionRunCoordinator();
     this.turnStreamHub = options.turnStreamHub;
     this.toolPresentationResolver = options.toolPresentationResolver;
+    this.tracer = options.tracer;
   }
 
   /** Executes one Turn. Existing Sessions are loaded only after their queue is acquired. */
@@ -172,6 +176,7 @@ export class ExecuteTurn {
         contextManager: this.contextManager,
         compactionService: this.compactionService,
         compactionSettings: this.compactionSettings,
+        tracer: this.tracer,
       });
 
       const projector = new TurnStreamProjector({

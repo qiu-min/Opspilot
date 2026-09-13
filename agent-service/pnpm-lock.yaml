@@ -212,7 +212,7 @@ importers:
         version: 3.9.6
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
 
   apps/api:
     dependencies:
@@ -258,7 +258,7 @@ importers:
         version: 5.7.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@types/node@22.20.1)(vite@8.2.1(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(vite@8.2.1(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
 
   apps/api-runtime:
     dependencies:
@@ -283,6 +283,9 @@ importers:
       '@opspilot/model-gateway':
         specifier: workspace:*
         version: link:../../packages/model-gateway
+      '@opspilot/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@opspilot/tool-gateway':
         specifier: workspace:*
         version: link:../../packages/tool-gateway
@@ -316,7 +319,7 @@ importers:
         version: 5.7.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@types/node@22.20.1)(vite@8.2.1(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(vite@8.2.1(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
 
   packages/agent-runtime:
     dependencies:
@@ -335,7 +338,7 @@ importers:
         version: 5.7.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
 
   packages/application:
     dependencies:
@@ -363,7 +366,7 @@ importers:
         version: 5.7.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
 
   packages/domain:
     dependencies:
@@ -379,7 +382,7 @@ importers:
         version: 5.7.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
 
   packages/infrastructure:
     dependencies:
@@ -401,7 +404,7 @@ importers:
         version: 5.7.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
 
   packages/model-gateway:
     dependencies:
@@ -426,10 +429,16 @@ importers:
         version: 5.7.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
 
   packages/observability:
     dependencies:
+      '@opentelemetry/api':
+        specifier: ^1.9.0
+        version: 1.9.1
+      '@opspilot/agent-runtime':
+        specifier: workspace:*
+        version: link:../agent-runtime
       '@opspilot/domain':
         specifier: workspace:*
         version: link:../domain
@@ -442,7 +451,7 @@ importers:
         version: 5.7.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
 
   packages/tool-gateway:
     dependencies:
@@ -461,7 +470,7 @@ importers:
         version: 5.7.2
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@types/node@22.20.1)(vite@8.2.1(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(vite@8.2.1(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
 
 packages:
 
@@ -686,6 +695,10 @@ packages:
         optional: true
       '@nestjs/platform-express':
         optional: true
+
+  '@opentelemetry/api@1.9.1':
+    resolution: {integrity: sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q==}
+    engines: {node: '>=8.0.0'}
 
   '@oxc-project/types@0.143.0':
     resolution: {integrity: sha512-u6JZdLBTLotrNC9Vd6vPssINdzcCzleKAH6EJKImQb7GtYvX5keN2dxkoK44stCc4tffE6QQRtZTXVSzsLUlWA==}
@@ -2004,6 +2017,8 @@ snapshots:
     optionalDependencies:
       '@nestjs/platform-express': 11.1.29(@nestjs/common@11.1.29(reflect-metadata@0.2.2)(rxjs@7.8.1)(supports-color@7.1.0))(@nestjs/core@11.1.29)(supports-color@7.1.0)
 
+  '@opentelemetry/api@1.9.1': {}
+
   '@oxc-project/types@0.143.0': {}
 
   '@rolldown/binding-android-arm64@1.2.3':
@@ -3100,7 +3115,7 @@ snapshots:
       jiti: 2.7.0
       tsx: 4.23.12
 
-  vitest@4.1.10(@types/node@22.20.1)(vite@8.2.1(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)):
+  vitest@4.1.10(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(vite@8.2.1(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)):
     dependencies:
       '@vitest/expect': 4.1.10
       '@vitest/mocker': 4.1.10(vite@8.2.1(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
@@ -3123,11 +3138,12 @@ snapshots:
       vite: 8.2.1(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)
       why-is-node-running: 2.3.0
     optionalDependencies:
+      '@opentelemetry/api': 1.9.1
       '@types/node': 22.20.1
     transitivePeerDependencies:
       - msw
 
-  vitest@4.1.10(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)):
+  vitest@4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)):
     dependencies:
       '@vitest/expect': 4.1.10
       '@vitest/mocker': 4.1.10(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
@@ -3150,6 +3166,7 @@ snapshots:
       vite: 8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)
       why-is-node-running: 2.3.0
     optionalDependencies:
+      '@opentelemetry/api': 1.9.1
       '@types/node': 26.2.0
     transitivePeerDependencies:
       - msw

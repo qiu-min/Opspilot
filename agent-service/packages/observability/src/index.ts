@@ -11,3 +11,8 @@ export {
   type TurnTrace,
   type TurnTraceStatus,
 } from './turn-trace.js';
+export {
+  OpenTelemetryAgentTracer,
+  OPSPILOT_AGENT_RUNTIME_INSTRUMENTATION_SCOPE,
+  type OpenTelemetryAgentTracerOptions,
+} from './otel-agent-tracer.js';

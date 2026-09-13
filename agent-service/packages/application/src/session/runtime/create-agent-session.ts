@@ -1,5 +1,10 @@
 import { clampThinkingLevel, type Model, type ModelGateway } from '@opspilot/model-gateway';
-import { Agent, type AgentThinkingLevel, type AgentTool } from '@opspilot/agent-runtime';
+import {
+  Agent,
+  type AgentThinkingLevel,
+  type AgentTool,
+  type AgentTracer,
+} from '@opspilot/agent-runtime';
 import { Session } from '@opspilot/domain';
 
 import {
@@ -26,6 +31,7 @@ export interface CreateAgentSessionOptions {
   readonly contextManager?: ContextManager;
   readonly compactionService?: CompactionService;
   readonly compactionSettings?: CompactionSettings;
+  readonly tracer?: AgentTracer;
 }
 
 /** 从 Session 上下文组装 Model、Agent Runtime 和 AgentSession。 */
@@ -62,6 +68,7 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
     },
     streamFn: (streamModel, context, streamOptions) =>
       options.modelGateway.stream(streamModel, context, streamOptions),
+    tracer: options.tracer,
   });
 
   return new AgentSession({
@@ -70,6 +77,7 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
     sessionStore: options.sessionStore,
     compactionService,
     compactionSettings,
+    tracer: options.tracer,
   });
 }
 

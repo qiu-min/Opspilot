@@ -61,6 +61,7 @@ export class Agent {
   private readonly beforeToolCall: AgentOptions['beforeToolCall'];
   private readonly afterToolCall: AgentOptions['afterToolCall'];
   private readonly toolExecution: AgentOptions['toolExecution'];
+  private readonly tracer: AgentOptions['tracer'];
   private readonly _state: MutableAgentState;
   private readonly steeringQueue: AgentMessage[] = [];
   private readonly followUpQueue: AgentMessage[] = [];
@@ -79,6 +80,7 @@ export class Agent {
     this.beforeToolCall = options.beforeToolCall;
     this.afterToolCall = options.afterToolCall;
     this.toolExecution = options.toolExecution;
+    this.tracer = options.tracer;
     this._state = {
       systemPrompt: options.systemPrompt,
       model: options.model,
@@ -280,6 +282,7 @@ export class Agent {
       beforeToolCall: this.beforeToolCall,
       afterToolCall: this.afterToolCall,
       toolExecution: this.toolExecution,
+      tracer: this.tracer,
     };
   }
 

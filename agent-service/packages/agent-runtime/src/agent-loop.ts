@@ -17,6 +17,13 @@ import type { Options } from '@opspilot/model-gateway';
 import { randomUUID } from 'node:crypto';
 import { executeToolCalls } from './tool-executor.js';
 import { defaultConvertToLlm } from './convert-to-llm.js';
+import type { Usage } from '@opspilot/model-gateway';
+import {
+  markAgentSpanAborted,
+  markAgentSpanError,
+  type AgentSpan,
+  withAgentSpan,
+} from './tracing.js';
 
 /** Project executable AgentTools into the strict model-gateway Tool contract. */
 function toModelTools(tools: readonly AgentTool[] | undefined): readonly Tool[] | undefined {
@@ -72,6 +79,59 @@ export async function runAgentLoopWithOutcome(
   signal?: AbortSignal,
   continuation?: AgentToolCallContinuation,
 ): Promise<AgentLoopOutcome> {
+  return await withAgentSpan(config.tracer, 'agent.run', {}, async (span) => {
+    try {
+      const outcome = await runAgentLoopWithOutcomeBody(
+        prompts,
+        context,
+        config,
+        streamFn,
+        emit,
+        signal,
+        continuation,
+      );
+      if (outcome.termination !== undefined) {
+        if (outcome.termination.reason === 'aborted') {
+          markAgentSpanAborted(span, outcome.termination.message);
+        } else {
+          markAgentSpanError(
+            span,
+            outcome.termination.cause ?? new Error(outcome.termination.message),
+          );
+        }
+      } else {
+        const lastMessage = outcome.messages.at(-1);
+        if (
+          lastMessage?.role === 'assistant' &&
+          (lastMessage.finishReason === 'error' || lastMessage.finishReason === 'aborted')
+        ) {
+          if (lastMessage.finishReason === 'aborted') {
+            markAgentSpanAborted(span, lastMessage.errorMessage);
+          } else {
+            markAgentSpanError(span, new Error(lastMessage.errorMessage ?? 'Model call failed.'));
+          }
+        } else {
+          span.setStatus('ok');
+        }
+      }
+      return outcome;
+    } catch (error: unknown) {
+      markAgentSpanError(span, error, { aborted: signal?.aborted });
+      throw error;
+    }
+  });
+}
+
+/** Executes the Agent Loop body inside the root tracing scope. */
+async function runAgentLoopWithOutcomeBody(
+  prompts: readonly AgentMessage[],
+  context: AgentContext,
+  config: AgentLoopConfig,
+  streamFn: StreamFn,
+  emit: AgentEventSink,
+  signal?: AbortSignal,
+  continuation?: AgentToolCallContinuation,
+): Promise<AgentLoopOutcome> {
   const newMessages: AgentMessage[] = [...prompts];
   const currentContext: AgentContext = {
     ...context,
@@ -89,6 +149,7 @@ export async function runAgentLoopWithOutcome(
       beforeToolCall: config.beforeToolCall,
       afterToolCall: config.afterToolCall,
       toolExecution: config.toolExecution,
+      tracer: config.tracer,
       signal,
       emit,
     });
@@ -214,6 +275,7 @@ async function runLoop(
           beforeToolCall: config.beforeToolCall,
           afterToolCall: config.afterToolCall,
           toolExecution: config.toolExecution,
+          tracer: config.tracer,
           signal,
           emit,
         });
@@ -303,6 +365,57 @@ async function streamAssistantResponse(
   modelCallId: string,
   signal?: AbortSignal,
 ): Promise<AssistantMessage> {
+  return await withAgentSpan(
+    config.tracer,
+    'agent.model_call',
+    {
+      attributes: {
+        'agent.model_call.id': modelCallId,
+        'agent.model_call.provider': config.model.provider,
+        'agent.model_call.model': config.model.id,
+      },
+    },
+    async (span) => {
+      try {
+        const outcome = await consumeAssistantResponse(
+          context,
+          config,
+          streamFn,
+          emit,
+          modelCallId,
+          signal,
+        );
+        if (outcome.usage !== undefined) setModelUsage(span, outcome.usage);
+        if (outcome.message.finishReason === 'error') {
+          markAgentSpanError(span, new Error(outcome.message.errorMessage ?? 'Model call failed.'));
+        } else if (outcome.message.finishReason === 'aborted') {
+          markAgentSpanAborted(span, outcome.message.errorMessage);
+        } else {
+          span.setStatus('ok');
+        }
+        return outcome.message;
+      } catch (error: unknown) {
+        markAgentSpanError(span, error, { aborted: signal?.aborted });
+        throw error;
+      }
+    },
+  );
+}
+
+interface AssistantResponseOutcome {
+  readonly message: AssistantMessage;
+  readonly usage?: Usage;
+}
+
+/** Consumes the complete model stream and maps it to Agent message events. */
+async function consumeAssistantResponse(
+  context: AgentContext,
+  config: AgentLoopConfig,
+  streamFn: StreamFn,
+  emit: AgentEventSink,
+  modelCallId: string,
+  signal?: AbortSignal,
+): Promise<AssistantResponseOutcome> {
   const sourceMessages = context.messages;
   const transformedMessages = config.transformContext
     ? await config.transformContext(sourceMessages, signal)
@@ -321,12 +434,15 @@ async function streamAssistantResponse(
   const stream = streamFn(config.model, llmContext, options);
   let partialMessage: AssistantMessage | null = null;
   let addedPartial = false;
+  let observedUsage: Usage | undefined;
 
   /** 完成最终 assistant 消息的上下文替换和生命周期事件。
    * @param finalMessage 模型正常完成或失败终止时的最终消息。
    * @returns 已完成生命周期的最终 assistant 消息。
    */
-  const finalizeMessage = async (finalMessage: AssistantMessage): Promise<AssistantMessage> => {
+  const finalizeMessage = async (
+    finalMessage: AssistantMessage,
+  ): Promise<AssistantResponseOutcome> => {
     if (addedPartial) context.messages[context.messages.length - 1] = finalMessage;
     else {
       context.messages.push(finalMessage);
@@ -334,7 +450,10 @@ async function streamAssistantResponse(
     }
 
     await emit({ type: 'message_end', message: finalMessage, modelCallId });
-    return finalMessage;
+    return {
+      message: finalMessage,
+      usage: finalMessage.usage ?? observedUsage,
+    };
   };
 
   for await (const event of stream) {
@@ -349,8 +468,13 @@ async function streamAssistantResponse(
       case 'thinking.delta':
       case 'tool-call.delta':
       case 'tool-call.completed':
+        partialMessage = event.partial;
+        if (addedPartial) context.messages[context.messages.length - 1] = partialMessage;
+        await emit({ type: 'message_update', event, message: partialMessage });
+        break;
       case 'usage':
         partialMessage = event.partial;
+        observedUsage = event.usage;
         if (addedPartial) context.messages[context.messages.length - 1] = partialMessage;
         await emit({ type: 'message_update', event, message: partialMessage });
         break;
@@ -362,4 +486,13 @@ async function streamAssistantResponse(
   }
 
   return await finalizeMessage(await stream.result());
+}
+
+/** Writes model token usage using stable, provider-neutral Runtime attributes. */
+function setModelUsage(span: AgentSpan, usage: Usage): void {
+  span.setAttributes({
+    'agent.model_call.input_tokens': usage.inputTokens,
+    'agent.model_call.output_tokens': usage.outputTokens,
+    'agent.model_call.total_tokens': usage.totalTokens,
+  });
 }
