@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import { finishReasonSchema, usageSchema, type FinishReason, type ReasoningDecision, type Usage } from './response.js';
+import {
+  finishReasonSchema,
+  usageSchema,
+  type FinishReason,
+  type ReasoningDecision,
+  type Usage,
+} from './response.js';
+import { modelErrorInfoSchema, type ModelErrorInfo } from './model-error.js';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const callIdSchema = text(200);
@@ -113,6 +120,7 @@ export interface AssistantMessage {
   readonly toolCalls?: readonly ModelToolCall[];
   readonly finishReason: FinishReason;
   readonly errorMessage?: string;
+  readonly modelError?: ModelErrorInfo;
   readonly rawFinishReason?: string;
   readonly usage?: Usage;
   readonly responseId?: string;
@@ -128,10 +136,7 @@ export interface ToolResultMessage<TDetails = unknown> {
   readonly isError: boolean;
 }
 
-export type Message =
-  | UserMessage
-  | AssistantMessage
-  | ToolResultMessage
+export type Message = UserMessage | AssistantMessage | ToolResultMessage;
 
 export const messageSchema = z.discriminatedUnion('role', [
   z
@@ -147,6 +152,7 @@ export const messageSchema = z.discriminatedUnion('role', [
       toolCalls: z.array(modelToolCallSchema).max(128).optional(),
       finishReason: finishReasonSchema,
       errorMessage: z.string().max(100_000).optional(),
+      modelError: modelErrorInfoSchema.optional(),
       rawFinishReason: z.string().max(200).optional(),
       usage: usageSchema.optional(),
       responseId: z.string().trim().min(1).max(200).optional(),
@@ -192,8 +198,7 @@ export const contextSchema = z
 
 export function validateContext(value: unknown): Context {
   const parsed = contextSchema.safeParse(value);
-  if (!parsed.success)
-    throw new Error('Invalid model context.', { cause: parsed.error });
+  if (!parsed.success) throw new Error('Invalid model context.', { cause: parsed.error });
   return parsed.data;
 }
 
@@ -202,8 +207,7 @@ export function validateModelToolCall(
   call: unknown,
 ): ModelToolCall {
   const parsed = modelToolCallSchema.safeParse(call);
-  if (!parsed.success)
-    throw new Error('Invalid model tool call.', { cause: parsed.error });
+  if (!parsed.success) throw new Error('Invalid model tool call.', { cause: parsed.error });
   if (!(tools ?? []).some((tool) => tool.name === parsed.data.name))
     throw new Error('Model called a tool that was not declared in the context.');
   return parsed.data;

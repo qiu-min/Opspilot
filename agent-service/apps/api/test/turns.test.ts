@@ -329,6 +329,39 @@ describe('Turn API', () => {
     });
   });
 
+  it('returns structured model failure metadata in the Trace API', async () => {
+    const server = await startServer(
+      unusedExecute(),
+      defaultExcelResourcePathResolver,
+      createScriptedStreamHub([]),
+      createTraceQuery([
+        traceTurnStarted(0),
+        traceModelStarted(1, 'model-call-A'),
+        traceModelFailed(2, 'model-call-A'),
+        traceTurnFailed(3, 'provider failed'),
+      ]),
+    );
+    app = server.app;
+
+    const response = await getJson(server.port, '/turns/turn-trace-1/trace');
+    const trace = JSON.parse(response.body);
+
+    expect(response.statusCode).toBe(200);
+    expect(trace.spans).toContainEqual(
+      expect.objectContaining({
+        id: 'model:model-call-A',
+        status: 'error',
+        error: {
+          kind: 'rate_limit',
+          code: 'MODEL_RATE_LIMIT',
+          message: 'Model provider rate limit exceeded.',
+          retryable: true,
+          statusCode: 429,
+        },
+      }),
+    );
+  });
+
   it.each([
     ['failed', traceTurnFailed(2, 'provider failed')],
     ['cancelled', traceTurnCancelled(2)],
@@ -794,6 +827,21 @@ function traceModelStarted(sequence: number, modelCallId: string, attempt = 1): 
 
 function traceModelCompleted(sequence: number, modelCallId: string, attempt = 1): TurnEvent {
   return { ...traceBaseEvent(sequence, attempt), type: 'model_completed', modelCallId };
+}
+
+function traceModelFailed(sequence: number, modelCallId: string, attempt = 1): TurnEvent {
+  return {
+    ...traceBaseEvent(sequence, attempt),
+    type: 'model_failed',
+    modelCallId,
+    error: {
+      kind: 'rate_limit',
+      code: 'MODEL_RATE_LIMIT',
+      message: 'Model provider rate limit exceeded.',
+      retryable: true,
+      statusCode: 429,
+    },
+  };
 }
 
 function traceUsage(sequence: number, modelCallId: string, attempt = 1): TurnEvent {

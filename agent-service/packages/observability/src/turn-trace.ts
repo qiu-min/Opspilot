@@ -1,4 +1,4 @@
-import type { TurnEvent } from '@opspilot/domain';
+import type { ModelFailureKind, ModelFailureSnapshot, TurnEvent } from '@opspilot/domain';
 
 /** Kinds of logical spans that can be projected from durable TurnEvents. */
 export type TraceSpanKind = 'model' | 'tool' | 'compaction';
@@ -30,11 +30,22 @@ export interface ModelTraceUsage {
   readonly totalTokens: number;
 }
 
+/** Safe model failure metadata exposed by a Model trace span. */
+export interface ModelTraceError {
+  readonly kind: ModelFailureKind;
+  readonly code: string;
+  readonly message: string;
+  readonly retryable: boolean;
+  readonly statusCode?: number;
+  readonly providerCode?: string;
+}
+
 /** Projection of model_started, model_completed, and usage_recorded events. */
 export interface ModelTraceSpan extends TraceSpanBase {
   readonly kind: 'model';
   readonly modelCallId: string;
   readonly usage: ModelTraceUsage | null;
+  readonly error: ModelTraceError | null;
 }
 
 /** Projection of the lifecycle of one tool call. */
@@ -82,7 +93,9 @@ interface ModelSpanState {
   endSequence: number | null;
   endedAt: string | null;
   hasCompletion: boolean;
+  hasFailure: boolean;
   usage: ModelTraceUsage | null;
+  error: ModelTraceError | null;
 }
 
 interface ToolSpanState {
@@ -141,6 +154,9 @@ export function projectTurnTrace(events: readonly TurnEvent[]): TurnTrace {
         break;
       case 'model_completed':
         projectModelCompleted(modelSpans, event);
+        break;
+      case 'model_failed':
+        projectModelFailed(modelSpans, event);
         break;
       case 'usage_recorded':
         projectUsage(modelSpans, event);
@@ -220,7 +236,9 @@ function getModelState(
     endSequence: null,
     endedAt: null,
     hasCompletion: false,
+    hasFailure: false,
     usage: null,
+    error: null,
   };
   spans.set(modelCallId, created);
   return created;
@@ -244,10 +262,23 @@ function projectModelCompleted(
   event: Extract<TurnEvent, { type: 'model_completed' }>,
 ): void {
   const state = getModelState(spans, event.modelCallId, event.attempt);
-  if (state.hasCompletion) return;
+  if (state.hasCompletion || state.hasFailure) return;
   state.endSequence = event.sequence;
   state.endedAt = event.timestamp;
   state.hasCompletion = true;
+}
+
+/** Projects the first durable failure fact for a model call. */
+function projectModelFailed(
+  spans: Map<string, ModelSpanState>,
+  event: Extract<TurnEvent, { type: 'model_failed' }>,
+): void {
+  const state = getModelState(spans, event.modelCallId, event.attempt);
+  if (state.hasCompletion || state.hasFailure) return;
+  state.endSequence = event.sequence;
+  state.endedAt = event.timestamp;
+  state.hasFailure = true;
+  state.error = cloneModelFailure(event.error);
 }
 
 /** Projects the first usage fact for a model call, regardless of event adjacency. */
@@ -348,18 +379,33 @@ function toModelTraceSpan(state: ModelSpanState): ModelTraceSpan {
     state.startSequence !== null &&
     state.endSequence !== null &&
     state.endSequence >= state.startSequence;
+  const failed = state.hasFailure;
+  const hasTerminalBounds = (completed || failed) && state.endSequence !== null;
   return {
     id: `model:${state.modelCallId}`,
     kind: 'model',
     modelCallId: state.modelCallId,
     attempt: state.attempt,
-    status: completed ? 'completed' : 'incomplete',
+    status: failed ? 'error' : completed ? 'completed' : 'incomplete',
     startSequence: state.startSequence,
     endSequence: state.endSequence,
     startedAt: state.startedAt,
     endedAt: state.endedAt,
-    durationMs: completed ? calculateDuration(state.startedAt, state.endedAt) : null,
+    durationMs: hasTerminalBounds ? calculateDuration(state.startedAt, state.endedAt) : null,
     usage: state.usage,
+    error: state.error,
+  };
+}
+
+/** Copies only the durable model failure fields into the trace read model. */
+function cloneModelFailure(error: ModelFailureSnapshot): ModelTraceError {
+  return {
+    kind: error.kind,
+    code: error.code,
+    message: error.message,
+    retryable: error.retryable,
+    ...(error.statusCode === undefined ? {} : { statusCode: error.statusCode }),
+    ...(error.providerCode === undefined ? {} : { providerCode: error.providerCode }),
   };
 }
 

@@ -1,3 +1,5 @@
+import type { ModelFailureSnapshot } from '../model/model-failure.js';
+
 /** The durable identity and creation metadata for a Session aggregate. */
 export interface SessionHeader {
   readonly type: 'session';
@@ -53,6 +55,9 @@ export interface SessionUsage {
   readonly totalTokens: number;
 }
 
+/** Domain-owned name for the model failure snapshot persisted with an assistant message. */
+export type SessionModelErrorInfo = ModelFailureSnapshot;
+
 /** Reasoning selection metadata persisted in an assistant message. */
 export interface SessionReasoningDecision {
   readonly requested: 'minimal' | 'low' | 'medium' | 'high';
@@ -75,6 +80,7 @@ export interface SessionAssistantMessage {
   readonly toolCalls?: readonly SessionToolCall[];
   readonly finishReason: SessionFinishReason;
   readonly errorMessage?: string;
+  readonly modelError?: SessionModelErrorInfo;
   readonly rawFinishReason?: string;
   readonly usage?: SessionUsage;
   readonly responseId?: string;

@@ -1,4 +1,9 @@
-import OpenAI, { APIConnectionTimeoutError, AuthenticationError, RateLimitError } from 'openai';
+import OpenAI, {
+  APIConnectionError,
+  APIConnectionTimeoutError,
+  AuthenticationError,
+  RateLimitError,
+} from 'openai';
 import {
   createModelEventStream,
   type Context,
@@ -10,6 +15,9 @@ import {
   type ThinkingSignature,
   type Usage,
   type AssistantMessage,
+  type ModelErrorCode,
+  type ModelErrorInfo,
+  type ModelErrorKind,
 } from '../contracts/index.js';
 import type { ResolvedProvider } from '../provider-config.js';
 import type { ResolvedOptions } from '../thinking.js';
@@ -21,6 +29,7 @@ import {
 import { resolveOpenAiCompletionsCompat } from './openai-completions-compat.js';
 import { parseStreamingJson } from '../utils/parse-streaming-json.js';
 import type { ModelAdapter } from './model-adapter.js';
+import { isContextOverflowErrorMessage } from '../compat/context-overflow-patterns.js';
 
 export interface OpenAiCompletionsRequest {
   readonly model: string;
@@ -76,21 +85,171 @@ function defaultClient(provider: ResolvedProvider, baseUrl: string): OpenAiCompl
     },
   };
 }
-function formatProviderError(error: unknown): string {
+/** Maps an adapter-internal or Provider error into a safe public diagnostic. */
+export function classifyProviderError(error: unknown): ModelErrorInfo {
   const record = asRecord(error);
-  if (error instanceof AuthenticationError || record?.status === 401 || record?.status === 403)
-    return 'Model provider authentication failed.';
-  if (error instanceof RateLimitError || record?.status === 429)
-    return 'Model provider rate limit exceeded.';
+  const statusCode = getStatusCode(record?.status ?? record?.statusCode);
+  const providerCode = getProviderCode(record?.code);
+  const errorMessage = getErrorMessage(error);
+
+  if (error instanceof ProviderProtocolError)
+    return createModelError('protocol_error', error.message, statusCode, providerCode);
+  if (isContextOverflowErrorMessage(errorMessage))
+    return createModelError(
+      'context_overflow',
+      'Model provider context window exceeded.',
+      statusCode,
+      providerCode,
+    );
+  if (error instanceof AuthenticationError || statusCode === 401 || statusCode === 403)
+    return createModelError(
+      'authentication',
+      'Model provider authentication failed.',
+      statusCode,
+      providerCode,
+    );
+  if (error instanceof RateLimitError || statusCode === 429)
+    return createModelError(
+      'rate_limit',
+      'Model provider rate limit exceeded.',
+      statusCode,
+      providerCode,
+    );
+  if (isTimeoutError(error, record, errorMessage))
+    return createModelError(
+      'timeout',
+      'Model provider request timed out.',
+      statusCode,
+      providerCode,
+    );
+  if (isNetworkError(error, record))
+    return createModelError(
+      'network',
+      'Model provider network request failed.',
+      statusCode,
+      providerCode,
+    );
+  if (statusCode !== undefined && statusCode >= 500)
+    return createModelError(
+      'server_error',
+      'Model provider returned a server error.',
+      statusCode,
+      providerCode,
+    );
+  if (statusCode !== undefined && statusCode >= 400 && statusCode < 500)
+    return createModelError(
+      'invalid_request',
+      'Model provider rejected the request.',
+      statusCode,
+      providerCode,
+    );
+
+  return createModelError(
+    'unknown',
+    errorMessage || 'Model provider request failed.',
+    statusCode,
+    providerCode,
+  );
+}
+
+/** Internal marker for malformed Provider protocol data found by this Adapter. */
+class ProviderProtocolError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'ProviderProtocolError';
+  }
+}
+
+function createModelError(
+  kind: ModelErrorKind,
+  message: string,
+  statusCode: number | undefined,
+  providerCode: string | undefined,
+): ModelErrorInfo {
+  const codeByKind: Record<ModelErrorKind, ModelErrorCode> = {
+    authentication: 'MODEL_AUTHENTICATION',
+    invalid_request: 'MODEL_INVALID_REQUEST',
+    rate_limit: 'MODEL_RATE_LIMIT',
+    timeout: 'MODEL_TIMEOUT',
+    network: 'MODEL_NETWORK',
+    server_error: 'MODEL_SERVER_ERROR',
+    protocol_error: 'MODEL_PROTOCOL_ERROR',
+    context_overflow: 'MODEL_CONTEXT_OVERFLOW',
+    unknown: 'MODEL_UNKNOWN',
+  };
+  const retryableByKind: Record<ModelErrorKind, boolean> = {
+    authentication: false,
+    invalid_request: false,
+    rate_limit: true,
+    timeout: true,
+    network: true,
+    server_error: true,
+    protocol_error: false,
+    context_overflow: false,
+    unknown: false,
+  };
+  return {
+    kind,
+    code: codeByKind[kind],
+    message: message || 'Model provider request failed.',
+    retryable: retryableByKind[kind],
+    ...(statusCode === undefined ? {} : { statusCode }),
+    ...(providerCode === undefined ? {} : { providerCode }),
+  };
+}
+
+function getErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) return '';
+  const message = error.message.trim();
+  if (message.length === 0) return '';
+  // Provider SDK metadata is intentionally not copied; cap the human-readable fallback as well.
+  return message.slice(0, 100_000);
+}
+
+function getStatusCode(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 100 && value <= 599
+    ? value
+    : undefined;
+}
+
+function getProviderCode(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const code = value.trim();
+  return /^[A-Za-z0-9_.:-]{1,200}$/.test(code) ? code : undefined;
+}
+
+function isTimeoutError(
+  error: unknown,
+  record: Record<string, unknown> | undefined,
+  message: string,
+): boolean {
   if (error instanceof APIConnectionTimeoutError || record?.name === 'APIConnectionTimeoutError')
-    return 'Model provider request timed out.';
-  if (error instanceof Error && error.message.length > 0)
-    return error.message;
-  return 'Model provider request failed.';
+    return true;
+  if (record?.code === 'ETIMEDOUT' || record?.code === 'UND_ERR_CONNECT_TIMEOUT') return true;
+  return typeof record?.name === 'string' && /timeout/i.test(record.name)
+    ? true
+    : /\btimeout\b/i.test(message);
+}
+
+function isNetworkError(error: unknown, record: Record<string, unknown> | undefined): boolean {
+  if (error instanceof APIConnectionError || record?.name === 'APIConnectionError') return true;
+  return (
+    record?.code === 'ECONNRESET' ||
+    record?.code === 'ECONNREFUSED' ||
+    record?.code === 'ENOTFOUND' ||
+    record?.code === 'EAI_AGAIN' ||
+    record?.code === 'ECONNABORTED' ||
+    record?.code === 'EPIPE' ||
+    record?.code === 'UND_ERR_CONNECT_TIMEOUT'
+  );
 }
 function isAbortError(error: unknown): boolean {
   const record = asRecord(error);
-  return record?.name === 'AbortError' || record?.code === 'ABORT_ERR';
+  return (
+    record?.name === 'AbortError' ||
+    record?.name === 'APIUserAbortError' ||
+    record?.code === 'ABORT_ERR'
+  );
 }
 function usage(value: unknown): Usage | undefined {
   const item = asRecord(value);
@@ -123,7 +282,7 @@ function finish(value: string): Exclude<FinishReason, 'pending' | 'error' | 'abo
       return 'refusal';
 
     default:
-      throw new Error(`Unknown provider finish reason: ${value}`);
+      throw new ProviderProtocolError(`Unknown provider finish reason: ${value}`);
   }
 }
 
@@ -188,12 +347,13 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
         const toolCalls = [...calls.entries()]
           .sort(([left], [right]) => left - right)
           .filter(([, call]) => call.id !== undefined && call.name !== undefined)
-          .map(([index, call]) =>
-            completedCalls.get(index) ?? {
-              callId: call.id as string,
-              name: call.name as string,
-              arguments: parseStreamingJson(call.arguments),
-            },
+          .map(
+            ([index, call]) =>
+              completedCalls.get(index) ?? {
+                callId: call.id as string,
+                name: call.name as string,
+                arguments: parseStreamingJson(call.arguments),
+              },
           );
         return {
           role: 'assistant',
@@ -221,11 +381,22 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
        * @param aborted 是否由调用方 AbortSignal 主动终止。
        * @returns 保留已有输出并带有终止原因的 assistant 消息。
        */
-      const createFailureMessage = (error: unknown, aborted: boolean): AssistantMessage => ({
-        ...createPartial(),
-        finishReason: aborted ? 'aborted' : 'error',
-        errorMessage: formatProviderError(error),
-      });
+      const createFailureMessage = (error: unknown, aborted: boolean): AssistantMessage => {
+        if (aborted) {
+          return {
+            ...createPartial(),
+            finishReason: 'aborted',
+            errorMessage: 'Request aborted.',
+          };
+        }
+        const modelError = classifyProviderError(error);
+        return {
+          ...createPartial(),
+          finishReason: 'error',
+          errorMessage: modelError.message,
+          modelError,
+        };
+      };
 
       /** 确保文本内容块存在并返回其当前值。
        * @returns 当前累计文本内容块。
@@ -282,9 +453,7 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
                     },
                   },
                 }),
-            ...(options.temperature === undefined
-              ? {}
-              : { temperature: options.temperature }),
+            ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
             ...(options.maxTokens === undefined
               ? {}
               : compat.maxTokensField === 'max_completion_tokens'
@@ -309,7 +478,7 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
             finalReason = finish(choice.finish_reason);
           }
           const delta = asRecord(choice.delta);
-          if (typeof delta?.content === "string" && delta.content.length > 0) { 
+          if (typeof delta?.content === 'string' && delta.content.length > 0) {
             const previous = ensureTextBlock();
             textBlock = { ...previous, text: previous.text + delta.content };
             blocks[blocks.indexOf(previous)] = textBlock;
@@ -361,14 +530,21 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
             }
         }
         if (finalReason === undefined)
-          throw new Error('Model provider stream ended without a finish reason.');
+          throw new ProviderProtocolError('Model provider stream ended without a finish reason.');
         const toolCalls = [...calls.entries()].map(([index, call]) => {
           if (!call.id || !call.name)
-            throw new Error('OpenAI tool call stream ended before name or ID.');
-          const toolCall = parseOpenAiCompletionsToolCall(context.tools, {
-            id: call.id,
-            function: { name: call.name, arguments: call.arguments },
-          });
+            throw new ProviderProtocolError('OpenAI tool call stream ended before name or ID.');
+          let toolCall: NonNullable<AssistantMessage['toolCalls']>[number];
+          try {
+            toolCall = parseOpenAiCompletionsToolCall(context.tools, {
+              id: call.id,
+              function: { name: call.name, arguments: call.arguments },
+            });
+          } catch (error: unknown) {
+            throw new ProviderProtocolError(
+              error instanceof Error ? error.message : 'OpenAI tool call response was invalid.',
+            );
+          }
           completedCalls.set(index, toolCall);
           controller.emit({
             type: 'tool-call.completed',
@@ -379,8 +555,8 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
           return toolCall;
         });
         if (blocks.length === 0 && toolCalls.length === 0)
-          throw new Error('Model provider returned no text or tool call.');
-        
+          throw new ProviderProtocolError('Model provider returned no text or tool call.');
+
         const response: AssistantMessage = {
           role: 'assistant',
           api: model.api,

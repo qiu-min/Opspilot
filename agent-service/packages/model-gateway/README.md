@@ -192,9 +192,9 @@ const message = await stream.result();
 
 Provider 或模型流失败会封装为带有 `finishReason: 'error' | 'aborted'` 的 AssistantMessage，并通过 `error` 事件发出；`result()` 仍然 resolve 该消息。配置、输入校验和未预期的编程错误仍然可以抛出普通 `Error`。
 
-稳定的 Provider 错误文案由 Adapter 负责格式化，不再暴露自定义错误码协议。
+普通 model failure 同时提供 `errorMessage`（人类可读描述）和可选的 `modelError`（结构化、Provider-neutral diagnostic）。`modelError.kind` 与 `code` 是 OpsPilot 的稳定语义，`retryable` 只表示后续 RetryPolicy 是否可以考虑该 transient 类别；当前不会自动 retry。`modelError` 不包含 stack、Provider headers、完整 raw response 或 SDK cause。
 
-上层应根据 `finishReason` 和 `errorMessage` 处理模型调用失败，而不是依赖某个 Provider 的异常类型或 HTTP 响应格式。
+上层应根据 `finishReason` 与 `modelError` 处理模型调用失败，而不是依赖某个 Provider 的异常类型或 HTTP 响应格式。Abort 仍然只使用 `finishReason: 'aborted'`，不伪造成 retryable model error。
 
 ## ModelGateway API
 

@@ -74,6 +74,50 @@ describe('TurnEvent validation', () => {
     expect(() => validateTurnEvent({ ...baseEvent, type: 'model_completed' })).not.toThrow();
   });
 
+  it('validates model_failed durable error snapshots', () => {
+    expect(() =>
+      validateTurnEvent({
+        ...baseEvent,
+        type: 'model_failed',
+        error: {
+          kind: 'rate_limit',
+          code: 'MODEL_RATE_LIMIT',
+          message: 'Model provider rate limit exceeded.',
+          retryable: true,
+          statusCode: 429,
+          providerCode: 'rate_limit_exceeded',
+        },
+      }),
+    ).not.toThrow();
+
+    const invalidSnapshots: readonly Record<string, unknown>[] = [
+      { kind: 'not-a-kind', code: 'MODEL_UNKNOWN', message: 'failed', retryable: false },
+      { kind: 'unknown', code: '', message: 'failed', retryable: false },
+      { kind: 'unknown', code: 'MODEL_UNKNOWN', message: '', retryable: false },
+      { kind: 'unknown', code: 'MODEL_UNKNOWN', message: 'failed', retryable: 'false' },
+      {
+        kind: 'unknown',
+        code: 'MODEL_UNKNOWN',
+        message: 'failed',
+        retryable: false,
+        statusCode: 99,
+      },
+      {
+        kind: 'unknown',
+        code: 'MODEL_UNKNOWN',
+        message: 'failed',
+        retryable: false,
+        providerCode: 'bad code',
+      },
+    ];
+
+    for (const error of invalidSnapshots) {
+      expect(() => validateTurnEvent({ ...baseEvent, type: 'model_failed', error })).toThrow(
+        TurnEventError,
+      );
+    }
+  });
+
   it.each(['model_started', 'model_completed', 'usage_recorded'] as const)(
     'requires a non-empty modelCallId for %s',
     (type) => {
@@ -88,9 +132,7 @@ describe('TurnEvent validation', () => {
             }
           : { ...baseEvent, type };
 
-      expect(() => validateTurnEvent({ ...event, modelCallId: undefined })).toThrow(
-        TurnEventError,
-      );
+      expect(() => validateTurnEvent({ ...event, modelCallId: undefined })).toThrow(TurnEventError);
       expect(() => validateTurnEvent({ ...event, modelCallId: '' })).toThrow(TurnEventError);
       expect(() => validateTurnEvent(event)).not.toThrow();
     },
@@ -103,5 +145,52 @@ describe('TurnEvent validation', () => {
     ['invalid timestamp', { ...baseEvent, type: 'model_started', timestamp: 'invalid' }],
   ])('rejects %s', (_label, event) => {
     expect(() => validateTurnEvent(event)).toThrow(TurnEventError);
+  });
+
+  it('requires all model_failed fields and keeps legacy event records valid', () => {
+    const valid = {
+      ...baseEvent,
+      type: 'model_failed' as const,
+      error: {
+        kind: 'unknown' as const,
+        code: 'MODEL_UNKNOWN',
+        message: 'legacy failure',
+        retryable: false,
+      },
+    };
+    expect(() => validateTurnEvent(valid)).not.toThrow();
+    expect(() => validateTurnEvent({ ...valid, modelCallId: undefined })).toThrow(TurnEventError);
+    expect(() => validateTurnEvent({ ...valid, error: undefined })).toThrow(TurnEventError);
+    expect(() =>
+      validateTurnEvent({
+        ...valid,
+        error: { ...valid.error, kind: 'invalid' },
+      }),
+    ).toThrow(TurnEventError);
+    expect(() => validateTurnEvent({ ...valid, error: { ...valid.error, code: '' } })).toThrow(
+      TurnEventError,
+    );
+    expect(() => validateTurnEvent({ ...valid, error: { ...valid.error, message: '' } })).toThrow(
+      TurnEventError,
+    );
+    expect(() =>
+      validateTurnEvent({
+        ...valid,
+        error: { ...valid.error, retryable: 'no' },
+      }),
+    ).toThrow(TurnEventError);
+    expect(() =>
+      validateTurnEvent({
+        ...valid,
+        error: { ...valid.error, statusCode: 600 },
+      }),
+    ).toThrow(TurnEventError);
+    expect(() =>
+      validateTurnEvent({
+        ...valid,
+        error: { ...valid.error, providerCode: {} },
+      }),
+    ).toThrow(TurnEventError);
+    expect(() => validateTurnEvent({ ...baseEvent, type: 'model_started' })).not.toThrow();
   });
 });

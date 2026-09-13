@@ -1,4 +1,5 @@
 import { TurnEventError } from './turn-errors.js';
+import type { ModelFailureKind, ModelFailureSnapshot } from '../model/model-failure.js';
 
 /** Current durable TurnEvent record version. */
 export const CURRENT_TURN_EVENT_VERSION = 2 as const;
@@ -26,6 +27,13 @@ export interface ModelStartedEvent extends TurnEventBase {
 export interface ModelCompletedEvent extends TurnEventBase {
   readonly type: 'model_completed';
   readonly modelCallId: string;
+}
+
+/** Durable fact describing why one Model Call failed. */
+export interface ModelFailedEvent extends TurnEventBase {
+  readonly type: 'model_failed';
+  readonly modelCallId: string;
+  readonly error: ModelFailureSnapshot;
 }
 
 export interface InputCommittedEvent extends TurnEventBase {
@@ -103,6 +111,7 @@ export type TurnEvent =
   | TurnStartedEvent
   | ModelStartedEvent
   | ModelCompletedEvent
+  | ModelFailedEvent
   | InputCommittedEvent
   | AssistantMessageCompletedEvent
   | ToolRequestedEvent
@@ -149,6 +158,10 @@ export function validateTurnEvent(event: unknown): asserts event is TurnEvent {
     case 'model_started':
     case 'model_completed':
       assertModelCallId(event.modelCallId);
+      return;
+    case 'model_failed':
+      assertModelCallId(event.modelCallId);
+      assertModelFailure(event.error);
       return;
     case 'input_committed':
       assertEntryId(event.entryId, 'input_committed entryId');
@@ -219,6 +232,50 @@ function assertModelCallId(value: unknown): asserts value is string {
 
 function assertName(value: unknown): asserts value is string {
   if (!isNonEmptyString(value)) throw new TurnEventError('TurnEvent tool name must be non-empty.');
+}
+
+function assertModelFailure(value: unknown): asserts value is ModelFailureSnapshot {
+  if (!isRecord(value)) throw new TurnEventError('model_failed error must be an object.');
+  if (!isModelFailureKind(value.kind)) {
+    throw new TurnEventError('model_failed error kind is invalid.');
+  }
+  if (!isNonEmptyString(value.code)) {
+    throw new TurnEventError('model_failed error code must be non-empty.');
+  }
+  if (!isNonEmptyString(value.message)) {
+    throw new TurnEventError('model_failed error message must be non-empty.');
+  }
+  if (typeof value.retryable !== 'boolean') {
+    throw new TurnEventError('model_failed error retryable must be boolean.');
+  }
+  if (value.statusCode !== undefined && !isHttpStatusCode(value.statusCode)) {
+    throw new TurnEventError('model_failed error statusCode is invalid.');
+  }
+  if (value.providerCode !== undefined && !isProviderCode(value.providerCode)) {
+    throw new TurnEventError('model_failed error providerCode is invalid.');
+  }
+}
+
+function isModelFailureKind(value: unknown): value is ModelFailureKind {
+  return (
+    value === 'authentication' ||
+    value === 'invalid_request' ||
+    value === 'rate_limit' ||
+    value === 'timeout' ||
+    value === 'network' ||
+    value === 'server_error' ||
+    value === 'protocol_error' ||
+    value === 'context_overflow' ||
+    value === 'unknown'
+  );
+}
+
+function isHttpStatusCode(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 100 && value <= 599;
+}
+
+function isProviderCode(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(value.trim());
 }
 
 function assertEntryId(value: unknown, field: string): asserts value is string {

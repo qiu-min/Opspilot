@@ -17,6 +17,7 @@ export {
   type SessionFinishReason,
   type SessionMessage,
   type SessionMessageEntry,
+  type SessionModelErrorInfo,
   type SessionReasoningDecision,
   type SessionTextContent,
   type SessionThinkingContent,

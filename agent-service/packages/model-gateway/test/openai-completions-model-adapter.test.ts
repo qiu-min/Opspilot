@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   OpenAiCompletionsModelAdapter,
+  classifyProviderError,
   toOpenAiCompletionsMessages,
   type OpenAiCompletionsClient,
   type OpenAiCompletionsRequest,
@@ -115,6 +116,37 @@ function failingAdapter(error: unknown): OpenAiCompletionsModelAdapter {
 }
 
 describe('OpenAI Chat Completions adapter', () => {
+  it.each([
+    ['authentication', Object.assign(new Error('unauthorized'), { status: 401 }), false, 401],
+    ['authentication', Object.assign(new Error('forbidden'), { status: 403 }), false, 403],
+    ['rate_limit', Object.assign(new Error('limited'), { status: 429 }), true, 429],
+    [
+      'timeout',
+      Object.assign(new Error('timeout'), { name: 'APIConnectionTimeoutError' }),
+      true,
+      undefined,
+    ],
+    [
+      'network',
+      Object.assign(new Error('socket closed'), { name: 'APIConnectionError' }),
+      true,
+      undefined,
+    ],
+    ['server_error', Object.assign(new Error('unavailable'), { status: 503 }), true, 503],
+    ['invalid_request', Object.assign(new Error('bad request'), { status: 422 }), false, 422],
+    ['context_overflow', new Error('maximum context length exceeded'), false, undefined],
+    ['unknown', new Error('unexpected failure'), false, undefined],
+  ] as const)(
+    'classifies %s Provider failures with stable retryability',
+    (kind, error, retryable, statusCode) => {
+      expect(classifyProviderError(error)).toMatchObject({
+        kind,
+        retryable,
+        ...(statusCode === undefined ? {} : { statusCode }),
+      });
+    },
+  );
+
   it('normalizes text, tool calls, usage, and sends the configured endpoint', async () => {
     const requests: OpenAiCompletionsRequest[] = [];
     let endpoint = '';
@@ -189,7 +221,10 @@ describe('OpenAI Chat Completions adapter', () => {
     expect(received.find((event) => event.type === 'usage')).toMatchObject({
       partial: { usage: { inputTokens: 4, outputTokens: 2, totalTokens: 6 } },
     });
-    expect(received.at(-1)).toMatchObject({ type: 'done', response: { finishReason: 'tool_calls' } });
+    expect(received.at(-1)).toMatchObject({
+      type: 'done',
+      response: { finishReason: 'tool_calls' },
+    });
     expect(endpoint).toBe('https://moonshot.example/v1');
     expect(requests[0]).toMatchObject({
       model: 'kimi',
@@ -322,7 +357,9 @@ describe('OpenAI Chat Completions adapter', () => {
       },
     }));
 
-    const response = await adapter.stream(model, { messages: context.messages }, {}, provider).result();
+    const response = await adapter
+      .stream(model, { messages: context.messages }, {}, provider)
+      .result();
 
     expect(response).not.toHaveProperty('toolCalls');
   });
@@ -497,9 +534,7 @@ describe('OpenAI Chat Completions adapter', () => {
       model,
     );
 
-    expect(messages).toEqual([
-      { role: 'tool', tool_call_id: 'call_1', content: 'logs found' },
-    ]);
+    expect(messages).toEqual([{ role: 'tool', tool_call_id: 'call_1', content: 'logs found' }]);
   });
 
   it('maps reasoning formats from resolved options without leaking format choices upward', async () => {
@@ -754,7 +789,9 @@ describe('OpenAI Chat Completions adapter', () => {
     const partialDeltas = events.filter((event) => event.type === 'tool-call.delta');
     expect(partialDeltas).toHaveLength(2);
     expect(partialDeltas[0]).toMatchObject({
-      partial: { toolCalls: [{ callId: 'call_1', name: 'query_logs', arguments: { service: 'pay' } }] },
+      partial: {
+        toolCalls: [{ callId: 'call_1', name: 'query_logs', arguments: { service: 'pay' } }],
+      },
     });
     expect(partialDeltas[1]).toMatchObject({
       partial: {
@@ -763,7 +800,9 @@ describe('OpenAI Chat Completions adapter', () => {
     });
     const completed = events.find((event) => event.type === 'tool-call.completed');
     expect(completed).toMatchObject({
-      partial: { toolCalls: [{ callId: 'call_1', name: 'query_logs', arguments: { service: 'payments' } }] },
+      partial: {
+        toolCalls: [{ callId: 'call_1', name: 'query_logs', arguments: { service: 'payments' } }],
+      },
     });
     await expect(result.result()).resolves.toMatchObject({
       finishReason: 'tool_calls',
@@ -845,7 +884,9 @@ describe('OpenAI Chat Completions adapter', () => {
       },
     }));
     await expect(
-      Promise.resolve().then(() => adapter.stream(k3Model, context, { temperature: 0.2 }, provider)),
+      Promise.resolve().then(() =>
+        adapter.stream(k3Model, context, { temperature: 0.2 }, provider),
+      ),
     ).rejects.toThrow('does not support temperature');
     expect(invoked).toBe(false);
   });
@@ -992,9 +1033,7 @@ describe('OpenAI Chat Completions adapter', () => {
       },
     }));
 
-    const result = await adapter
-      .stream(model, context, {}, provider)
-      .result();
+    const result = await adapter.stream(model, context, {}, provider).result();
 
     expect(result).toMatchObject({
       finishReason: 'refusal',
@@ -1025,6 +1064,11 @@ describe('OpenAI Chat Completions adapter', () => {
     await expect(result.result()).resolves.toMatchObject({
       finishReason: 'error',
       errorMessage: 'Unknown provider finish reason: some_new_reason',
+      modelError: {
+        kind: 'protocol_error',
+        code: 'MODEL_PROTOCOL_ERROR',
+        retryable: false,
+      },
     });
   });
 
@@ -1051,6 +1095,11 @@ describe('OpenAI Chat Completions adapter', () => {
     await expect(result.result()).resolves.toMatchObject({
       finishReason: 'error',
       errorMessage: 'Model provider stream ended without a finish reason.',
+      modelError: {
+        kind: 'protocol_error',
+        code: 'MODEL_PROTOCOL_ERROR',
+        retryable: false,
+      },
     });
   });
 
@@ -1063,8 +1112,10 @@ describe('OpenAI Chat Completions adapter', () => {
       const events = [];
       for await (const event of result) events.push(event);
       const response = await result.result();
+      const terminalEvent = events.at(-1);
       expect(response).toMatchObject({ finishReason: 'error' });
-      expect(events.at(-1)).toMatchObject({ type: 'error', reason: 'error', error: response });
+      expect(terminalEvent).toMatchObject({ type: 'error', reason: 'error', error: response });
+      expect(terminalEvent?.type === 'error' ? terminalEvent.error : undefined).toBe(response);
     }
   });
 
@@ -1104,6 +1155,11 @@ describe('OpenAI Chat Completions adapter', () => {
       finishReason: 'error',
       content: [{ type: 'text', text: 'partial text' }],
       errorMessage: 'socket closed',
+      modelError: {
+        kind: 'unknown',
+        code: 'MODEL_UNKNOWN',
+        retryable: false,
+      },
     });
   });
 
@@ -1136,6 +1192,11 @@ describe('OpenAI Chat Completions adapter', () => {
     expect(response).toMatchObject({
       finishReason: 'error',
       errorMessage: 'OpenAI tool arguments must be valid JSON.',
+      modelError: {
+        kind: 'protocol_error',
+        code: 'MODEL_PROTOCOL_ERROR',
+        retryable: false,
+      },
     });
   });
 });

@@ -8,3 +8,6 @@
 [submodule "agent-service/docs/excel-mcp-server"]
 	path = agent-service/docs/excel-mcp-server
 	url = https://github.com/haris-musa/excel-mcp-server.git
+[submodule "docs/RAG-MCP-server"]
+	path = docs/RAG-MCP-server
+	url = https://github.com/jerry-ai-dev/MODULAR-RAG-MCP-SERVER

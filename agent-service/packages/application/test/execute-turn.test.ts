@@ -631,8 +631,64 @@ describe('ExecuteTurn', () => {
       expect.any(String),
     );
     expect(events.some((event) => event.type === 'model_completed')).toBe(false);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'model_failed',
+        error: {
+          kind: 'unknown',
+          code: 'MODEL_UNKNOWN',
+          message: 'provider failed',
+          retryable: false,
+        },
+      }),
+    );
     expect(events.at(-1)).toMatchObject({ type: 'turn_failed', message: 'provider failed' });
     expect(messageEntries(store.load(result.sessionId))).toHaveLength(2);
+  });
+
+  it('records structured model failure and usage without completing the model call', async () => {
+    const { store, turnStore } = createStore();
+    const failedResponse: AssistantMessage = {
+      ...assistantMessage('', model),
+      finishReason: 'error',
+      errorMessage: 'Model provider rate limit exceeded.',
+      modelError: {
+        kind: 'rate_limit',
+        code: 'MODEL_RATE_LIMIT',
+        message: 'Model provider rate limit exceeded.',
+        retryable: true,
+        statusCode: 429,
+      },
+      usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 },
+    };
+    const runner = new TestExecuteTurn({
+      sessionStore: store,
+      turnStore,
+      modelGateway: createGateway([failedAssistantStream(failedResponse, model)]),
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+
+    const result = await runner.execute({ message: userMessage('hello') });
+    const events = turnStore.loadEvents(result.turnId);
+    const modelStarted = events.find((event) => event.type === 'model_started');
+    const modelFailed = events.find((event) => event.type === 'model_failed');
+
+    expect(modelFailed).toMatchObject({
+      modelCallId: modelStarted && 'modelCallId' in modelStarted ? modelStarted.modelCallId : '',
+      error: failedResponse.modelError,
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'usage_recorded',
+        modelCallId: modelStarted && 'modelCallId' in modelStarted ? modelStarted.modelCallId : '',
+        inputTokens: 10,
+        outputTokens: 2,
+        totalTokens: 12,
+      }),
+    );
+    expect(events.some((event) => event.type === 'model_completed')).toBe(false);
+    expect(events.some((event) => event.type === 'assistant_message_completed')).toBe(false);
   });
 
   it('records and publishes cancellation as the Turn terminal outcome', async () => {
@@ -1410,10 +1466,12 @@ describe('ExecuteTurn', () => {
 
     const loaded = store.load(existing.getHeader().id);
     expect(gateway.requestedModels[0]).toBe(alternateModel);
-    expect(loaded.getEntries().slice(0, 2).map((entry) => entry.type)).toEqual([
-      'model_change',
-      'thinking_level_change',
-    ]);
+    expect(
+      loaded
+        .getEntries()
+        .slice(0, 2)
+        .map((entry) => entry.type),
+    ).toEqual(['model_change', 'thinking_level_change']);
     expect(buildSessionContext(loaded).model).toEqual({
       provider: alternateModel.provider,
       modelId: alternateModel.id,

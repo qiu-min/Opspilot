@@ -11,5 +11,6 @@ export {
 } from './session-run-coordinator.js';
 export { ExecuteTurn, type ExecuteTurnDependencies } from './execute-turn.js';
 export { TurnEventRecorder } from './turn-event-recorder.js';
+export { toModelFailureSnapshot } from './model-failure-mapper.js';
 export { SessionRecoverableTurnConflictError } from './turn-errors.js';
 export type { TurnExecutionContext } from './turn-execution-context.js';

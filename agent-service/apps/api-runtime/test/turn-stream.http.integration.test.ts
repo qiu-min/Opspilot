@@ -9,6 +9,7 @@ import {
   ExecuteTurn,
   GetActiveTurn,
   GetSessionHistory,
+  GetTurnTrace,
   SubscribeTurnStream,
   type ExecuteTurnResult,
   type TurnStreamHub,
@@ -114,7 +115,13 @@ describe('Turn stream HTTP integration', () => {
     expect(hub.getActiveTurn(sessionId)).toMatchObject({ status: 'running' });
 
     hub.publish({ type: 'assistant_text_delta', delta: 'after disconnect', ...identity });
-    hub.publish({ type: 'tool_started', callId: 'call-1', name: 'lookup', timestamp: '2026-09-09T12:00:01Z', ...identity });
+    hub.publish({
+      type: 'tool_started',
+      callId: 'call-1',
+      name: 'lookup',
+      timestamp: '2026-09-09T12:00:01Z',
+      ...identity,
+    });
     expect(hub.getProjection(identity.turnId)).toMatchObject({
       assistant: { text: 'after disconnect' },
       tools: [{ callId: 'call-1', status: 'running' }],
@@ -283,12 +290,17 @@ async function startServer(
           },
           { provide: GetActiveTurn, useValue: new GetActiveTurn(streamHub) },
           { provide: SubscribeTurnStream, useValue: new SubscribeTurnStream(streamHub) },
+          {
+            provide: GetTurnTrace,
+            useValue: { execute: () => ({ spans: [] }) },
+          },
         ],
         exports: [
           ExecuteTurn,
           GetSessionHistory,
           GetActiveTurn,
           SubscribeTurnStream,
+          GetTurnTrace,
           EXCEL_RESOURCE_PATH_RESOLVER,
         ],
       }),

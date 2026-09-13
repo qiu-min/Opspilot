@@ -100,6 +100,74 @@ describe('projectTurnTrace', () => {
     });
   });
 
+  it('projects a model failure with structured error metadata and duration', () => {
+    const trace = projectTurnTrace([
+      turnStarted(0),
+      modelStarted(1, 'model-call-A'),
+      modelFailed(2, 'model-call-A', {
+        kind: 'rate_limit',
+        code: 'MODEL_RATE_LIMIT',
+        message: 'Model provider rate limit exceeded.',
+        retryable: true,
+        statusCode: 429,
+      }),
+    ]);
+
+    expect(trace.spans[0]).toMatchObject({
+      id: 'model:model-call-A',
+      status: 'error',
+      startSequence: 1,
+      endSequence: 2,
+      durationMs: 1_000,
+      usage: null,
+      error: {
+        kind: 'rate_limit',
+        code: 'MODEL_RATE_LIMIT',
+        retryable: true,
+        statusCode: 429,
+      },
+    });
+  });
+
+  it('projects a model failure without a start as an error span with null duration', () => {
+    const trace = projectTurnTrace([
+      turnStarted(0),
+      modelFailed(1, 'model-call-A', {
+        kind: 'unknown',
+        code: 'MODEL_UNKNOWN',
+        message: 'legacy failure',
+        retryable: false,
+      }),
+    ]);
+
+    expect(trace.spans[0]).toMatchObject({
+      id: 'model:model-call-A',
+      status: 'error',
+      startedAt: null,
+      endedAt: timestamp(1),
+      durationMs: null,
+    });
+  });
+
+  it('keeps usage on a failed model span', () => {
+    const trace = projectTurnTrace([
+      modelStarted(0, 'model-call-A'),
+      usage(1, 'model-call-A', 10, 5, 15),
+      modelFailed(2, 'model-call-A', {
+        kind: 'timeout',
+        code: 'MODEL_TIMEOUT',
+        message: 'Model provider request timed out.',
+        retryable: true,
+      }),
+    ]);
+
+    expect(trace.spans[0]).toMatchObject({
+      status: 'error',
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      error: { kind: 'timeout' },
+    });
+  });
+
   it('keeps a tool span incomplete when execution has not completed', () => {
     const trace = projectTurnTrace([
       turnStarted(0),
@@ -289,6 +357,31 @@ describe('projectTurnTrace', () => {
 
     expect(trace.spans[0]).toMatchObject({ endSequence: 1, endedAt: timestamp(1) });
   });
+
+  it('keeps the first model terminal fact when completion and failure are duplicated', () => {
+    const failure = {
+      kind: 'rate_limit' as const,
+      code: 'MODEL_RATE_LIMIT',
+      message: 'rate limited',
+      retryable: true,
+    };
+    const trace = projectTurnTrace([
+      modelStarted(0, 'model-call-A'),
+      modelFailed(1, 'model-call-A', failure),
+      modelFailed(2, 'model-call-A', {
+        ...failure,
+        kind: 'server_error',
+        code: 'MODEL_SERVER_ERROR',
+      }),
+      modelCompleted(3, 'model-call-A'),
+    ]);
+
+    expect(trace.spans[0]).toMatchObject({
+      status: 'error',
+      endSequence: 1,
+      error: failure,
+    });
+  });
 });
 
 function turnStarted(sequence: number, attempt = 1): TurnEvent {
@@ -334,6 +427,20 @@ function modelCompleted(sequence: number, modelCallId: string, attempt = 1): Tur
     ...baseEvent(sequence, attempt),
     type: 'model_completed',
     modelCallId,
+  };
+}
+
+function modelFailed(
+  sequence: number,
+  modelCallId: string,
+  error: Extract<TurnEvent, { type: 'model_failed' }>['error'],
+  attempt = 1,
+): TurnEvent {
+  return {
+    ...baseEvent(sequence, attempt),
+    type: 'model_failed',
+    modelCallId,
+    error,
   };
 }
 

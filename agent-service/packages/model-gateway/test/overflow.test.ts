@@ -14,12 +14,12 @@ const baseMessage: AssistantMessage = {
 describe('isContextOverflow', () => {
   it.each([
     'context_length_exceeded',
-    'The requested input exceeds the model\'s maximum context length.',
+    "The requested input exceeds the model's maximum context length.",
     'prompt is too long for this model',
     'The input token count (1001) exceeds the maximum number of tokens allowed.',
     'Your request exceeded model token limit: 1001 (requested: 1001)',
     'invalid params, context window exceeds limit',
-    'This model\'s maximum prompt length is 1000 tokens.',
+    "This model's maximum prompt length is 1000 tokens.",
     'model_context_window_exceeded',
     'request_too_large',
     'Please reduce the length of the messages or completion',
@@ -40,14 +40,44 @@ describe('isContextOverflow', () => {
     expect(isContextOverflow({ ...baseMessage, errorMessage: 'server unavailable' })).toBe(false);
   });
 
-  it('does not classify aborted responses as overflow', () => {
+  it('prefers structured context overflow metadata over the legacy message heuristic', () => {
     expect(
       isContextOverflow({
         ...baseMessage,
-        finishReason: 'aborted',
+        errorMessage: 'server unavailable',
+        modelError: {
+          kind: 'context_overflow',
+          code: 'MODEL_CONTEXT_OVERFLOW',
+          message: 'Model provider context window exceeded.',
+          retryable: false,
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isContextOverflow({
+        ...baseMessage,
         errorMessage: 'context_length_exceeded',
-        usage: { inputTokens: 10_001, outputTokens: 0, totalTokens: 10_001 },
-      }, 10_000),
+        modelError: {
+          kind: 'server_error',
+          code: 'MODEL_SERVER_ERROR',
+          message: 'Model provider returned a server error.',
+          retryable: true,
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it('does not classify aborted responses as overflow', () => {
+    expect(
+      isContextOverflow(
+        {
+          ...baseMessage,
+          finishReason: 'aborted',
+          errorMessage: 'context_length_exceeded',
+          usage: { inputTokens: 10_001, outputTokens: 0, totalTokens: 10_001 },
+        },
+        10_000,
+      ),
     ).toBe(false);
   });
 

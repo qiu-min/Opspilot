@@ -14,6 +14,7 @@ export {
   type CompactionStartedEvent,
   type InputCommittedEvent,
   type ModelCompletedEvent,
+  type ModelFailedEvent,
   type ModelStartedEvent,
   type ToolCompletedEvent,
   type ToolRequestedEvent,
@@ -28,10 +29,5 @@ export {
   type TurnStartedEvent,
   type UsageRecordedEvent,
 } from './turn-event.js';
-export {
-  Turn,
-  type TurnCreateOptions,
-  type TurnState,
-  type TurnStatus,
-} from './turn.js';
+export { Turn, type TurnCreateOptions, type TurnState, type TurnStatus } from './turn.js';
 export { TurnCheckpointError, TurnError, TurnEventError, TurnStateError } from './turn-errors.js';

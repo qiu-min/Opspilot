@@ -18,3 +18,8 @@ Session history 使用 Domain 自己的 `SessionMessage` 和 `SessionThinkingLev
 
 `TurnEvent` 是 append-only durable execution fact，不是 SSE event，也不是 `SessionEntry`。
 `Turn` 保存当前 snapshot，Turn event history 由 Application 的 `TurnStore` port 管理。
+
+Session assistant messages may optionally persist a Domain-owned `SessionModelErrorInfo` snapshot.
+The durable Turn event `model_failed` records a `ModelFailureSnapshot` for one failed model call;
+it is distinct from `turn_failed`, which describes the outcome of the whole Application Turn.
+Both additions are backward-compatible with older records that do not contain model failure data.

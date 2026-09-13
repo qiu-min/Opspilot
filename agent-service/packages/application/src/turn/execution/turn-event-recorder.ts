@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { AgentMessage } from '@opspilot/agent-runtime';
-import type { ToolResultMessage } from '@opspilot/model-gateway';
+import type { AssistantMessage, ToolResultMessage } from '@opspilot/model-gateway';
 import {
   CURRENT_TURN_EVENT_VERSION,
   type Session,
@@ -13,6 +13,7 @@ import {
 
 import type { AgentSessionEvent } from '../../session/runtime/agent-session.js';
 import type { TurnStore } from '../ports/turn-store.js';
+import { toModelFailureSnapshot } from './model-failure-mapper.js';
 
 /** Records low-frequency durable execution facts for one Application Turn. */
 export class TurnEventRecorder {
@@ -58,6 +59,15 @@ export class TurnEventRecorder {
   /** Records a completed model response before recording its durable message commit. */
   public recordModelCompleted(modelCallId: string): void {
     this.append({ type: 'model_completed', modelCallId });
+  }
+
+  /** Records a model call failure without treating it as a successful completion. */
+  public recordModelFailed(message: AssistantMessage, modelCallId: string): void {
+    this.append({
+      type: 'model_failed',
+      modelCallId,
+      error: toModelFailureSnapshot(message.modelError, message.errorMessage),
+    });
   }
 
   /** Records a durable assistant message and advances the assistant checkpoint. */
@@ -174,7 +184,22 @@ export class TurnEventRecorder {
 
   private recordMessageCompleted(message: AgentMessage, modelCallId?: string): void {
     if (message.role === 'assistant') {
-      if (message.finishReason === 'error' || message.finishReason === 'aborted') return;
+      if (message.finishReason === 'aborted') return;
+      if (message.finishReason === 'error') {
+        // Runtime-created synthetic failures do not carry a modelCallId and are
+        // deliberately kept out of the model-call failure fact stream.
+        if (modelCallId === undefined) return;
+        if (message.usage !== undefined) {
+          this.recordUsage(
+            modelCallId,
+            message.usage.inputTokens,
+            message.usage.outputTokens,
+            message.usage.totalTokens,
+          );
+        }
+        this.recordModelFailed(message, modelCallId);
+        return;
+      }
       if (modelCallId === undefined) {
         throw new Error('A completed assistant message must identify its model call.');
       }

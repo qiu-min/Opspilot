@@ -22,6 +22,12 @@ sessions/{sessionId}/
 
 Application 同时定义 `TurnStore` 与 `TurnExecutionContextStore` port。Turn snapshot、append-only `TurnEvent` history 和最小执行输入是独立的 durable execution boundary，不写入 Session JSONL；`TurnRecoveryPlanner`、`ResumeTurn` 与 `RecoverTurnsOnStartup` 负责进程 crash 后的执行恢复。
 
+Application maps model-gateway `ModelErrorInfo` to the domain-owned `ModelFailureSnapshot` at the
+execution boundary. `TurnEventRecorder` records `model_failed` for a model response with
+`finishReason: 'error'` and a model call id, while aborted responses continue to use
+`turn_cancelled`; `model_failed` is the failure of one model call and does not replace `turn_failed`.
+Automatic retry is not implemented.
+
 ## Live Turn stream
 
 Application 还定义独立的 `TurnStreamEvent` presentation contract、纯 reducer

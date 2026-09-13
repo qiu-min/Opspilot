@@ -4,6 +4,7 @@ import {
   createModelEventStream,
   finishReasonSchema,
   messageSchema,
+  modelErrorInfoSchema,
   modelSchema,
   optionsSchema,
   validateContext,
@@ -48,6 +49,41 @@ describe('model gateway contracts', () => {
     expect(modelSchema.safeParse({ ...model, extra: true }).success).toBe(false);
     expect(contextSchema.safeParse({ ...context, extra: true }).success).toBe(false);
     expect(optionsSchema.safeParse({ reasoning: 'provider-high' }).success).toBe(false);
+  });
+
+  it('accepts a structured assistant model error without requiring it on success messages', () => {
+    const modelError = {
+      kind: 'rate_limit' as const,
+      code: 'MODEL_RATE_LIMIT',
+      message: 'Model provider rate limit exceeded.',
+      retryable: true,
+      statusCode: 429,
+      providerCode: 'rate_limit_exceeded',
+    };
+
+    expect(modelErrorInfoSchema.safeParse(modelError).success).toBe(true);
+    expect(
+      messageSchema.safeParse({
+        role: 'assistant',
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        content: [],
+        finishReason: 'error',
+        errorMessage: modelError.message,
+        modelError,
+      }).success,
+    ).toBe(true);
+    expect(
+      messageSchema.safeParse({
+        role: 'assistant',
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        content: [{ type: 'text', text: 'success' }],
+        finishReason: 'stop',
+      }).success,
+    ).toBe(true);
   });
 
   it('accepts optional arbitrary Tool Result details', () => {
@@ -106,11 +142,11 @@ describe('model gateway contracts', () => {
                       source: {
                         api: 'openai-completions',
                         provider: 'moonshot',
-                        model: 'kimi-k3'
-                      }
-                    }
-                  ]
-                }
+                        model: 'kimi-k3',
+                      },
+                    },
+                  ],
+                },
               ],
             },
           ],
