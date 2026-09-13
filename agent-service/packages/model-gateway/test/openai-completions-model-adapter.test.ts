@@ -1135,6 +1135,7 @@ describe('OpenAI Chat Completions adapter', () => {
       .stream(model, context, { signal: controller.signal }, provider)
       .result();
     expect(response).toMatchObject({ finishReason: 'aborted' });
+    expect(response).not.toHaveProperty('modelError');
   });
 
   it('preserves partial content when the Provider stream fails midway', async () => {

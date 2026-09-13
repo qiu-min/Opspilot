@@ -83,4 +83,28 @@ describe('TurnEventRecorder model failures', () => {
 
     expect(turnStore.loadEvents('turn-recorder-1')).toMatchObject([{ type: 'turn_started' }]);
   });
+
+  it('maps a legacy model failure to an unknown durable snapshot', () => {
+    const { recorder, turnStore } = startedRecorder();
+
+    recorder.recordAgentSessionEvent({ type: 'step_start', modelCallId: 'model-call-legacy' });
+    recorder.recordAgentSessionEvent({
+      type: 'message_end',
+      message: failedMessage('error'),
+      modelCallId: 'model-call-legacy',
+    });
+
+    expect(turnStore.loadEvents('turn-recorder-1')).toContainEqual(
+      expect.objectContaining({
+        type: 'model_failed',
+        modelCallId: 'model-call-legacy',
+        error: {
+          kind: 'unknown',
+          code: 'MODEL_UNKNOWN',
+          message: 'legacy failure',
+          retryable: false,
+        },
+      }),
+    );
+  });
 });

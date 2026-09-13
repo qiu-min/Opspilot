@@ -149,6 +149,29 @@ describe('projectTurnTrace', () => {
     });
   });
 
+  it('projects success and failure independently for different model calls', () => {
+    const trace = projectTurnTrace([
+      modelStarted(0, 'model-call-A'),
+      modelCompleted(1, 'model-call-A'),
+      modelStarted(2, 'model-call-B'),
+      modelFailed(3, 'model-call-B', {
+        kind: 'rate_limit',
+        code: 'MODEL_RATE_LIMIT',
+        message: 'rate limited',
+        retryable: true,
+      }),
+    ]);
+
+    expect(trace.spans).toMatchObject([
+      { id: 'model:model-call-A', status: 'completed', error: null },
+      {
+        id: 'model:model-call-B',
+        status: 'error',
+        error: { kind: 'rate_limit', code: 'MODEL_RATE_LIMIT', retryable: true },
+      },
+    ]);
+  });
+
   it('keeps usage on a failed model span', () => {
     const trace = projectTurnTrace([
       modelStarted(0, 'model-call-A'),

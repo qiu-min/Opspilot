@@ -94,17 +94,17 @@ export function classifyProviderError(error: unknown): ModelErrorInfo {
 
   if (error instanceof ProviderProtocolError)
     return createModelError('protocol_error', error.message, statusCode, providerCode);
-  if (isContextOverflowErrorMessage(errorMessage))
-    return createModelError(
-      'context_overflow',
-      'Model provider context window exceeded.',
-      statusCode,
-      providerCode,
-    );
   if (error instanceof AuthenticationError || statusCode === 401 || statusCode === 403)
     return createModelError(
       'authentication',
       'Model provider authentication failed.',
+      statusCode,
+      providerCode,
+    );
+  if (isContextOverflowErrorMessage(errorMessage))
+    return createModelError(
+      'context_overflow',
+      'Model provider context window exceeded.',
       statusCode,
       providerCode,
     );
@@ -347,13 +347,12 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
         const toolCalls = [...calls.entries()]
           .sort(([left], [right]) => left - right)
           .filter(([, call]) => call.id !== undefined && call.name !== undefined)
-          .map(
-            ([index, call]) =>
-              completedCalls.get(index) ?? {
-                callId: call.id as string,
-                name: call.name as string,
-                arguments: parseStreamingJson(call.arguments),
-              },
+          .map(([index, call]) =>
+            completedCalls.get(index) ?? {
+              callId: call.id as string,
+              name: call.name as string,
+              arguments: parseStreamingJson(call.arguments),
+            },
           );
         return {
           role: 'assistant',
@@ -453,7 +452,9 @@ export class OpenAiCompletionsModelAdapter implements ModelAdapter {
                     },
                   },
                 }),
-            ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
+            ...(options.temperature === undefined
+              ? {}
+              : { temperature: options.temperature }),
             ...(options.maxTokens === undefined
               ? {}
               : compat.maxTokensField === 'max_completion_tokens'
