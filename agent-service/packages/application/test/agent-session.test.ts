@@ -251,6 +251,51 @@ describe('AgentSession composition and persistence', () => {
     expect(reloaded.getEntries().filter((entry) => entry.type === 'message')).toHaveLength(4);
   });
 
+  it('does not create a Session entry for an intermediate model retry', async () => {
+    const final = assistantMessage('recovered');
+    const retryingStream = createModelEventStream(async (controller) => {
+      controller.emit({
+        type: 'start',
+        model,
+        partial: { ...final, content: [], finishReason: 'pending' },
+      });
+      controller.emit({
+        type: 'retry',
+        failedAttempt: 1,
+        nextAttempt: 2,
+        delayMs: 500,
+        error: {
+          kind: 'timeout',
+          code: 'MODEL_TIMEOUT',
+          message: 'Model provider request timed out.',
+          retryable: true,
+        },
+      });
+      controller.complete(final);
+    });
+    const sessionState = Session.create();
+    const agentSession = createAgentSession({
+      session: sessionState,
+      modelGateway: createGateway([retryingStream]),
+      model,
+    });
+    const events: AgentSessionEvent[] = [];
+    agentSession.subscribe((event) => {
+      events.push(event);
+    });
+
+    await agentSession.prompt(userMessage('retry this'));
+
+    expect(messageEntries(sessionState)).toEqual([userMessage('retry this'), final]);
+    expect(
+      messageEntries(sessionState).filter(
+        (message) => message.role === 'assistant' && message.finishReason === 'error',
+      ),
+    ).toEqual([]);
+    expect(events.filter((event) => event.type === 'model_retry')).toHaveLength(1);
+    agentSession.dispose();
+  });
+
   it('persists tool results once through message_end and rejects calls after dispose', async () => {
     const sessionState = Session.create();
     const call: ModelToolCall = { callId: 'call_1', name: 'lookup', arguments: {} };

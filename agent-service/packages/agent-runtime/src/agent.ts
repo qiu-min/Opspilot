@@ -484,6 +484,7 @@ export class Agent {
         this._state.pendingToolCalls.length = 0;
         break;
       case 'step_start':
+      case 'model_retry':
         break;
       case 'step_end':
         if (

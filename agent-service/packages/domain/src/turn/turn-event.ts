@@ -40,6 +40,16 @@ export interface ModelFailedEvent extends TurnEventBase {
   readonly error: ModelFailureSnapshot;
 }
 
+/** Durable fact that the Gateway scheduled another provider attempt for one Model Call. */
+export interface ModelRetryScheduledEvent extends TurnEventBase {
+  readonly type: 'model_retry_scheduled';
+  readonly modelCallId: string;
+  readonly failedAttempt: number;
+  readonly nextAttempt: number;
+  readonly delayMs: number;
+  readonly error: ModelFailureSnapshot;
+}
+
 export interface InputCommittedEvent extends TurnEventBase {
   readonly type: 'input_committed';
   readonly entryId: string;
@@ -116,6 +126,7 @@ export type TurnEvent =
   | ModelStartedEvent
   | ModelCompletedEvent
   | ModelFailedEvent
+  | ModelRetryScheduledEvent
   | InputCommittedEvent
   | AssistantMessageCompletedEvent
   | ToolRequestedEvent
@@ -165,7 +176,22 @@ export function validateTurnEvent(event: unknown): asserts event is TurnEvent {
       return;
     case 'model_failed':
       assertModelCallId(event.modelCallId);
-      assertModelFailure(event.error);
+      assertModelFailure(event.error, 'model_failed');
+      return;
+    case 'model_retry_scheduled':
+      assertModelCallId(event.modelCallId);
+      if (!isPositiveInteger(event.failedAttempt)) {
+        throw new TurnEventError(
+          'model_retry_scheduled failedAttempt must be a positive integer.',
+        );
+      }
+      if (!isPositiveInteger(event.nextAttempt) || event.nextAttempt !== event.failedAttempt + 1) {
+        throw new TurnEventError(
+          'model_retry_scheduled nextAttempt must equal failedAttempt + 1.',
+        );
+      }
+      assertNonNegativeInteger(event.delayMs, 'model_retry_scheduled delayMs');
+      assertModelFailure(event.error, 'model_retry_scheduled');
       return;
     case 'input_committed':
       assertEntryId(event.entryId, 'input_committed entryId');
@@ -238,34 +264,37 @@ function assertName(value: unknown): asserts value is string {
   if (!isNonEmptyString(value)) throw new TurnEventError('TurnEvent tool name must be non-empty.');
 }
 
-function assertModelFailure(value: unknown): asserts value is ModelFailureSnapshot {
-  if (!isRecord(value)) throw new TurnEventError('model_failed error must be an object.');
+function assertModelFailure(
+  value: unknown,
+  eventType: 'model_failed' | 'model_retry_scheduled',
+): asserts value is ModelFailureSnapshot {
+  if (!isRecord(value)) throw new TurnEventError(`${eventType} error must be an object.`);
   if (!isModelFailureKind(value.kind)) {
-    throw new TurnEventError('model_failed error kind is invalid.');
+    throw new TurnEventError(`${eventType} error kind is invalid.`);
   }
   const expected = MODEL_FAILURE_METADATA[value.kind];
   if (!isNonEmptyString(value.code)) {
-    throw new TurnEventError('model_failed error code must be non-empty.');
+    throw new TurnEventError(`${eventType} error code must be non-empty.`);
   }
   if (value.code !== expected.code) {
-    throw new TurnEventError(`model_failed error code must be ${expected.code}.`);
+    throw new TurnEventError(`${eventType} error code must be ${expected.code}.`);
   }
   if (!isNonEmptyString(value.message)) {
-    throw new TurnEventError('model_failed error message must be non-empty.');
+    throw new TurnEventError(`${eventType} error message must be non-empty.`);
   }
   if (typeof value.retryable !== 'boolean') {
-    throw new TurnEventError('model_failed error retryable must be boolean.');
+    throw new TurnEventError(`${eventType} error retryable must be boolean.`);
   }
   if (value.retryable !== expected.retryable) {
     throw new TurnEventError(
-      `model_failed error retryable must be ${String(expected.retryable)} for ${value.kind}.`,
+      `${eventType} error retryable must be ${String(expected.retryable)} for ${value.kind}.`,
     );
   }
   if (value.statusCode !== undefined && !isHttpStatusCode(value.statusCode)) {
-    throw new TurnEventError('model_failed error statusCode is invalid.');
+    throw new TurnEventError(`${eventType} error statusCode is invalid.`);
   }
   if (value.providerCode !== undefined && !isProviderCode(value.providerCode)) {
-    throw new TurnEventError('model_failed error providerCode is invalid.');
+    throw new TurnEventError(`${eventType} error providerCode is invalid.`);
   }
 }
 

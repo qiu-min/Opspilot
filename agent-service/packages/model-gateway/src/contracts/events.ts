@@ -1,5 +1,6 @@
 import type { AssistantMessage, ModelToolCall } from './context.js';
 import type { Model } from './model.js';
+import type { ModelErrorInfo } from './model-error.js';
 import type { Usage } from './response.js';
 
 export type ModelStreamEvent =
@@ -30,6 +31,13 @@ export type ModelStreamEvent =
       readonly partial: AssistantMessage;
     }
   | { readonly type: 'usage'; readonly usage: Usage; readonly partial: AssistantMessage }
+  | {
+      readonly type: 'retry';
+      readonly failedAttempt: number;
+      readonly nextAttempt: number;
+      readonly delayMs: number;
+      readonly error: ModelErrorInfo;
+    }
   | { readonly type: 'done'; readonly response: AssistantMessage }
   | {
       readonly type: 'error';

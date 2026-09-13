@@ -478,6 +478,16 @@ async function consumeAssistantResponse(
         if (addedPartial) context.messages[context.messages.length - 1] = partialMessage;
         await emit({ type: 'message_update', event, message: partialMessage });
         break;
+      case 'retry':
+        await emit({
+          type: 'model_retry',
+          modelCallId,
+          failedAttempt: event.failedAttempt,
+          nextAttempt: event.nextAttempt,
+          delayMs: event.delayMs,
+          error: event.error,
+        });
+        break;
       case 'done':
         return await finalizeMessage(event.response);
       case 'error':

@@ -7,6 +7,7 @@ export {
   type AssistantThinkingStartedStreamEvent,
   type CompactionCompletedStreamEvent,
   type CompactionStartedStreamEvent,
+  type ModelRetryStreamEvent,
   type ToolCompletedStreamEvent,
   type ToolQueuedStreamEvent,
   type ToolStartedStreamEvent,

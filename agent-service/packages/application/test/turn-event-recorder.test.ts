@@ -43,6 +43,43 @@ function failedMessage(
 }
 
 describe('TurnEventRecorder model failures', () => {
+  it('records a retry snapshot without recording an intermediate terminal model fact', () => {
+    const { recorder, turnStore } = startedRecorder();
+    const error = {
+      kind: 'rate_limit' as const,
+      code: 'MODEL_RATE_LIMIT' as const,
+      message: 'Model provider rate limit exceeded.',
+      retryable: true,
+      statusCode: 429,
+    };
+
+    recorder.recordAgentSessionEvent({ type: 'step_start', modelCallId: 'model-call-A' });
+    recorder.recordAgentSessionEvent({
+      type: 'model_retry',
+      modelCallId: 'model-call-A',
+      failedAttempt: 1,
+      nextAttempt: 2,
+      delayMs: 500,
+      error,
+    });
+
+    const events = turnStore.loadEvents('turn-recorder-1');
+    expect(events).toMatchObject([
+      { type: 'turn_started' },
+      { type: 'model_started', modelCallId: 'model-call-A' },
+      {
+        type: 'model_retry_scheduled',
+        modelCallId: 'model-call-A',
+        failedAttempt: 1,
+        nextAttempt: 2,
+        delayMs: 500,
+        error,
+      },
+    ]);
+    expect(events.some((event) => event.type === 'model_failed')).toBe(false);
+    expect(events.some((event) => event.type === 'assistant_message_completed')).toBe(false);
+  });
+
   it('records model_failed and keeps usage without recording model_completed', () => {
     const { recorder, turnStore } = startedRecorder();
     const message = failedMessage('error', {

@@ -9,7 +9,9 @@ Runtime, or depend on wall-clock time. Missing terminal events remain visible as
 Model spans expose `error: ModelTraceError | null`. A `model_started` followed by `model_failed`
 projects as `status: "error"` with the durable failure snapshot and duration; a started call with
 no terminal fact remains incomplete. This lets `GET /turns/{turnId}/trace` diagnose one model call
-without changing the ordinary live TurnStream protocol. Retry is not implemented here.
+without changing the ordinary live TurnStream protocol. `model_retry_scheduled` facts are retained
+in `ModelTraceSpan.retries`; successful recovery remains one completed span with `error: null`, while
+an exhausted call keeps both its retry history and final `model_failed` error.
 
 The package depends on `@opspilot/domain` for the durable `TurnEvent` contract. Domain, Runtime,
 Model Gateway, and Tool Gateway do not depend on Observability.

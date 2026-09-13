@@ -30,6 +30,21 @@ describe("Turn SSE parser", () => {
     expect(withoutDisplay).not.toHaveProperty("display");
   });
 
+  it("parses a UI-safe model retry event", async () => {
+    const payload = { ...base, type: "model_retry", sequence: 0, modelCallId: "model-1", failedAttempt: 1, nextAttempt: 2, delayMs: 500, kind: "timeout" };
+    const [event] = await parse(`event: model_retry\ndata: ${JSON.stringify(payload)}\n\n`);
+    expect(event).toMatchObject(payload);
+  });
+
+  it.each([
+    ["invalid attempt relation", { failedAttempt: 1, nextAttempt: 3, delayMs: 500, kind: "timeout" }],
+    ["negative delay", { failedAttempt: 1, nextAttempt: 2, delayMs: -1, kind: "timeout" }],
+    ["unknown failure kind", { failedAttempt: 1, nextAttempt: 2, delayMs: 500, kind: "secret_provider_error" }],
+  ])("rejects %s in model retry events", async (_label, fields) => {
+    const payload = { ...base, type: "model_retry", sequence: 0, modelCallId: "model-1", ...fields };
+    await expect(parse(`event: model_retry\ndata: ${JSON.stringify(payload)}\n\n`)).rejects.toBeInstanceOf(TurnStreamProtocolError);
+  });
+
   it.each([
     ["invalid display object", "invalid", "display must be an object"],
     ["missing title", {}, "title must be a string"],

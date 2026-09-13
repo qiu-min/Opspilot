@@ -40,12 +40,22 @@ export interface ModelTraceError {
   readonly providerCode?: string;
 }
 
+/** One scheduled provider retry within a logical model span. */
+export interface ModelRetryTrace {
+  readonly failedAttempt: number;
+  readonly nextAttempt: number;
+  readonly delayMs: number;
+  readonly error: ModelTraceError;
+  readonly timestamp: string;
+}
+
 /** Projection of model_started, model_completed, and usage_recorded events. */
 export interface ModelTraceSpan extends TraceSpanBase {
   readonly kind: 'model';
   readonly modelCallId: string;
   readonly usage: ModelTraceUsage | null;
   readonly error: ModelTraceError | null;
+  readonly retries: readonly ModelRetryTrace[];
 }
 
 /** Projection of the lifecycle of one tool call. */
@@ -96,6 +106,7 @@ interface ModelSpanState {
   hasFailure: boolean;
   usage: ModelTraceUsage | null;
   error: ModelTraceError | null;
+  retries: ModelRetryTrace[];
 }
 
 interface ToolSpanState {
@@ -157,6 +168,9 @@ export function projectTurnTrace(events: readonly TurnEvent[]): TurnTrace {
         break;
       case 'model_failed':
         projectModelFailed(modelSpans, event);
+        break;
+      case 'model_retry_scheduled':
+        projectModelRetry(modelSpans, event);
         break;
       case 'usage_recorded':
         projectUsage(modelSpans, event);
@@ -239,6 +253,7 @@ function getModelState(
     hasFailure: false,
     usage: null,
     error: null,
+    retries: [],
   };
   spans.set(modelCallId, created);
   return created;
@@ -279,6 +294,22 @@ function projectModelFailed(
   state.endedAt = event.timestamp;
   state.hasFailure = true;
   state.error = cloneModelFailure(event.error);
+}
+
+/** Adds one retry decision to its existing logical model span. */
+function projectModelRetry(
+  spans: Map<string, ModelSpanState>,
+  event: Extract<TurnEvent, { type: 'model_retry_scheduled' }>,
+): void {
+  const state = getModelState(spans, event.modelCallId, event.attempt);
+  if (state.retries.some((retry) => retry.failedAttempt === event.failedAttempt)) return;
+  state.retries.push({
+    failedAttempt: event.failedAttempt,
+    nextAttempt: event.nextAttempt,
+    delayMs: event.delayMs,
+    error: cloneModelFailure(event.error),
+    timestamp: event.timestamp,
+  });
 }
 
 /** Projects the first usage fact for a model call, regardless of event adjacency. */
@@ -394,6 +425,10 @@ function toModelTraceSpan(state: ModelSpanState): ModelTraceSpan {
     durationMs: hasTerminalBounds ? calculateDuration(state.startedAt, state.endedAt) : null,
     usage: state.usage,
     error: state.error,
+    retries: state.retries.map((retry) => ({
+      ...retry,
+      error: { ...retry.error },
+    })),
   };
 }
 

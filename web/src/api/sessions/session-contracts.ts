@@ -1,4 +1,4 @@
-import type { ToolDisplayInfo } from "./turn-stream-contracts";
+import type { ModelFailureKind, ToolDisplayInfo } from "./turn-stream-contracts";
 
 export type SessionSummaryResponse = {
   id: string;
@@ -56,6 +56,7 @@ export type TurnStreamProjectionResponse = {
   tools: Array<{ callId: string; name: string; status: "queued" | "running" | "completed" | "failed"; display?: ToolDisplayInfo; startedAt?: string; completedAt?: string }>;
   compaction: { status: "idle" | "running" };
   usage: { inputTokens: number; outputTokens: number; totalTokens: number } | null;
+  retry: { modelCallId: string; failedAttempt: number; nextAttempt: number; delayMs: number; kind: ModelFailureKind } | null;
   lastSequence: number;
 };
 

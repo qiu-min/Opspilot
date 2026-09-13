@@ -12,6 +12,34 @@ import {
 const identity = { turnId: 'turn-1', sessionId: 'session-1' };
 
 describe('TurnStreamProjection reducer', () => {
+  it('retains retry state for reconnect and clears it on model output', () => {
+    let projection = createInitialTurnStreamProjection(identity);
+    projection = reduce(
+      projection,
+      event(
+        {
+          type: 'model_retry',
+          modelCallId: 'model-1',
+          failedAttempt: 1,
+          nextAttempt: 2,
+          delayMs: 500,
+          kind: 'timeout',
+        },
+        0,
+      ),
+    );
+    expect(projection.retry).toEqual({
+      modelCallId: 'model-1',
+      failedAttempt: 1,
+      nextAttempt: 2,
+      delayMs: 500,
+      kind: 'timeout',
+    });
+
+    projection = reduce(projection, event({ type: 'assistant_thinking_started' }, 1));
+    expect(projection.retry).toBeNull();
+  });
+
   it('accumulates consecutive assistant text deltas', () => {
     let projection = createInitialTurnStreamProjection(identity);
     projection = reduce(projection, event({ type: 'assistant_text_delta', delta: 'hello' }, 0));
@@ -122,6 +150,37 @@ describe('TurnStreamProjection reducer', () => {
 });
 
 describe('TurnStreamProjector', () => {
+  it('projects only UI-safe retry metadata', () => {
+    const projector = new TurnStreamProjector(identity);
+    const events = projector.project({
+      type: 'model_retry',
+      modelCallId: 'model-1',
+      failedAttempt: 1,
+      nextAttempt: 2,
+      delayMs: 500,
+      error: {
+        kind: 'rate_limit',
+        code: 'MODEL_RATE_LIMIT',
+        message: 'sensitive provider message',
+        retryable: true,
+        providerCode: 'sensitive_code',
+      },
+    } satisfies AgentSessionEvent);
+
+    expect(events).toEqual([
+      {
+        ...identity,
+        type: 'model_retry',
+        modelCallId: 'model-1',
+        failedAttempt: 1,
+        nextAttempt: 2,
+        delayMs: 500,
+        kind: 'rate_limit',
+      },
+    ]);
+    expect(JSON.stringify(events)).not.toContain('sensitive');
+  });
+
   it('publishes one final usage contribution per completed model call', () => {
     const projector = new TurnStreamProjector(identity);
     const intermediateUsage = { inputTokens: 30, outputTokens: 5, totalTokens: 35 };

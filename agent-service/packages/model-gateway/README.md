@@ -157,6 +157,13 @@ type ModelStreamEvent =
       partial: AssistantMessage;
     }
   | { type: 'usage'; usage: Usage; partial: AssistantMessage }
+  | {
+      type: 'retry';
+      failedAttempt: number;
+      nextAttempt: number;
+      delayMs: number;
+      error: ModelErrorInfo;
+    }
   | { type: 'done'; response: AssistantMessage }
   | {
       type: 'error';
@@ -192,7 +199,7 @@ const message = await stream.result();
 
 Provider 或模型流失败会封装为带有 `finishReason: 'error' | 'aborted'` 的 AssistantMessage，并通过 `error` 事件发出；`result()` 仍然 resolve 该消息。配置、输入校验和未预期的编程错误仍然可以抛出普通 `Error`。
 
-普通 model failure 同时提供 `errorMessage`（人类可读描述）和可选的 `modelError`（结构化、Provider-neutral diagnostic）。`modelError.kind` 与 `code` 是 OpsPilot 的稳定语义，`retryable` 只表示后续 RetryPolicy 是否可以考虑该 transient 类别；当前不会自动 retry。`modelError` 不包含 stack、Provider headers、完整 raw response 或 SDK cause。
+普通 model failure 同时提供 `errorMessage`（人类可读描述）和可选的 `modelError`（结构化、Provider-neutral diagnostic）。`modelError.kind` 与 `code` 是 OpsPilot 的稳定语义，`retryable` 只表示 Gateway 的 RetryPolicy 可以考虑该 transient 类别，并不保证一定重试。默认策略最多重试 2 次，使用 500ms 基础延迟、5000ms 上限和 0.2 jitter；只有尚未输出 text、thinking 或 tool-call delta/completion 的调用才允许透明重试。OpenAI SDK 的内建 retry 被关闭，由 OpsPilot Model Gateway 统一管理策略。`modelError` 不包含 stack、Provider headers、完整 raw response 或 SDK cause。
 
 上层应根据 `finishReason` 与 `modelError` 处理模型调用失败，而不是依赖某个 Provider 的异常类型或 HTTP 响应格式。Abort 仍然只使用 `finishReason: 'aborted'`，不伪造成 retryable model error。
 
@@ -557,7 +564,7 @@ tool_execution_end
 
 `isContextOverflow(assistantMessage, contextWindow?)` 集中识别常见 Provider context-limit 错误文案，优先排除
 rate-limit / throttling 文案，并仅在 `finishReason: 'stop'` 时以 `usage.inputTokens > contextWindow` 作为无显式错误文案的
-fallback。该 helper 只负责模型消息归一化层的判断，Compaction 和 retry 由 Application 层协调。
+fallback。该 helper 只负责模型消息归一化层的判断；Compaction 由 Application 层协调，transient model retry 由 Model Gateway 协调。
 
 ---
 

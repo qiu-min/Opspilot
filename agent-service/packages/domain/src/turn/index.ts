@@ -15,6 +15,7 @@ export {
   type InputCommittedEvent,
   type ModelCompletedEvent,
   type ModelFailedEvent,
+  type ModelRetryScheduledEvent,
   type ModelStartedEvent,
   type ToolCompletedEvent,
   type ToolRequestedEvent,

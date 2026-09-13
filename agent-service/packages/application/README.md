@@ -26,7 +26,9 @@ Application maps model-gateway `ModelErrorInfo` to the domain-owned `ModelFailur
 execution boundary. `TurnEventRecorder` records `model_failed` for a model response with
 `finishReason: 'error'` and a model call id, while aborted responses continue to use
 `turn_cancelled`; `model_failed` is the failure of one model call and does not replace `turn_failed`.
-Automatic retry is not implemented.
+Gateway 安排 transient retry 时，`TurnEventRecorder` 将 `AgentEvent.model_retry` 记录为 durable
+`model_retry_scheduled`，同时 `TurnStreamProjector` 产生 UI-safe ephemeral `model_retry`。Retry
+属于同一逻辑 Model Call 的执行事实，不创建 Session entry；只有最终成功或耗尽后的最终失败消息进入 Session。
 
 ## Live Turn stream
 
@@ -36,7 +38,7 @@ Application 还定义独立的 `TurnStreamEvent` presentation contract、纯 red
 `assistant_thinking_started` / `assistant_thinking_completed`，不会传输隐藏 reasoning 文本。
 
 `TurnStreamProjection` 只保存当前 Turn 的 partial assistant text、thinking 状态、tool
-状态（可带由注入的 `ToolPresentationResolver` 生成的 UI-safe `ToolDisplayInfo`）、compaction 状态、usage 和 `lastSequence`，不替代 Session history，也不暴露
+状态（可带由注入的 `ToolPresentationResolver` 生成的 UI-safe `ToolDisplayInfo`）、compaction 状态、usage、当前 retry 状态和 `lastSequence`，不替代 Session history，也不暴露
 `MutableAgentState`。`TurnStreamEvent.sequence` 由 Hub 从 0 开始独立分配，和 durable
 `TurnEvent.sequence` 无关。Hub 在内存保留有限 replay buffer（默认 256）；丢失范围会以
 `TurnStreamReplayGapError` 明确报告。

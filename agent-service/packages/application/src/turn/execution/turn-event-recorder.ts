@@ -70,6 +70,24 @@ export class TurnEventRecorder {
     });
   }
 
+  /** Records a Gateway-owned retry decision without creating a Session entry. */
+  public recordModelRetryScheduled(
+    modelCallId: string,
+    failedAttempt: number,
+    nextAttempt: number,
+    delayMs: number,
+    error: Extract<AgentSessionEvent, { type: 'model_retry' }>['error'],
+  ): void {
+    this.append({
+      type: 'model_retry_scheduled',
+      modelCallId,
+      failedAttempt,
+      nextAttempt,
+      delayMs,
+      error: toModelFailureSnapshot(error, error.message),
+    });
+  }
+
   /** Records a durable assistant message and advances the assistant checkpoint. */
   public recordAssistantMessageCompleted(message: AgentMessage): void {
     const entry = this.requireCurrentMessageEntry(message, 'assistant');
@@ -167,6 +185,15 @@ export class TurnEventRecorder {
         return;
       case 'message_end':
         this.recordMessageCompleted(event.message, event.modelCallId);
+        return;
+      case 'model_retry':
+        this.recordModelRetryScheduled(
+          event.modelCallId,
+          event.failedAttempt,
+          event.nextAttempt,
+          event.delayMs,
+          event.error,
+        );
         return;
       case 'tool_execution_start':
         this.recordToolStarted(event.toolCall.callId, event.toolCall.name);

@@ -71,6 +71,7 @@ function defaultClient(provider: ResolvedProvider, baseUrl: string): OpenAiCompl
     apiKey: provider.apiKey,
     baseURL: baseUrl,
     timeout: provider.timeoutMs,
+    maxRetries: 0,
     defaultHeaders: provider.headers,
   });
   return {

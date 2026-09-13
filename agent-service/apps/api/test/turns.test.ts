@@ -448,9 +448,10 @@ describe('Turn API', () => {
   it('writes Hub TurnStreamEvents in order and ends after a terminal event', async () => {
     const hub = createScriptedStreamHub([
       streamEvent({ type: 'turn_started' }, 0),
-      streamEvent({ type: 'assistant_text_delta', delta: 'hello' }, 1),
-      streamEvent({ type: 'tool_started', callId: 'call-1', name: 'lookup' }, 2),
-      streamEvent({ type: 'turn_completed', resultLeafId: 'leaf-1' }, 3),
+      streamEvent({ type: 'model_retry', modelCallId: 'model-1', failedAttempt: 1, nextAttempt: 2, delayMs: 500, kind: 'rate_limit' }, 1),
+      streamEvent({ type: 'assistant_text_delta', delta: 'hello' }, 2),
+      streamEvent({ type: 'tool_started', callId: 'call-1', name: 'lookup' }, 3),
+      streamEvent({ type: 'turn_completed', resultLeafId: 'leaf-1' }, 4),
     ]);
     const execute: ExecuteTurn['execute'] = async (_input, options) => {
       options?.onEvent?.({ type: 'turn_ready', turnId: 'turn-1' });
@@ -475,9 +476,10 @@ describe('Turn API', () => {
     expect(response.chunks.join('')).toBe(
       [
         `id: 0\nevent: turn_started\ndata: ${JSON.stringify(hubEvent(0, { type: 'turn_started' }))}\n\n`,
-        `id: 1\nevent: assistant_text_delta\ndata: ${JSON.stringify(hubEvent(1, { type: 'assistant_text_delta', delta: 'hello' }))}\n\n`,
-        `id: 2\nevent: tool_started\ndata: ${JSON.stringify(hubEvent(2, { type: 'tool_started', callId: 'call-1', name: 'lookup' }))}\n\n`,
-        `id: 3\nevent: turn_completed\ndata: ${JSON.stringify(hubEvent(3, { type: 'turn_completed', resultLeafId: 'leaf-1' }))}\n\n`,
+        `id: 1\nevent: model_retry\ndata: ${JSON.stringify(hubEvent(1, { type: 'model_retry', modelCallId: 'model-1', failedAttempt: 1, nextAttempt: 2, delayMs: 500, kind: 'rate_limit' }))}\n\n`,
+        `id: 2\nevent: assistant_text_delta\ndata: ${JSON.stringify(hubEvent(2, { type: 'assistant_text_delta', delta: 'hello' }))}\n\n`,
+        `id: 3\nevent: tool_started\ndata: ${JSON.stringify(hubEvent(3, { type: 'tool_started', callId: 'call-1', name: 'lookup' }))}\n\n`,
+        `id: 4\nevent: turn_completed\ndata: ${JSON.stringify(hubEvent(4, { type: 'turn_completed', resultLeafId: 'leaf-1' }))}\n\n`,
       ].join(''),
     );
     expect(response.writableEnded).toBe(true);

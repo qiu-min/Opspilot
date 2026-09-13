@@ -37,6 +37,17 @@ export class TurnStreamProjector {
         return this.projectMessageUpdate(event);
       case 'message_end':
         return this.projectMessageEnd(event.message);
+      case 'model_retry':
+        return [
+          this.draft({
+            type: 'model_retry',
+            modelCallId: event.modelCallId,
+            failedAttempt: event.failedAttempt,
+            nextAttempt: event.nextAttempt,
+            delayMs: event.delayMs,
+            kind: event.error.kind,
+          }),
+        ];
       case 'tool_execution_start':
         return [
           this.draft({

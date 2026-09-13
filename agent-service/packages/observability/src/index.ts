@@ -2,6 +2,7 @@ export {
   projectTurnTrace,
   type CompactionTraceSpan,
   type ModelTraceSpan,
+  type ModelRetryTrace,
   type ModelTraceError,
   type ModelTraceUsage,
   type ToolTraceSpan,

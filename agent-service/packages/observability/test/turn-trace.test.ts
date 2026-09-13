@@ -129,6 +129,61 @@ describe('projectTurnTrace', () => {
     });
   });
 
+  it('keeps successful retries inside one completed logical model span', () => {
+    const firstError = {
+      kind: 'timeout' as const,
+      code: 'MODEL_TIMEOUT' as const,
+      message: 'Model provider request timed out.',
+      retryable: true,
+    };
+    const secondError = {
+      kind: 'server_error' as const,
+      code: 'MODEL_SERVER_ERROR' as const,
+      message: 'Model provider returned a server error.',
+      retryable: true,
+      statusCode: 503,
+    };
+    const trace = projectTurnTrace([
+      modelStarted(0, 'model-call-A'),
+      modelRetry(1, 'model-call-A', 1, 2, 500, firstError),
+      modelRetry(2, 'model-call-A', 2, 3, 1_000, secondError),
+      modelCompleted(3, 'model-call-A'),
+    ]);
+
+    expect(trace.spans).toHaveLength(1);
+    expect(trace.spans[0]).toMatchObject({
+      id: 'model:model-call-A',
+      status: 'completed',
+      error: null,
+      retries: [
+        { failedAttempt: 1, nextAttempt: 2, delayMs: 500, error: firstError, timestamp: timestamp(1) },
+        { failedAttempt: 2, nextAttempt: 3, delayMs: 1_000, error: secondError, timestamp: timestamp(2) },
+      ],
+    });
+  });
+
+  it('keeps retry history alongside the final exhausted model failure', () => {
+    const error = {
+      kind: 'rate_limit' as const,
+      code: 'MODEL_RATE_LIMIT' as const,
+      message: 'Model provider rate limit exceeded.',
+      retryable: true,
+      statusCode: 429,
+    };
+    const trace = projectTurnTrace([
+      modelStarted(0, 'model-call-A'),
+      modelRetry(1, 'model-call-A', 1, 2, 500, error),
+      modelRetry(2, 'model-call-A', 2, 3, 1_000, error),
+      modelFailed(3, 'model-call-A', error),
+    ]);
+
+    expect(trace.spans[0]).toMatchObject({
+      status: 'error',
+      error,
+      retries: [{ failedAttempt: 1 }, { failedAttempt: 2 }],
+    });
+  });
+
   it('projects a model failure without a start as an error span with null duration', () => {
     const trace = projectTurnTrace([
       turnStarted(0),
@@ -463,6 +518,26 @@ function modelFailed(
     ...baseEvent(sequence, attempt),
     type: 'model_failed',
     modelCallId,
+    error,
+  };
+}
+
+function modelRetry(
+  sequence: number,
+  modelCallId: string,
+  failedAttempt: number,
+  nextAttempt: number,
+  delayMs: number,
+  error: Extract<TurnEvent, { type: 'model_retry_scheduled' }>['error'],
+  attempt = 1,
+): TurnEvent {
+  return {
+    ...baseEvent(sequence, attempt),
+    type: 'model_retry_scheduled',
+    modelCallId,
+    failedAttempt,
+    nextAttempt,
+    delayMs,
     error,
   };
 }

@@ -1,4 +1,5 @@
 import type { ToolDisplayInfo } from '../presentation/tool-presentation.js';
+import type { ModelFailureKind } from '@opspilot/domain';
 
 /** Common fields carried by every ephemeral UI stream event. */
 export interface TurnStreamEventBase {
@@ -78,6 +79,16 @@ export interface UsageStreamEvent extends TurnStreamEventBase {
   readonly totalTokens: number;
 }
 
+/** UI-safe notification that the same logical model call will be attempted again. */
+export interface ModelRetryStreamEvent extends TurnStreamEventBase {
+  readonly type: 'model_retry';
+  readonly modelCallId: string;
+  readonly failedAttempt: number;
+  readonly nextAttempt: number;
+  readonly delayMs: number;
+  readonly kind: ModelFailureKind;
+}
+
 export interface TurnCompletedStreamEvent extends TurnStreamEventBase {
   readonly type: 'turn_completed';
   readonly resultLeafId: string | null;
@@ -106,6 +117,7 @@ export type TurnStreamEvent =
   | CompactionStartedStreamEvent
   | CompactionCompletedStreamEvent
   | UsageStreamEvent
+  | ModelRetryStreamEvent
   | TurnCompletedStreamEvent
   | TurnFailedStreamEvent
   | TurnCancelledStreamEvent;

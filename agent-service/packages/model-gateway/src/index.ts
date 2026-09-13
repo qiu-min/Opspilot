@@ -2,6 +2,7 @@ export * from './contracts/index.js';
 export * from './provider-config.js';
 export * from './model-gateway.js';
 export * from './model-gateway-registry.js';
+export * from './model-retry.js';
 export {
   clampThinkingLevel,
   getSupportedThinkingLevels,

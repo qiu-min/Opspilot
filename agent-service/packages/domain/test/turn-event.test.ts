@@ -125,7 +125,31 @@ describe('TurnEvent validation', () => {
     }
   });
 
-  it.each(['model_started', 'model_completed', 'usage_recorded'] as const)(
+  it('validates model_retry_scheduled attempts, delay, and failure snapshot semantics', () => {
+    const valid = {
+      ...baseEvent,
+      type: 'model_retry_scheduled' as const,
+      failedAttempt: 1,
+      nextAttempt: 2,
+      delayMs: 500,
+      error: {
+        kind: 'timeout' as const,
+        code: 'MODEL_TIMEOUT',
+        message: 'Model provider request timed out.',
+        retryable: true,
+      },
+    };
+
+    expect(() => validateTurnEvent(valid)).not.toThrow();
+    expect(() => validateTurnEvent({ ...valid, failedAttempt: 0 })).toThrow(TurnEventError);
+    expect(() => validateTurnEvent({ ...valid, nextAttempt: 3 })).toThrow(TurnEventError);
+    expect(() => validateTurnEvent({ ...valid, delayMs: -1 })).toThrow(TurnEventError);
+    expect(() =>
+      validateTurnEvent({ ...valid, error: { ...valid.error, retryable: false } }),
+    ).toThrow(TurnEventError);
+  });
+
+  it.each(['model_started', 'model_completed', 'model_retry_scheduled', 'usage_recorded'] as const)(
     'requires a non-empty modelCallId for %s',
     (type) => {
       const event =
@@ -137,6 +161,20 @@ describe('TurnEvent validation', () => {
               outputTokens: 2,
               totalTokens: 3,
             }
+          : type === 'model_retry_scheduled'
+            ? {
+                ...baseEvent,
+                type,
+                failedAttempt: 1,
+                nextAttempt: 2,
+                delayMs: 500,
+                error: {
+                  kind: 'timeout' as const,
+                  code: 'MODEL_TIMEOUT',
+                  message: 'timed out',
+                  retryable: true,
+                },
+              }
           : { ...baseEvent, type };
 
       expect(() => validateTurnEvent({ ...event, modelCallId: undefined })).toThrow(TurnEventError);

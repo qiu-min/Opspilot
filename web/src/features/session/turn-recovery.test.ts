@@ -7,7 +7,7 @@ import { classifyTurnStreamError, isSessionTurnProcessing, planActiveTurnRecover
 const projection = (lastSequence: number, startedAt?: string) => ({
   turnId: "t1", sessionId: "s1", status: "running" as const,
   assistant: { text: "latest", messageVisible: true, isThinking: false }, tools: [],
-  compaction: { status: "idle" as const }, usage: null, lastSequence,
+  compaction: { status: "idle" as const }, usage: null, retry: null, lastSequence,
   ...(startedAt === undefined ? {} : { startedAt }),
 });
 const active = (lastSequence: number): ActiveTurnResponse => ({ activeTurn: { turnId: "t1", sessionId: "s1", status: "running", projection: projection(lastSequence) } });

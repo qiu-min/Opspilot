@@ -315,6 +315,79 @@ describe('ExecuteTurn', () => {
     });
   });
 
+  it('persists and publishes a retry without committing an intermediate Session message', async () => {
+    const { store, turnStore } = createStore();
+    const final = assistantMessage('recovered');
+    const retryingStream = createModelEventStream(async (controller) => {
+      controller.emit({
+        type: 'start',
+        model,
+        partial: { ...final, content: [], finishReason: 'pending' },
+      });
+      controller.emit({
+        type: 'retry',
+        failedAttempt: 1,
+        nextAttempt: 2,
+        delayMs: 500,
+        error: {
+          kind: 'rate_limit',
+          code: 'MODEL_RATE_LIMIT',
+          message: 'Model provider rate limit exceeded.',
+          retryable: true,
+          statusCode: 429,
+        },
+      });
+      controller.complete(final);
+    });
+    const publish = vi.fn();
+    const streamHub = {
+      openTurn: vi.fn(),
+      publish,
+      publishDraft: publish,
+      getActiveTurn: vi.fn(),
+      getProjection: vi.fn(),
+      subscribe: vi.fn(),
+      closeTurn: vi.fn(),
+    } as unknown as TurnStreamHub;
+    const runner = new TestExecuteTurn({
+      sessionStore: store,
+      turnStore,
+      modelGateway: createGateway([retryingStream]),
+      toolDefinitions: [],
+      defaultModel: model,
+      turnStreamHub: streamHub,
+    });
+    const input = userMessage('recover');
+
+    const result = await runner.execute({ message: input });
+
+    const durableEvents = turnStore.loadEvents(result.turnId);
+    const modelStarted = durableEvents.find((event) => event.type === 'model_started');
+    const retry = durableEvents.find((event) => event.type === 'model_retry_scheduled');
+    expect(durableEvents.map((event) => event.type)).toEqual([
+      'turn_started',
+      'input_committed',
+      'model_started',
+      'model_retry_scheduled',
+      'model_completed',
+      'assistant_message_completed',
+      'turn_completed',
+    ]);
+    expect(retry?.modelCallId).toBe(modelStarted?.modelCallId);
+    expect(durableEvents.some((event) => event.type === 'model_failed')).toBe(false);
+    expect(messageEntries(store.load(result.sessionId))).toEqual([input, final]);
+    expect(publish.mock.calls.map((call) => call[0])).toContainEqual(
+      expect.objectContaining({
+        type: 'model_retry',
+        modelCallId: modelStarted?.modelCallId,
+        failedAttempt: 1,
+        nextAttempt: 2,
+        delayMs: 500,
+        kind: 'rate_limit',
+      }),
+    );
+  });
+
   it('associates one model call with its completion and usage events', async () => {
     const { store, turnStore } = createStore();
     const response: AssistantMessage = {

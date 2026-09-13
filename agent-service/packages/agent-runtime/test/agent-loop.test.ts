@@ -699,6 +699,46 @@ describe('runAgentLoop tool loop', () => {
     expect(events).not.toContainEqual(expect.objectContaining({ type: 'tool_execution_end' }));
   });
 
+  it('maps a Gateway retry without emitting an intermediate assistant message end', async () => {
+    const final = { ...createAssistantMessage('stop'), content: [{ type: 'text' as const, text: 'ok' }] };
+    const retryError = {
+      kind: 'timeout' as const,
+      code: 'MODEL_TIMEOUT' as const,
+      message: 'Model provider request timed out.',
+      retryable: true,
+    };
+    const stream = createModelEventStream(async (controller) => {
+      controller.emit({ type: 'start', model, partial: createAssistantMessage('pending') });
+      controller.emit({
+        type: 'retry',
+        failedAttempt: 1,
+        nextAttempt: 2,
+        delayMs: 500,
+        error: retryError,
+      });
+      controller.complete(final);
+    });
+    const events: AgentEvent[] = [];
+
+    await runAgentLoop([createPrompt()], createContext(), config, () => stream, (event) => {
+      events.push(event);
+    });
+
+    const stepStart = events.find((event) => event.type === 'step_start');
+    const retry = events.find((event) => event.type === 'model_retry');
+    expect(retry).toMatchObject({
+      type: 'model_retry',
+      modelCallId: stepStart?.type === 'step_start' ? stepStart.modelCallId : undefined,
+      failedAttempt: 1,
+      nextAttempt: 2,
+      delayMs: 500,
+      error: retryError,
+    });
+    expect(
+      events.filter((event) => event.type === 'message_end' && event.message.role === 'assistant'),
+    ).toHaveLength(1);
+  });
+
   it('completes an error without start and skips later hooks and queues', async () => {
     const failure: AssistantMessage = {
       ...createAssistantMessage('aborted'),

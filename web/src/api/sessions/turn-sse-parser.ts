@@ -1,4 +1,4 @@
-import { TurnStreamProtocolError, type ToolDisplayInfo, type TurnStreamEvent } from "./turn-stream-contracts";
+import { TurnStreamProtocolError, type ModelFailureKind, type ToolDisplayInfo, type TurnStreamEvent } from "./turn-stream-contracts";
 
 type SseMessage = { eventName: string; data: string; id?: string };
 
@@ -95,6 +95,12 @@ function parseTurnSseMessage(message: SseMessage): TurnStreamEvent {
       return { type, turnId, sessionId, sequence, timestamp, ...(payload.reason === undefined ? {} : { reason: requireString(payload, "reason", type) }), ...(payload.aborted === undefined ? {} : { aborted: requireBoolean(payload, "aborted", type) }), ...(payload.failed === undefined ? {} : { failed: requireBoolean(payload, "failed", type) }), ...(payload.willRetry === undefined ? {} : { willRetry: requireBoolean(payload, "willRetry", type) }) };
     case "usage":
       return { type, turnId, sessionId, sequence, timestamp, inputTokens: requireNumber(payload, "inputTokens", type), outputTokens: requireNumber(payload, "outputTokens", type), totalTokens: requireNumber(payload, "totalTokens", type) };
+    case "model_retry": {
+      const failedAttempt = requirePositiveInteger(payload, "failedAttempt", type);
+      const nextAttempt = requirePositiveInteger(payload, "nextAttempt", type);
+      if (nextAttempt !== failedAttempt + 1) throw protocolError(type, "nextAttempt must equal failedAttempt + 1");
+      return { type, turnId, sessionId, sequence, timestamp, modelCallId: requireNonEmptyString(payload, "modelCallId", type), failedAttempt, nextAttempt, delayMs: requireNumber(payload, "delayMs", type), kind: requireModelFailureKind(payload, "kind", type) };
+    }
     case "turn_completed":
       return { type, turnId, sessionId, sequence, timestamp, resultLeafId: requireNullableString(payload, "resultLeafId", type) };
     case "turn_failed":
@@ -143,6 +149,16 @@ function requireNumber(payload: Record<string, unknown>, field: string, eventNam
   const value = payload[field];
   if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value < 0) throw protocolError(eventName, `${field} must be a non-negative integer`);
   return value;
+}
+function requirePositiveInteger(payload: Record<string, unknown>, field: string, eventName: string): number {
+  const value = requireNumber(payload, field, eventName);
+  if (value < 1) throw protocolError(eventName, `${field} must be a positive integer`);
+  return value;
+}
+function requireModelFailureKind(payload: Record<string, unknown>, field: string, eventName: string): ModelFailureKind {
+  const value = requireNonEmptyString(payload, field, eventName);
+  if (value === "authentication" || value === "invalid_request" || value === "rate_limit" || value === "timeout" || value === "network" || value === "server_error" || value === "protocol_error" || value === "context_overflow" || value === "unknown") return value;
+  throw protocolError(eventName, `${field} must be a known model failure kind`);
 }
 function optionalToolDisplay(payload: Record<string, unknown>, eventName: string): ToolDisplayInfo | undefined {
   if (payload.display === undefined) return undefined;

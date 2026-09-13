@@ -33,6 +33,13 @@ export interface TurnStreamProjection {
     readonly outputTokens: number;
     readonly totalTokens: number;
   } | null;
+  readonly retry: {
+    readonly modelCallId: string;
+    readonly failedAttempt: number;
+    readonly nextAttempt: number;
+    readonly delayMs: number;
+    readonly kind: Extract<TurnStreamEvent, { type: 'model_retry' }>['kind'];
+  } | null;
   readonly lastSequence: number;
 }
 
@@ -69,6 +76,7 @@ export function createInitialTurnStreamProjection(
     tools: [],
     compaction: { status: 'idle' },
     usage: null,
+    retry: null,
     lastSequence: -1,
   };
 }
@@ -92,6 +100,7 @@ export function applyTurnStreamEvent(
     case 'assistant_thinking_started':
       return {
         ...next,
+        retry: null,
         assistant: { ...next.assistant, isThinking: true },
       };
     case 'assistant_thinking_completed':
@@ -102,6 +111,7 @@ export function applyTurnStreamEvent(
     case 'assistant_message_started':
       return {
         ...next,
+        retry: null,
         assistant: {
           text: '',
           messageVisible: true,
@@ -111,6 +121,7 @@ export function applyTurnStreamEvent(
     case 'assistant_text_delta':
       return {
         ...next,
+        retry: null,
         assistant: {
           ...next.assistant,
           text: next.assistant.text + event.delta,
@@ -121,6 +132,7 @@ export function applyTurnStreamEvent(
     case 'assistant_message_completed':
       return {
         ...next,
+        retry: null,
         assistant: {
           text: '',
           messageVisible: false,
@@ -130,6 +142,7 @@ export function applyTurnStreamEvent(
     case 'tool_queued':
       return {
         ...next,
+        retry: null,
         tools: upsertTool(next.tools, {
           callId: event.callId,
           name: event.name,
@@ -168,12 +181,38 @@ export function applyTurnStreamEvent(
         ...next,
         usage: aggregateUsage(next.usage, event),
       };
+    case 'model_retry':
+      return {
+        ...next,
+        retry: {
+          modelCallId: event.modelCallId,
+          failedAttempt: event.failedAttempt,
+          nextAttempt: event.nextAttempt,
+          delayMs: event.delayMs,
+          kind: event.kind,
+        },
+      };
     case 'turn_completed':
-      return { ...next, status: 'completed', assistant: { ...next.assistant, isThinking: false } };
+      return {
+        ...next,
+        status: 'completed',
+        retry: null,
+        assistant: { ...next.assistant, isThinking: false },
+      };
     case 'turn_failed':
-      return { ...next, status: 'failed', assistant: { ...next.assistant, isThinking: false } };
+      return {
+        ...next,
+        status: 'failed',
+        retry: null,
+        assistant: { ...next.assistant, isThinking: false },
+      };
     case 'turn_cancelled':
-      return { ...next, status: 'cancelled', assistant: { ...next.assistant, isThinking: false } };
+      return {
+        ...next,
+        status: 'cancelled',
+        retry: null,
+        assistant: { ...next.assistant, isThinking: false },
+      };
   }
 }
 

@@ -4,6 +4,7 @@ import type {
   JsonObject,
   Message,
   Model,
+  ModelErrorInfo,
   ModelEventStream,
   ModelStreamEvent,
   ModelToolCall,
@@ -218,6 +219,14 @@ export type AgentEvent =
       readonly type: 'message_update';
       readonly event: MessageUpdateModelEvent;
       readonly message: AssistantMessage;
+    }
+  | {
+      readonly type: 'model_retry';
+      readonly modelCallId: string;
+      readonly failedAttempt: number;
+      readonly nextAttempt: number;
+      readonly delayMs: number;
+      readonly error: ModelErrorInfo;
     }
   | {
       readonly type: 'message_end';

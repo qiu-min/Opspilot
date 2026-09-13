@@ -18,13 +18,21 @@ import {
 import { OpenAiCompletionsModelAdapter } from './adapters/openai-completions-model-adapter.js';
 import type { ModelAdapter } from './adapters/model-adapter.js';
 import type { ModelGateway } from './model-gateway.js';
+import {
+  createRetryingModelEventStream,
+  type ModelRetryOptions,
+} from './model-retry.js';
 import { resolveThinking } from './thinking.js';
 
 class Registry implements ModelGateway {
   private readonly providers: Map<string, ResolvedProvider>;
   private readonly adapters: Map<string, ModelAdapter>;
 
-  constructor(config: ModelGatewayConfig, adapters: readonly ModelAdapter[]) {
+  constructor(
+    config: ModelGatewayConfig,
+    adapters: readonly ModelAdapter[],
+    private readonly retryOptions: ModelRetryOptions,
+  ) {
     this.providers = new Map(resolveProviders(config).map((provider) => [provider.id, provider]));
     this.adapters = new Map(adapters.map((adapter) => [adapter.api, adapter]));
     for (const provider of this.providers.values())
@@ -62,7 +70,21 @@ class Registry implements ModelGateway {
     const adapter = this.adapters.get(model.api);
     if (!adapter)
       throw new Error(`No model adapter is registered for API "${model.api}".`);
-    return adapter.stream(model, context, resolveThinking(model, options), provider);
+    const resolvedOptions = resolveThinking(model, options);
+    const firstAttempt = adapter.stream(model, context, resolvedOptions, provider);
+    let pendingFirstAttempt: ModelEventStream | undefined = firstAttempt;
+    return createRetryingModelEventStream(
+      () => {
+        const attempt = pendingFirstAttempt;
+        if (attempt !== undefined) {
+          pendingFirstAttempt = undefined;
+          return attempt;
+        }
+        return adapter.stream(model, context, resolvedOptions, provider);
+      },
+      resolvedOptions.signal,
+      this.retryOptions,
+    );
   }
   
   complete(model: Model, context: Context, options?: Options): Promise<AssistantMessage> {
@@ -72,6 +94,7 @@ class Registry implements ModelGateway {
 export function createModelGateway(
   config: ModelGatewayConfig,
   adapters: readonly ModelAdapter[] = [new OpenAiCompletionsModelAdapter()],
+  retryOptions: ModelRetryOptions = {},
 ): ModelGateway {
-  return new Registry(config, adapters);
+  return new Registry(config, adapters, retryOptions);
 }

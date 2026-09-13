@@ -1,5 +1,6 @@
 export type TurnStreamEventBase = { type: string; turnId: string; sessionId: string; sequence: number; timestamp: string };
 export type ToolDisplayInfo = { title: string; subject?: string; detail?: string };
+export type ModelFailureKind = "authentication" | "invalid_request" | "rate_limit" | "timeout" | "network" | "server_error" | "protocol_error" | "context_overflow" | "unknown";
 export type TurnStreamEvent =
   | (TurnStreamEventBase & { type: "turn_started" })
   | (TurnStreamEventBase & { type: "assistant_thinking_started" })
@@ -13,6 +14,7 @@ export type TurnStreamEvent =
   | (TurnStreamEventBase & { type: "compaction_started"; reason?: string })
   | (TurnStreamEventBase & { type: "compaction_completed"; reason?: string; aborted?: boolean; failed?: boolean; willRetry?: boolean })
   | (TurnStreamEventBase & { type: "usage"; inputTokens: number; outputTokens: number; totalTokens: number })
+  | (TurnStreamEventBase & { type: "model_retry"; modelCallId: string; failedAttempt: number; nextAttempt: number; delayMs: number; kind: ModelFailureKind })
   | (TurnStreamEventBase & { type: "turn_completed"; resultLeafId: string | null })
   | (TurnStreamEventBase & { type: "turn_failed"; message: string })
   | (TurnStreamEventBase & { type: "turn_cancelled" });
