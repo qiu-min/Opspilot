@@ -1,14 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import type { AgentMessage, AgentThinkingLevel } from '@opspilot/agent-runtime';
 
 import {
   CompactionEntry,
   ModelChangeEntry,
   SessionEntry,
   SessionHeader,
+  SessionMessage,
   SessionMessageEntry,
+  SessionThinkingLevel,
   ThinkingLevelChangeEntry,
-  isAgentThinkingLevel,
+  isSessionThinkingLevel,
 } from './session-entry.js';
 import {
   SessionEntryNotFoundError,
@@ -197,7 +198,7 @@ export class Session {
     this.leafId = entryId;
   }
 
-  public appendMessage(message: AgentMessage): SessionMessageEntry {
+  public appendMessage(message: SessionMessage): SessionMessageEntry {
     return this.appendEntry((id, parentId, timestamp) => ({
       type: 'message',
       id,
@@ -222,8 +223,8 @@ export class Session {
     }));
   }
 
-  public appendThinkingLevelChange(thinkingLevel: AgentThinkingLevel): ThinkingLevelChangeEntry {
-    if (!isAgentThinkingLevel(thinkingLevel)) {
+  public appendThinkingLevelChange(thinkingLevel: SessionThinkingLevel): ThinkingLevelChangeEntry {
+    if (!isSessionThinkingLevel(thinkingLevel)) {
       throw new SessionTreeError(`Unsupported thinking level: ${String(thinkingLevel)}.`);
     }
 
@@ -483,7 +484,7 @@ function validateEntry(entry: SessionEntry): void {
       }
       break;
     case 'thinking_level_change':
-      if (!isAgentThinkingLevel(entry.thinkingLevel)) {
+      if (!isSessionThinkingLevel(entry.thinkingLevel)) {
         throw new SessionTreeError(`Thinking level entry ${entry.id} is invalid.`);
       }
       break;

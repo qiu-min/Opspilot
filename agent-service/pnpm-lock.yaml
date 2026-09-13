@@ -369,10 +369,6 @@ importers:
         version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
 
   packages/domain:
-    dependencies:
-      '@opspilot/agent-runtime':
-        specifier: workspace:*
-        version: link:../agent-runtime
     devDependencies:
       '@types/node':
         specifier: ^26.2.0
@@ -393,9 +389,6 @@ importers:
         specifier: workspace:*
         version: link:../domain
     devDependencies:
-      '@opspilot/agent-runtime':
-        specifier: workspace:*
-        version: link:../agent-runtime
       '@types/node':
         specifier: ^26.2.0
         version: 26.2.0

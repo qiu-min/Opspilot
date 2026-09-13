@@ -14,9 +14,6 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },
-  "dependencies": {
-    "@opspilot/agent-runtime": "workspace:*"
-  },
   "devDependencies": {
     "@types/node": "^26.2.0",
     "typescript": "^5.7.0",

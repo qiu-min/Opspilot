@@ -1,5 +1,4 @@
-import type { AgentMessage } from '@opspilot/agent-runtime';
-import type { SessionEntry } from '@opspilot/domain';
+import type { SessionAssistantMessage, SessionEntry, SessionUserMessage } from '@opspilot/domain';
 
 /** A UI-safe message item projected from one persisted session message entry. */
 export interface SessionHistoryMessageItem {
@@ -72,9 +71,7 @@ export function buildSessionHistoryProjection(
 }
 
 /** Extracts only public text content and deliberately excludes thinking content. */
-export function extractVisibleText(
-  message: Extract<AgentMessage, { readonly role: 'user' | 'assistant' }>,
-): string {
+export function extractVisibleText(message: SessionUserMessage | SessionAssistantMessage): string {
   return message.content
     .flatMap((content) => (content.type === 'text' ? [content.text] : []))
     .join('');

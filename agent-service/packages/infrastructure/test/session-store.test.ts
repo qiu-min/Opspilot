@@ -10,9 +10,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AgentMessage } from '@opspilot/agent-runtime';
 import { buildSessionContext } from '@opspilot/application';
-import type { SessionEntry } from '@opspilot/domain';
+import type { SessionEntry, SessionMessage } from '@opspilot/domain';
 import { Session } from '@opspilot/domain';
 
 import {
@@ -37,7 +36,7 @@ function createStore(): { directory: string; store: FileSystemSessionStore } {
   return { directory, store: new FileSystemSessionStore(directory) };
 }
 
-function userMessage(text: string): AgentMessage {
+function userMessage(text: string): SessionMessage {
   return { role: 'user', content: [{ type: 'text', text }] };
 }
 

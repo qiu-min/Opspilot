@@ -4,6 +4,7 @@ import { Turn } from '@opspilot/domain';
 
 import { createAgentSession } from '../../session/runtime/create-agent-session.js';
 import { prepareSessionExecutionConfig } from '../../session/runtime/prepare-session-execution-config.js';
+import { requireSessionMessage } from '../../session/runtime/session-message-mapper.js';
 import type { AgentSession } from '../../session/runtime/agent-session.js';
 import type { CompactionService, CompactionSettings, ContextManager } from '../../context/index.js';
 import type { Session } from '@opspilot/domain';
@@ -154,7 +155,7 @@ export class ExecuteTurn {
         thinkingLevel: input.thinkingLevel,
         created,
       });
-      const inputEntry = session.appendMessage(input.message);
+      const inputEntry = session.appendMessage(requireSessionMessage(input.message));
       this.sessionStore.appendEntry(sessionId, inputEntry);
       recorder.recordInputCommitted(inputEntry.id, inputEntry.id);
 
@@ -255,7 +256,7 @@ export class ExecuteTurn {
     const published = turnStreamHub.publish({ turnId, sessionId, ...event });
     console.info(
       `[turn-stream][hub-publish] turnId=${published?.turnId ?? turnId} sessionId=${published?.sessionId ?? sessionId} type=${published?.type ?? event.type} seq=${published?.sequence ?? 'unknown'}`,
-  );
+    );
     // The concrete in-memory Hub closes terminal channels during publish; keeping this
     // explicit makes terminal ownership part of the Application orchestration contract.
     turnStreamHub.closeTurn(turnId);

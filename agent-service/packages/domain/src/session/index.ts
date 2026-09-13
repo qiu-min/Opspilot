@@ -7,12 +7,23 @@ export {
 export { normalizeSessionTitle, type SessionMetadata } from './session-metadata.js';
 export type { SessionRestoreInput } from './session.js';
 export {
-  isAgentThinkingLevel,
+  isSessionThinkingLevel,
   type CompactionEntry,
   type ModelChangeEntry,
   type SessionEntry,
   type SessionEntryBase,
   type SessionHeader,
+  type SessionAssistantMessage,
+  type SessionFinishReason,
+  type SessionMessage,
   type SessionMessageEntry,
+  type SessionReasoningDecision,
+  type SessionTextContent,
+  type SessionThinkingContent,
+  type SessionThinkingLevel,
+  type SessionToolCall,
+  type SessionToolResultMessage,
+  type SessionUsage,
+  type SessionUserMessage,
   type ThinkingLevelChangeEntry,
 } from './session-entry.js';

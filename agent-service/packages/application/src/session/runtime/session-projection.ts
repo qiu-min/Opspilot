@@ -2,6 +2,7 @@ import type { AgentMessage } from '@opspilot/agent-runtime';
 import type { SessionEntry } from '@opspilot/domain';
 
 import { createCompactionSummaryMessage } from '../../context/compaction-summary-message.js';
+import { toAgentMessage } from './session-message-mapper.js';
 
 /** A message projected from a session entry, retaining its source entry index. */
 export interface SessionProjectedMessage {
@@ -21,7 +22,7 @@ export function buildSessionMessageProjection(entries: readonly SessionEntry[]):
   if (latestCompactionIndex === null) {
     return {
       messages: entries.flatMap((entry, entryIndex) =>
-        entry.type === 'message' ? [{ message: entry.message, entryIndex }] : [],
+        entry.type === 'message' ? [{ message: toAgentMessage(entry.message), entryIndex }] : [],
       ),
       latestCompactionIndex: null,
     };
@@ -49,7 +50,9 @@ export function buildSessionMessageProjection(entries: readonly SessionEntry[]):
   ];
   for (let entryIndex = firstKeptIndex; entryIndex < entries.length; entryIndex += 1) {
     const entry = entries[entryIndex];
-    if (entry.type === 'message') messages.push({ message: entry.message, entryIndex });
+    if (entry.type === 'message') {
+      messages.push({ message: toAgentMessage(entry.message), entryIndex });
+    }
   }
 
   return { messages, latestCompactionIndex };

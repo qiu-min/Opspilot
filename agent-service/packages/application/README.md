@@ -87,7 +87,7 @@ live presentation 相同的 `ToolPresentationResolver` 重新解析，失败时�
 
 ## Context 边界
 
-Domain `Session` 保存完整会话事实与树 invariant；Application 的 `buildSessionContext(session)` 将 durable state 投影成 Agent Runtime 输入。`ContextManager` 只决定本次模型调用使用哪些 `AgentMessage`，不依赖或修改 Domain Session。`createAgentSession` 将 ContextManager 接入 Agent Runtime 的 `transformContext` hook，因此经过 ContextManager 的消息只影响当前模型调用，不影响后续 Session 持久化。
+Domain `Session` 保存完整会话事实与树 invariant；Application 的 Session runtime adapter 负责在 Domain 的 `SessionMessage` / `SessionThinkingLevel` 与 Agent Runtime 类型之间转换，`buildSessionContext(session)` 将 durable state 投影成 Agent Runtime 输入。`ContextManager` 只决定本次模型调用使用哪些 `AgentMessage`，不依赖或修改 Domain Session。`createAgentSession` 将 ContextManager 接入 Agent Runtime 的 `transformContext` hook，因此经过 ContextManager 的消息只影响当前模型调用，不影响后续 Session 持久化。
 
 Web 历史恢复使用独立的 `buildSessionHistoryProjection()`：它读取
 `Session.getBranch()` 的完整 active branch，保留原始 entry 顺序和 id，并输出 UI-safe 的 user / assistant 可见 text 以及 tool execution 的 callId、name、status。它不复用会受 Compaction 影响的 `buildSessionContext()`，也不会把 AgentMessage 的 thinking、provider、model metadata 或 tool raw output 暴露到 UI。

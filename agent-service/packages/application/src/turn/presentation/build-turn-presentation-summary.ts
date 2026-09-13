@@ -1,10 +1,8 @@
 import type { ModelToolCall } from '@opspilot/model-gateway';
 import type { Session, SessionEntry, Turn, TurnEvent } from '@opspilot/domain';
 
-import {
-  resolveToolPresentation,
-  type ToolPresentationResolver,
-} from './tool-presentation.js';
+import { toAgentMessage } from '../../session/runtime/session-message-mapper.js';
+import { resolveToolPresentation, type ToolPresentationResolver } from './tool-presentation.js';
 import {
   type TurnPresentationSummary,
   type TurnPresentationUsage,
@@ -52,7 +50,9 @@ function collectAssistantToolCalls(
     if (event.type !== 'assistant_message_completed') continue;
     const entry = session.getEntry(event.entryId);
     if (!isAssistantMessageEntry(entry)) continue;
-    for (const toolCall of entry.message.toolCalls ?? []) {
+    const message = toAgentMessage(entry.message);
+    if (message.role !== 'assistant') continue;
+    for (const toolCall of message.toolCalls ?? []) {
       if (!toolCalls.has(toolCall.callId)) toolCalls.set(toolCall.callId, toolCall);
     }
   }
@@ -148,7 +148,9 @@ function isAssistantMessageEntry(entry: SessionEntry | undefined): entry is Extr
   SessionEntry,
   { type: 'message' }
 > & {
-  readonly message: Extract<SessionEntry, { type: 'message' }>['message'] & { role: 'assistant' };
+  readonly message: Extract<SessionEntry, { type: 'message' }>['message'] & {
+    readonly role: 'assistant';
+  };
 } {
   return entry?.type === 'message' && entry.message.role === 'assistant';
 }

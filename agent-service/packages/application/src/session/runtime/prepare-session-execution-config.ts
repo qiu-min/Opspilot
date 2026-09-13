@@ -3,6 +3,7 @@ import type { AgentThinkingLevel } from '@opspilot/agent-runtime';
 import type { Session } from '@opspilot/domain';
 
 import { buildSessionContext } from './session-context.js';
+import { toSessionThinkingLevel } from './session-message-mapper.js';
 import type { SessionStore } from '../ports/session-store.js';
 
 /** Inputs used to resolve and durably prepare one Turn's runtime configuration. */
@@ -104,7 +105,9 @@ function persistExecutionConfig(
   }
 
   if (options.created || restoredModel === null || thinkingLevel !== restoredThinkingLevel) {
-    appendAndPersist(options, () => options.session.appendThinkingLevelChange(thinkingLevel));
+    appendAndPersist(options, () =>
+      options.session.appendThinkingLevelChange(toSessionThinkingLevel(thinkingLevel)),
+    );
   }
 }
 

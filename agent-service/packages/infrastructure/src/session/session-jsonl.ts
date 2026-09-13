@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { isAgentThinkingLevel, type SessionEntry, type SessionHeader } from '@opspilot/domain';
+import { isSessionThinkingLevel, type SessionEntry, type SessionHeader } from '@opspilot/domain';
 
 /** Persistence representation written as one JSON object per line. */
 export type SessionFileEntry = SessionHeader | SessionEntry;
@@ -147,7 +147,7 @@ function parseEntry(value: unknown, lineNumber: number): SessionEntry {
       }
       return value as unknown as SessionEntry;
     case 'thinking_level_change':
-      if (!isAgentThinkingLevel(value.thinkingLevel)) {
+      if (!isSessionThinkingLevel(value.thinkingLevel)) {
         throw new SessionJsonlError(
           `Thinking level entry ${value.id} has an invalid thinkingLevel (line ${lineNumber}).`,
         );

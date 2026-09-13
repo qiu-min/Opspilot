@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentMessage } from '@opspilot/agent-runtime';
 
 import {
   Session,
   SessionEntryNotFoundError,
   SessionMetadataError,
   type SessionEntry,
+  type SessionMessage,
 } from '../src/index.js';
 
-function userMessage(text: string): AgentMessage {
+function userMessage(text: string): SessionMessage {
   return { role: 'user', content: [{ type: 'text', text }] };
 }
 

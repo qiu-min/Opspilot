@@ -2,9 +2,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AgentMessage } from '@opspilot/agent-runtime';
 import { buildSessionContext, createCompactionSummaryMessage } from '@opspilot/application';
-import type { SessionEntry } from '@opspilot/domain';
+import type { SessionEntry, SessionMessage } from '@opspilot/domain';
 import { Session } from '@opspilot/domain';
 import { appendSessionEntry, createSessionFile, loadSessionFile } from '../src/index.js';
 
@@ -22,11 +21,11 @@ function temporaryDirectory(): string {
   return directory;
 }
 
-function userMessage(text: string): AgentMessage {
+function userMessage(text: string): SessionMessage {
   return { role: 'user', content: [{ type: 'text', text }] };
 }
 
-function assistantMessage(text: string): AgentMessage {
+function assistantMessage(text: string): SessionMessage {
   return {
     role: 'assistant',
     api: 'test',

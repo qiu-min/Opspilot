@@ -4,6 +4,13 @@ export {
   type SessionProjection,
 } from './runtime/session-projection.js';
 export { buildSessionContext, type SessionContext } from './runtime/session-context.js';
+export {
+  requireSessionMessage,
+  toAgentMessage,
+  toAgentThinkingLevel,
+  toSessionMessage,
+  toSessionThinkingLevel,
+} from './runtime/session-message-mapper.js';
 export { AgentSession } from './runtime/agent-session.js';
 export type {
   AgentSessionConfig,

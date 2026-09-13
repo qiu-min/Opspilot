@@ -1,13 +1,15 @@
-import type { AssistantMessage, ModelToolCall, ToolResultMessage } from '@opspilot/model-gateway';
+import type { AssistantMessage, ModelToolCall } from '@opspilot/model-gateway';
 import {
   type Session,
   type SessionEntry,
+  type SessionToolResultMessage,
   type Turn,
   type TurnCheckpoint,
   type TurnEvent,
 } from '@opspilot/domain';
 
 import type { ToolDefinition } from '../../tools/tool-definition.js';
+import { toAgentMessage } from '../../session/runtime/session-message-mapper.js';
 import type { TurnRecoveryPlan } from './turn-recovery-plan.js';
 
 export interface TurnRecoveryPlannerInput {
@@ -311,19 +313,22 @@ function findAssistantAtCheckpoint(
   | undefined {
   const entry = session.getEntry(checkpoint.sessionLeafId ?? '');
   if (entry?.type === 'message' && entry.message.role === 'assistant') {
-    return { entry, message: entry.message };
+    const message = toAgentMessage(entry.message);
+    if (message.role === 'assistant') return { entry, message };
   }
   if (checkpoint.phase !== 'tool_completed') return undefined;
   const branch = session.getBranch(checkpoint.sessionLeafId ?? '');
   for (let index = branch.length - 1; index >= 0; index -= 1) {
     const candidate = branch[index];
-    if (
-      candidate?.type === 'message' &&
-      candidate.message.role === 'assistant' &&
-      candidate.message.finishReason === 'tool_calls' &&
-      (candidate.message.toolCalls?.length ?? 0) > 0
-    ) {
-      return { entry: candidate, message: candidate.message };
+    if (candidate?.type === 'message' && candidate.message.role === 'assistant') {
+      const message = toAgentMessage(candidate.message);
+      if (
+        message.role === 'assistant' &&
+        message.finishReason === 'tool_calls' &&
+        (message.toolCalls?.length ?? 0) > 0
+      ) {
+        return { entry: candidate, message };
+      }
     }
   }
   return undefined;
@@ -393,8 +398,11 @@ function isRecoverableToolError(details: unknown): boolean {
   );
 }
 
-function isToolResultEntry(
-  entry: SessionEntry,
-): entry is Extract<SessionEntry, { type: 'message' }> & { readonly message: ToolResultMessage } {
+function isToolResultEntry(entry: SessionEntry): entry is Extract<
+  SessionEntry,
+  { type: 'message' }
+> & {
+  readonly message: SessionToolResultMessage;
+} {
   return entry.type === 'message' && entry.message.role === 'tool';
 }

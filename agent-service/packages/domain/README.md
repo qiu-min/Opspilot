@@ -9,7 +9,7 @@ OpsPilot 的 Session Domain package。
 
 metadata mutation 不会生成 history entry，也不会改变 history tree。持久化格式和文件布局属于上层 Application adapter；Domain 只通过显式的 restore/create API 接收和返回业务状态。
 
-Application projection 通过 `buildSessionContext(session)` 将 durable history 转换为 Agent Runtime context，metadata 不进入 Agent context。
+Session history 使用 Domain 自己的 `SessionMessage` 和 `SessionThinkingLevel` 持久化模型，不依赖 Agent Runtime。Application projection 通过 `buildSessionContext(session)` 将 durable history 转换为 Agent Runtime context，metadata 不进入 Agent context。
 
 ## Turn
 

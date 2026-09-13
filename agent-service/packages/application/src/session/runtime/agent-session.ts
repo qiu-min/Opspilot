@@ -26,6 +26,7 @@ import {
   type CompactionSettings,
 } from '../../context/index.js';
 import { buildSessionContext } from './session-context.js';
+import { toSessionMessage } from './session-message-mapper.js';
 import type { Session } from '@opspilot/domain';
 import type { SessionStore } from '../ports/session-store.js';
 
@@ -187,8 +188,11 @@ export class AgentSession {
   }
 
   private async handleAgentEvent(event: AgentEvent): Promise<void> {
-    if (event.type === 'message_end' && isStandardMessage(event.message)) {
-      this.persistEntry(this.session.appendMessage(event.message));
+    if (event.type === 'message_end') {
+      const sessionMessage = toSessionMessage(event.message);
+      if (sessionMessage !== undefined) {
+        this.persistEntry(this.session.appendMessage(sessionMessage));
+      }
     }
 
     await this.emit(event);
