@@ -1,4 +1,4 @@
-import { Bot, Check, Copy, ThumbsDown, ThumbsUp } from "lucide-react";
+import { Activity, Bot, Check, Copy, ThumbsDown, ThumbsUp } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
@@ -16,11 +16,13 @@ import type {
 type SessionResponseViewProps = {
   response: TurnResponseItem;
   agentName: string;
+  onOpenTrace?: (turnId: string) => void;
 };
 
 export function SessionResponseView({
   response,
   agentName,
+  onOpenTrace,
 }: SessionResponseViewProps) {
   const assistantText = response.blocks
     .filter((block): block is AssistantTextBlock => block.type === "assistant_text")
@@ -29,6 +31,7 @@ export function SessionResponseView({
   const now = useTurnNow(response.status === "streaming");
   const showActions = response.status !== "streaming" && assistantText.length > 0;
   const metricsLabel = formatTurnMetrics(response.metrics, response.status, now);
+  const showTrace = response.turnId !== undefined;
 
   return (
     <section
@@ -57,8 +60,14 @@ export function SessionResponseView({
         ))}
       </div>
 
-      {(showActions || metricsLabel !== undefined) && (
-        <ResponseActions assistantText={assistantText} showActions={showActions} metricsLabel={metricsLabel} />
+      {(showActions || metricsLabel !== undefined || showTrace) && (
+        <ResponseActions
+          assistantText={assistantText}
+          showActions={showActions}
+          metricsLabel={metricsLabel}
+          turnId={response.turnId}
+          onOpenTrace={onOpenTrace}
+        />
       )}
     </section>
   );
@@ -97,7 +106,19 @@ function AssistantTextBlockView({
   );
 }
 
-function ResponseActions({ assistantText, showActions, metricsLabel }: { assistantText: string; showActions: boolean; metricsLabel: string | undefined }) {
+function ResponseActions({
+  assistantText,
+  showActions,
+  metricsLabel,
+  turnId,
+  onOpenTrace,
+}: {
+  assistantText: string;
+  showActions: boolean;
+  metricsLabel: string | undefined;
+  turnId: string | undefined;
+  onOpenTrace?: (turnId: string) => void;
+}) {
   const [hasCopied, setHasCopied] = useState(false);
   const [copyError, setCopyError] = useState<string | null>(null);
 
@@ -122,8 +143,9 @@ function ResponseActions({ assistantText, showActions, metricsLabel }: { assista
         </Button>
         <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Helpful response" title="Helpful"><ThumbsUp size={14} aria-hidden="true" /></Button>
         <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Unhelpful response" title="Not helpful"><ThumbsDown size={14} aria-hidden="true" /></Button>
+        {turnId !== undefined && <Button variant="ghost" size="sm" className="h-8 px-2 text-[11px]" onClick={() => onOpenTrace?.(turnId)} aria-label="Open developer trace" title="Developer trace"><Activity size={14} aria-hidden="true" />Trace</Button>}
         {copyError && <span className="ml-2 text-[10px] font-medium text-danger" role="status">{copyError}</span>}
-      </div> : <span aria-hidden="true" />}
+      </div> : turnId !== undefined ? <Button variant="ghost" size="sm" className="h-8 px-2 text-[11px]" onClick={() => onOpenTrace?.(turnId)} aria-label="Open developer trace" title="Developer trace"><Activity size={14} aria-hidden="true" />Trace</Button> : <span aria-hidden="true" />}
       {metricsLabel && <span className="ml-auto text-[11px] tabular-nums text-mutedInk">{metricsLabel}</span>}
     </footer>
   );

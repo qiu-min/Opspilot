@@ -7,9 +7,10 @@ import type { SessionItem } from "../types";
 type SessionThreadProps = {
   items: SessionItem[];
   agentName: string;
+  onOpenTrace?: (turnId: string) => void;
 };
 
-export function SessionThread({ items, agentName }: SessionThreadProps) {
+export function SessionThread({ items, agentName, onOpenTrace }: SessionThreadProps) {
   if (items.length === 0) {
     return (
       <div className="flex min-h-[360px] flex-col items-center justify-center text-center">
@@ -24,7 +25,7 @@ export function SessionThread({ items, agentName }: SessionThreadProps) {
     <div className="space-y-7" aria-label="Session timeline">
       {items.map((item) => {
         if (item.type === "message") return <ChatMessageView key={item.id} message={item.message} agentName={agentName} />;
-        if (item.type === "response") return <SessionResponseView key={item.id} response={item} agentName={agentName} />;
+        if (item.type === "response") return <SessionResponseView key={item.id} response={item} agentName={agentName} onOpenTrace={onOpenTrace} />;
         return <GeneratedArtifactCard key={item.id} artifact={item.artifact} />;
       })}
     </div>

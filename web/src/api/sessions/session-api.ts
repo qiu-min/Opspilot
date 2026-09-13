@@ -2,6 +2,7 @@ import { apiFetch, apiRequest } from "../client";
 import { TurnStreamProtocolError, type TurnStreamEvent } from "./turn-stream-contracts";
 import { parseTurnSseStream } from "./turn-sse-parser";
 import type { ActiveTurnResponse, CreateSessionResponse, RunSessionTurnRequest, RunSessionTurnResponse, SessionDetailResponse, SessionSummaryResponse } from "./session-contracts";
+import type { TurnTraceResponse } from "./turn-trace-contracts";
 
 export function getSession(sessionId: string, accessToken: string, signal?: AbortSignal): Promise<SessionDetailResponse> {
   return apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: "GET", accessToken, signal, cache: "no-store" });
@@ -17,6 +18,9 @@ export function runSessionTurn(sessionId: string, request: RunSessionTurnRequest
 }
 export function getActiveSessionTurn(sessionId: string, accessToken: string, signal?: AbortSignal): Promise<ActiveTurnResponse> {
   return apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}/active-turn`, { method: "GET", accessToken, signal, cache: "no-store" });
+}
+export function getSessionTurnTrace(sessionId: string, turnId: string, accessToken: string, signal?: AbortSignal): Promise<TurnTraceResponse> {
+  return apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/trace`, { method: "GET", accessToken, signal, cache: "no-store" });
 }
 
 export async function* startSessionTurnStream(sessionId: string, request: RunSessionTurnRequest, accessToken: string, signal?: AbortSignal): AsyncGenerator<TurnStreamEvent> {

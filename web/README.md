@@ -34,18 +34,28 @@ contract mapping，不重新计算这些 durable facts。
 src/api/sessions/
   session-contracts.ts
   session-api.ts
+  turn-trace-contracts.ts
   turn-stream-contracts.ts
   turn-sse-parser.ts
 
 src/features/session/
   session-page.tsx
   session-sidebar.tsx
+  use-turn-trace.ts
   turn-stream-state.ts
   turn-stream-projection.ts
+
+  components/
+    context-panel.tsx
+    trace-panel.tsx
 ```
 
 SSE parser 严格验证 event name、payload `type`、`turnId`、`sessionId`、safe non-negative `sequence`、timestamp，以及 SSE `id == sequence`。未知事件和协议不一致使用 `TurnStreamProtocolError`。
 tool lifecycle event 的可选 display metadata 也在 parser/state 层严格校验并沿生命周期保留；completed durable history 仍是 terminal 后的事实来源。
+
+Developer Trace 是选中 Turn 的只读辅助视图。Session page 通过 session API client
+读取 `/api/sessions/{sessionId}/turns/{turnId}/trace`，在 Run context 右侧 rail 中展示；
+仅当选中的 Trace 仍为 running 时约每 1.5 秒刷新。Trace 查询失败不会影响对话或 Turn stream 状态。
 
 ## Development
 
