@@ -86,6 +86,30 @@ describe('model gateway contracts', () => {
     ).toBe(true);
   });
 
+  it('rejects model error kind, code, and retryable mismatches', () => {
+    const baseModelError = {
+      message: 'Model provider request failed.',
+      statusCode: 401,
+    };
+
+    expect(
+      modelErrorInfoSchema.safeParse({
+        ...baseModelError,
+        kind: 'authentication',
+        code: 'MODEL_RATE_LIMIT',
+        retryable: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      modelErrorInfoSchema.safeParse({
+        ...baseModelError,
+        kind: 'rate_limit',
+        code: 'MODEL_RATE_LIMIT',
+        retryable: false,
+      }).success,
+    ).toBe(false);
+  });
+
   it('accepts optional arbitrary Tool Result details', () => {
     const details = {
       source: 'tool-runtime',

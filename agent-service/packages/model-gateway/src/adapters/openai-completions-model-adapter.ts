@@ -15,9 +15,9 @@ import {
   type ThinkingSignature,
   type Usage,
   type AssistantMessage,
-  type ModelErrorCode,
   type ModelErrorInfo,
   type ModelErrorKind,
+  MODEL_ERROR_METADATA,
 } from '../contracts/index.js';
 import type { ResolvedProvider } from '../provider-config.js';
 import type { ResolvedOptions } from '../thinking.js';
@@ -101,13 +101,6 @@ export function classifyProviderError(error: unknown): ModelErrorInfo {
       statusCode,
       providerCode,
     );
-  if (isContextOverflowErrorMessage(errorMessage))
-    return createModelError(
-      'context_overflow',
-      'Model provider context window exceeded.',
-      statusCode,
-      providerCode,
-    );
   if (error instanceof RateLimitError || statusCode === 429)
     return createModelError(
       'rate_limit',
@@ -136,6 +129,13 @@ export function classifyProviderError(error: unknown): ModelErrorInfo {
       statusCode,
       providerCode,
     );
+  if (isContextOverflowErrorMessage(errorMessage))
+    return createModelError(
+      'context_overflow',
+      'Model provider context window exceeded.',
+      statusCode,
+      providerCode,
+    );
   if (statusCode !== undefined && statusCode >= 400 && statusCode < 500)
     return createModelError(
       'invalid_request',
@@ -146,7 +146,7 @@ export function classifyProviderError(error: unknown): ModelErrorInfo {
 
   return createModelError(
     'unknown',
-    errorMessage || 'Model provider request failed.',
+    'Model provider request failed.',
     statusCode,
     providerCode,
   );
@@ -166,33 +166,12 @@ function createModelError(
   statusCode: number | undefined,
   providerCode: string | undefined,
 ): ModelErrorInfo {
-  const codeByKind: Record<ModelErrorKind, ModelErrorCode> = {
-    authentication: 'MODEL_AUTHENTICATION',
-    invalid_request: 'MODEL_INVALID_REQUEST',
-    rate_limit: 'MODEL_RATE_LIMIT',
-    timeout: 'MODEL_TIMEOUT',
-    network: 'MODEL_NETWORK',
-    server_error: 'MODEL_SERVER_ERROR',
-    protocol_error: 'MODEL_PROTOCOL_ERROR',
-    context_overflow: 'MODEL_CONTEXT_OVERFLOW',
-    unknown: 'MODEL_UNKNOWN',
-  };
-  const retryableByKind: Record<ModelErrorKind, boolean> = {
-    authentication: false,
-    invalid_request: false,
-    rate_limit: true,
-    timeout: true,
-    network: true,
-    server_error: true,
-    protocol_error: false,
-    context_overflow: false,
-    unknown: false,
-  };
+  const metadata = MODEL_ERROR_METADATA[kind];
   return {
     kind,
-    code: codeByKind[kind],
+    code: metadata.code,
     message: message || 'Model provider request failed.',
-    retryable: retryableByKind[kind],
+    retryable: metadata.retryable,
     ...(statusCode === undefined ? {} : { statusCode }),
     ...(providerCode === undefined ? {} : { providerCode }),
   };

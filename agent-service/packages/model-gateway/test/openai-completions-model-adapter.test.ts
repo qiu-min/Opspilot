@@ -121,6 +121,12 @@ describe('OpenAI Chat Completions adapter', () => {
     ['authentication', Object.assign(new Error('forbidden'), { status: 403 }), false, 403],
     ['rate_limit', Object.assign(new Error('limited'), { status: 429 }), true, 429],
     [
+      'rate_limit',
+      Object.assign(new Error('too many tokens per minute'), { status: 429 }),
+      true,
+      429,
+    ],
+    [
       'timeout',
       Object.assign(new Error('timeout'), { name: 'APIConnectionTimeoutError' }),
       true,
@@ -146,6 +152,34 @@ describe('OpenAI Chat Completions adapter', () => {
       });
     },
   );
+
+  it('classifies a token-per-minute 429 as a retryable rate limit', () => {
+    expect(
+      classifyProviderError(
+        Object.assign(new Error('too many tokens per minute'), { status: 429 }),
+      ),
+    ).toMatchObject({
+      kind: 'rate_limit',
+      code: 'MODEL_RATE_LIMIT',
+      retryable: true,
+      statusCode: 429,
+    });
+  });
+
+  it('keeps unknown Provider messages stable and free of raw exception details', () => {
+    const result = classifyProviderError(
+      new Error('request failed https://example.com?token=secret /home/user/private'),
+    );
+
+    expect(result).toEqual({
+      kind: 'unknown',
+      code: 'MODEL_UNKNOWN',
+      message: 'Model provider request failed.',
+      retryable: false,
+    });
+    expect(result.message).not.toContain('token=secret');
+    expect(result.message).not.toContain('/home/user/private');
+  });
 
   it('normalizes text, tool calls, usage, and sends the configured endpoint', async () => {
     const requests: OpenAiCompletionsRequest[] = [];
@@ -1155,7 +1189,7 @@ describe('OpenAI Chat Completions adapter', () => {
     expect(response).toMatchObject({
       finishReason: 'error',
       content: [{ type: 'text', text: 'partial text' }],
-      errorMessage: 'socket closed',
+      errorMessage: 'Model provider request failed.',
       modelError: {
         kind: 'unknown',
         code: 'MODEL_UNKNOWN',

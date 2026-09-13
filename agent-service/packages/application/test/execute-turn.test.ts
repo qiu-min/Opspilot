@@ -678,15 +678,14 @@ describe('ExecuteTurn', () => {
       modelCallId: modelStarted && 'modelCallId' in modelStarted ? modelStarted.modelCallId : '',
       error: failedResponse.modelError,
     });
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: 'usage_recorded',
-        modelCallId: modelStarted && 'modelCallId' in modelStarted ? modelStarted.modelCallId : '',
-        inputTokens: 10,
-        outputTokens: 2,
-        totalTokens: 12,
-      }),
-    );
+    const usageRecorded = events.find((event) => event.type === 'usage_recorded');
+    expect(usageRecorded).toMatchObject({
+      modelCallId: modelStarted && 'modelCallId' in modelStarted ? modelStarted.modelCallId : '',
+      inputTokens: 10,
+      outputTokens: 2,
+      totalTokens: 12,
+    });
+    expect(modelFailed?.sequence).toBeLessThan(usageRecorded?.sequence ?? Number.MAX_SAFE_INTEGER);
     expect(events.some((event) => event.type === 'model_completed')).toBe(false);
     expect(events.some((event) => event.type === 'assistant_message_completed')).toBe(false);
   });

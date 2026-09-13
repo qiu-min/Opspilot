@@ -92,6 +92,13 @@ describe('TurnEvent validation', () => {
 
     const invalidSnapshots: readonly Record<string, unknown>[] = [
       { kind: 'not-a-kind', code: 'MODEL_UNKNOWN', message: 'failed', retryable: false },
+      {
+        kind: 'authentication',
+        code: 'MODEL_RATE_LIMIT',
+        message: 'failed',
+        retryable: true,
+      },
+      { kind: 'rate_limit', code: 'MODEL_RATE_LIMIT', message: 'failed', retryable: false },
       { kind: 'unknown', code: '', message: 'failed', retryable: false },
       { kind: 'unknown', code: 'MODEL_UNKNOWN', message: '', retryable: false },
       { kind: 'unknown', code: 'MODEL_UNKNOWN', message: 'failed', retryable: 'false' },

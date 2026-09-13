@@ -189,6 +189,7 @@ export class TurnEventRecorder {
         // Runtime-created synthetic failures do not carry a modelCallId and are
         // deliberately kept out of the model-call failure fact stream.
         if (modelCallId === undefined) return;
+        this.recordModelFailed(message, modelCallId);
         if (message.usage !== undefined) {
           this.recordUsage(
             modelCallId,
@@ -197,7 +198,6 @@ export class TurnEventRecorder {
             message.usage.totalTokens,
           );
         }
-        this.recordModelFailed(message, modelCallId);
         return;
       }
       if (modelCallId === undefined) {

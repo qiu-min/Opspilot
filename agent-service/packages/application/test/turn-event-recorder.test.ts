@@ -61,14 +61,18 @@ describe('TurnEventRecorder model failures', () => {
       modelCallId: 'model-call-A',
     });
 
-    expect(turnStore.loadEvents('turn-recorder-1')).toMatchObject([
+    const events = turnStore.loadEvents('turn-recorder-1');
+    expect(events).toMatchObject([
       { type: 'turn_started' },
       { type: 'model_started', modelCallId: 'model-call-A' },
-      { type: 'usage_recorded', modelCallId: 'model-call-A', totalTokens: 5 },
       { type: 'model_failed', modelCallId: 'model-call-A', error: message.modelError },
+      { type: 'usage_recorded', modelCallId: 'model-call-A', totalTokens: 5 },
     ]);
+    const modelFailed = events.find((event) => event.type === 'model_failed');
+    const usageRecorded = events.find((event) => event.type === 'usage_recorded');
+    expect(modelFailed?.sequence).toBeLessThan(usageRecorded?.sequence ?? Number.MAX_SAFE_INTEGER);
     expect(
-      turnStore.loadEvents('turn-recorder-1').some((event) => event.type === 'model_completed'),
+      events.some((event) => event.type === 'model_completed'),
     ).toBe(false);
   });
 

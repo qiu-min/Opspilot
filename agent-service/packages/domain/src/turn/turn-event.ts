@@ -1,5 +1,9 @@
 import { TurnEventError } from './turn-errors.js';
-import type { ModelFailureKind, ModelFailureSnapshot } from '../model/model-failure.js';
+import {
+  MODEL_FAILURE_METADATA,
+  type ModelFailureKind,
+  type ModelFailureSnapshot,
+} from '../model/model-failure.js';
 
 /** Current durable TurnEvent record version. */
 export const CURRENT_TURN_EVENT_VERSION = 2 as const;
@@ -239,14 +243,23 @@ function assertModelFailure(value: unknown): asserts value is ModelFailureSnapsh
   if (!isModelFailureKind(value.kind)) {
     throw new TurnEventError('model_failed error kind is invalid.');
   }
+  const expected = MODEL_FAILURE_METADATA[value.kind];
   if (!isNonEmptyString(value.code)) {
     throw new TurnEventError('model_failed error code must be non-empty.');
+  }
+  if (value.code !== expected.code) {
+    throw new TurnEventError(`model_failed error code must be ${expected.code}.`);
   }
   if (!isNonEmptyString(value.message)) {
     throw new TurnEventError('model_failed error message must be non-empty.');
   }
   if (typeof value.retryable !== 'boolean') {
     throw new TurnEventError('model_failed error retryable must be boolean.');
+  }
+  if (value.retryable !== expected.retryable) {
+    throw new TurnEventError(
+      `model_failed error retryable must be ${String(expected.retryable)} for ${value.kind}.`,
+    );
   }
   if (value.statusCode !== undefined && !isHttpStatusCode(value.statusCode)) {
     throw new TurnEventError('model_failed error statusCode is invalid.');

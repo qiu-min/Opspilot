@@ -382,8 +382,8 @@ describe('projectTurnTrace', () => {
   });
 
   it('keeps the first model terminal fact when completion and failure are duplicated', () => {
-    const failure = {
-      kind: 'rate_limit' as const,
+    const failure: Extract<TurnEvent, { type: 'model_failed' }>['error'] = {
+      kind: 'rate_limit',
       code: 'MODEL_RATE_LIMIT',
       message: 'rate limited',
       retryable: true,

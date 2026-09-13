@@ -24,10 +24,26 @@ export type ModelErrorCode =
   | 'MODEL_CONTEXT_OVERFLOW'
   | 'MODEL_UNKNOWN';
 
+/** Canonical code and retryability metadata for each structured model error kind. */
+export const MODEL_ERROR_METADATA = {
+  authentication: { code: 'MODEL_AUTHENTICATION', retryable: false },
+  invalid_request: { code: 'MODEL_INVALID_REQUEST', retryable: false },
+  rate_limit: { code: 'MODEL_RATE_LIMIT', retryable: true },
+  timeout: { code: 'MODEL_TIMEOUT', retryable: true },
+  network: { code: 'MODEL_NETWORK', retryable: true },
+  server_error: { code: 'MODEL_SERVER_ERROR', retryable: true },
+  protocol_error: { code: 'MODEL_PROTOCOL_ERROR', retryable: false },
+  context_overflow: { code: 'MODEL_CONTEXT_OVERFLOW', retryable: false },
+  unknown: { code: 'MODEL_UNKNOWN', retryable: false },
+} as const satisfies Record<
+  ModelErrorKind,
+  { readonly code: ModelErrorCode; readonly retryable: boolean }
+>;
+
 /** Structured, safe diagnostics for a failed model call. */
 export interface ModelErrorInfo {
   readonly kind: ModelErrorKind;
-  readonly code: string;
+  readonly code: ModelErrorCode;
   readonly message: string;
   /** Whether a later RetryPolicy may consider this category transient. */
   readonly retryable: boolean;
@@ -75,4 +91,21 @@ export const modelErrorInfoSchema = z
       .regex(/^[A-Za-z0-9_.:-]+$/)
       .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    const expected = MODEL_ERROR_METADATA[value.kind];
+    if (value.code !== expected.code) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['code'],
+        message: `code must be ${expected.code} for ${value.kind}.`,
+      });
+    }
+    if (value.retryable !== expected.retryable) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['retryable'],
+        message: `retryable must be ${String(expected.retryable)} for ${value.kind}.`,
+      });
+    }
+  });
