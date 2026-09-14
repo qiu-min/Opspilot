@@ -88,6 +88,7 @@ describe('FileSystemSessionStore', () => {
       createdAt: session.getCreatedAt(),
       updatedAt: session.getUpdatedAt(),
       resources: [],
+      activeResourceId: null,
     });
     expect(readFileSync(join(directory, sessionId, 'history.jsonl'), 'utf8')).toContain(
       `"id":"${sessionId}"`,
@@ -106,6 +107,7 @@ describe('FileSystemSessionStore', () => {
       { id: 'workbook-a', kind: 'excel' },
       { id: 'workbook-b', kind: 'excel' },
     ]);
+    expect(restarted.load(session.getId()).getActiveResourceId()).toBe('workbook-b');
   });
 
   it('restores an empty resource registry from metadata written before the registry existed', () => {
@@ -128,7 +130,9 @@ describe('FileSystemSessionStore', () => {
     );
     createSessionFile(join(sessionDirectory, 'history.jsonl'), session.getHeader());
 
-    expect(store.load(session.getId()).getResources()).toEqual([]);
+    const loaded = store.load(session.getId());
+    expect(loaded.getResources()).toEqual([]);
+    expect(loaded.getActiveResourceId()).toBeNull();
   });
 
   it('loads a newly created session and restores metadata, entries, leaf, and branch', () => {
@@ -303,6 +307,7 @@ describe('FileSystemSessionStore', () => {
         createdAt: header.timestamp,
         updatedAt: '2026-01-02T00:00:00.000Z',
         resources: [],
+        activeResourceId: null,
       }),
     );
     createSessionFile(join(sessionDirectory, 'history.jsonl'), header);

@@ -91,6 +91,7 @@ export class Session {
       createdAt: timestamp,
       updatedAt: timestamp,
       resources: [],
+      activeResourceId: null,
     };
     return new Session(
       metadata,
@@ -175,6 +176,7 @@ export class Session {
     this.metadata = {
       ...this.metadata,
       resources: [...this.metadata.resources, cloneResourceRef(resource)],
+      activeResourceId: resource.id,
       updatedAt: this.nextMutationTimestamp(),
     };
   }
@@ -182,6 +184,30 @@ export class Session {
   /** Returns an immutable snapshot of the registered resource references. */
   public getResources(): readonly SessionResourceRef[] {
     return this.metadata.resources.map(cloneResourceRef);
+  }
+
+  /** Returns the default resource id for the next Turn, if one is selected. */
+  public getActiveResourceId(): string | null {
+    return this.metadata.activeResourceId;
+  }
+
+  /** Selects an already registered resource as the default without touching history. */
+  public setActiveResource(resourceId: string): void {
+    if (!isNonEmptyString(resourceId)) {
+      throw new SessionMetadataError('Session active resource id must be non-empty.');
+    }
+    if (!this.metadata.resources.some((resource) => resource.id === resourceId)) {
+      throw new SessionMetadataError(
+        `Session active resource must be registered: ${resourceId}.`,
+      );
+    }
+    if (this.metadata.activeResourceId === resourceId) return;
+
+    this.metadata = {
+      ...this.metadata,
+      activeResourceId: resourceId,
+      updatedAt: this.nextMutationTimestamp(),
+    };
   }
 
   /** Renames the Session without adding an entry to the history tree. */
@@ -436,6 +462,11 @@ function validateMetadata(metadata: SessionMetadata): void {
   if (!Array.isArray(metadata.resources)) {
     throw new SessionMetadataError('Session metadata resources must be an array.');
   }
+  if (metadata.activeResourceId !== null && !isNonEmptyString(metadata.activeResourceId)) {
+    throw new SessionMetadataError(
+      'Session active resource id must be null or a non-empty string.',
+    );
+  }
   const resourceKeys = new Set<string>();
   for (const resource of metadata.resources) {
     validateResourceRef(resource);
@@ -446,6 +477,14 @@ function validateMetadata(metadata: SessionMetadata): void {
       );
     }
     resourceKeys.add(key);
+  }
+  if (
+    metadata.activeResourceId !== null &&
+    !metadata.resources.some((resource) => resource.id === metadata.activeResourceId)
+  ) {
+    throw new SessionMetadataError(
+      `Session active resource must be registered: ${metadata.activeResourceId}.`,
+    );
   }
 }
 
@@ -479,6 +518,7 @@ function deriveCompatibilityMetadata(
     createdAt: header.timestamp,
     updatedAt: entries.at(-1)?.timestamp ?? header.timestamp,
     resources: [],
+    activeResourceId: null,
   };
 }
 
@@ -486,6 +526,7 @@ function normalizeMetadataResources(metadata: SessionMetadata): SessionMetadata 
   return {
     ...metadata,
     resources: metadata.resources === undefined ? [] : metadata.resources,
+    activeResourceId: metadata.activeResourceId === undefined ? null : metadata.activeResourceId,
   };
 }
 

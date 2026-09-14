@@ -1,6 +1,7 @@
 import type { Worksheet } from 'exceljs';
 
-import { formatCellRange, type CellRange } from '../shared/cell-reference.js';
+import { formatCellAddress } from '../shared/cell-reference.js';
+import { resolveDatasetContext, type ExcelDatasetContext } from '../shared/exceljs/dataset-context.js';
 import { ExcelCapabilityError, ExcelCapabilityErrorCode } from '../shared/errors.js';
 import {
   executeExcelOperation,
@@ -9,18 +10,19 @@ import {
   throwIfAborted,
 } from '../shared/exceljs/workbook-io.js';
 import { parseExcelCellValue } from '../shared/exceljs/cell-value.js';
+import { resolveHeaderColumn, type ExcelHeaderColumn } from '../shared/exceljs/header.js';
+import { hasActualValueInRow } from '../shared/exceljs/used-range.js';
 import {
-  findHeaderContext,
-  resolveHeaderColumn,
-  type ExcelHeaderColumn,
-} from '../shared/exceljs/header.js';
-import { findUsedRange, hasActualValueInRow } from '../shared/exceljs/used-range.js';
+  evaluatePredicates,
+  type ResolvedExcelPredicate,
+} from '../shared/query/predicate-engine.js';
 import type {
   AggregateDataInput,
   AggregateDataResult,
   AggregateMetric,
   AggregateOperation,
   AggregateResultColumn,
+  AggregateWhere,
 } from './contracts.js';
 import {
   createGroupAccumulator,
@@ -46,8 +48,13 @@ export class ExcelJsAggregateAdapter implements ExcelAggregateConnector {
     return executeExcelOperation('aggregateData', validated.filePath, signal, async () => {
       const workbook = await openWorkbook(validated.filePath, signal);
       const worksheet = requireWorksheet(workbook, validated.sheetName);
-      const usedRange = findUsedRange(worksheet, 'values');
-      const plan = createAggregationPlan(worksheet, usedRange, validated, signal);
+      const dataset = resolveDatasetContext(
+        worksheet,
+        validated.range,
+        signal,
+        'aggregateData',
+      );
+      const plan = createAggregationPlan(dataset, validated);
       const groups = new Map<string, GroupAccumulator>();
 
       if (plan.groupBy.length === 0) {
@@ -55,15 +62,39 @@ export class ExcelJsAggregateAdapter implements ExcelAggregateConnector {
       }
 
       let sourceRowCount = 0;
-      if (usedRange !== undefined && plan.headerRow !== null) {
-        for (let row = plan.headerRow + 1; row <= usedRange.end.row; row += 1) {
+      if (dataset.range !== undefined && dataset.dataStartRow !== null) {
+        for (let row = dataset.dataStartRow; row <= dataset.range.end.row; row += 1) {
           throwIfAborted(signal, 'aggregateData');
-          if (!hasActualValueInRow(worksheet, row, usedRange.start.column, usedRange.end.column)) {
+          if (
+            !hasActualValueInRow(
+              worksheet,
+              row,
+              dataset.range.start.column,
+              dataset.range.end.column,
+            )
+          ) {
             continue;
           }
           sourceRowCount += 1;
 
           const rowValues = readSelectedValues(worksheet, row, plan.sourceColumns);
+          if (
+            plan.where !== undefined &&
+            !evaluatePredicates(
+              rowValues,
+              plan.where.conditions,
+              plan.where.logic,
+              (predicate) => ({
+                sheetName: validated.sheetName,
+                column: predicate.predicate.column,
+                address: formatCellAddress({ row, column: predicate.columnIndex }),
+                operator: predicate.predicate.operator,
+              }),
+            )
+          ) {
+            continue;
+          }
+
           const groupValues = plan.groupBy.map((column) =>
             toGroupValue(
               rowValues.get(column.columnIndex),
@@ -129,25 +160,29 @@ interface ResolvedMetric {
 }
 
 interface AggregationPlan {
-  readonly headerRow: number | null;
   readonly groupBy: readonly ResolvedColumn[];
   readonly metrics: readonly ResolvedMetric[];
+  readonly where: ResolvedWhere | undefined;
   readonly sourceColumns: readonly ResolvedColumn[];
   readonly resultColumns: readonly AggregateResultColumn[];
 }
 
+interface ResolvedWhere {
+  readonly conditions: readonly ResolvedExcelPredicate[];
+  readonly logic: 'all' | 'any';
+}
+
 /** Resolves all requested columns and builds the single-pass aggregation plan. */
 function createAggregationPlan(
-  worksheet: Worksheet,
-  usedRange: CellRange | undefined,
+  dataset: ExcelDatasetContext,
   input: {
     readonly sheetName: string;
+    readonly where?: AggregateWhere;
     readonly groupBy: readonly string[];
     readonly metrics: readonly AggregateMetric[];
   },
-  signal: AbortSignal | undefined,
 ): AggregationPlan {
-  const header = findHeaderContext(worksheet, usedRange, signal, 'aggregateData');
+  const header = dataset.header;
   const groupBy = input.groupBy.map((column) =>
     resolveHeaderColumn(column, header, input.sheetName),
   );
@@ -155,13 +190,30 @@ function createAggregationPlan(
     column: resolveHeaderColumn(metric.column, header, input.sheetName),
     operation: metric.operation,
   }));
+  const where =
+    input.where === undefined
+      ? undefined
+      : {
+          conditions: input.where.conditions.map((predicate) => ({
+            predicate,
+            columnIndex: resolveHeaderColumn(predicate.column, header, input.sheetName).columnIndex,
+          })),
+          logic: input.where.logic ?? 'all',
+        };
   const resultColumns = createResultColumns(groupBy, input.metrics);
-  const sourceColumns = uniqueColumns([...groupBy, ...metrics.map((metric) => metric.column)]);
+  const sourceColumns = uniqueColumns([
+    ...groupBy,
+    ...metrics.map((metric) => metric.column),
+    ...(where?.conditions.map((predicate) => ({
+      name: predicate.predicate.column,
+      columnIndex: predicate.columnIndex,
+    })) ?? []),
+  ]);
 
   return {
-    headerRow: header.headerRow,
     groupBy,
     metrics,
+    where,
     sourceColumns,
     resultColumns,
   };

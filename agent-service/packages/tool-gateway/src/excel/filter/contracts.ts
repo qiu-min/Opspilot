@@ -1,19 +1,19 @@
-export type FilterValue = string | number | boolean | Date;
+import type {
+  ExcelPredicate,
+  ExcelPredicateLogic,
+  ExcelPredicateOperator,
+  ExcelPredicateValue,
+} from '../shared/query/predicate-contracts.js';
 
-export type FilterOperator =
-  'equals' | 'notEquals' | 'greaterThan' | 'lessThan' | 'contains' | 'isEmpty' | 'isNotEmpty';
-
-export interface FilterCondition {
-  readonly column: string;
-  readonly operator: FilterOperator;
-  readonly value?: FilterValue;
-}
-
-export type FilterLogic = 'all' | 'any';
+export type FilterValue = ExcelPredicateValue;
+export type FilterOperator = ExcelPredicateOperator;
+export type FilterCondition = ExcelPredicate;
+export type FilterLogic = ExcelPredicateLogic;
 
 export interface FilterDataInput {
   readonly filePath: string;
   readonly sheetName: string;
+  readonly range?: string;
   readonly conditions: readonly FilterCondition[];
   readonly logic?: FilterLogic;
 }

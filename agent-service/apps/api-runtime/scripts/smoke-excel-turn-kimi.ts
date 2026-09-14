@@ -20,7 +20,11 @@ import {
   ExecuteTurn,
   type TurnExecutionEvent,
 } from '@opspilot/application';
-import { FileSystemSessionStore, FileSystemTurnStore } from '@opspilot/infrastructure';
+import {
+  FileSystemExcelSourceResourceStore,
+  FileSystemSessionStore,
+  FileSystemTurnStore,
+} from '@opspilot/infrastructure';
 
 const providerId = 'moonshot';
 const modelId = 'kimi-k3';
@@ -52,6 +56,9 @@ async function main(): Promise<void> {
     const excelDiscoveryConnector = new ExcelJsDiscoveryAdapter();
     const runner = new ExecuteTurn({
       sessionStore: new FileSystemSessionStore(sessionDirectory),
+      excelSourceResourceStore: new FileSystemExcelSourceResourceStore(
+        join(directory, 'workspaces'),
+      ),
       turnStore: new FileSystemTurnStore(directory),
       modelGateway: gateway,
       defaultModel: model,

@@ -120,6 +120,7 @@ describe('Session domain', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
       resources: [],
+      activeResourceId: null,
     });
     expect(session.getHeader().timestamp).toBe(session.getCreatedAt());
   });
@@ -155,6 +156,21 @@ describe('Session domain', () => {
       { id: 'workbook-a', kind: 'excel' },
       { id: 'workbook-b', kind: 'excel' },
     ]);
+    expect(session.getActiveResourceId()).toBe('workbook-b');
+  });
+
+  it('selects only registered resources as active and keeps the selection out of history', () => {
+    const session = Session.create();
+    session.registerResource({ id: 'workbook-a', kind: 'excel' });
+    const beforeEntries = session.getEntries();
+
+    session.setActiveResource('workbook-a');
+
+    expect(session.getActiveResourceId()).toBe('workbook-a');
+    expect(session.getEntries()).toEqual(beforeEntries);
+    expect(() => session.setActiveResource('missing')).toThrow(
+      'Session active resource must be registered',
+    );
   });
 
   it('rejects invalid Session resource references', () => {
@@ -206,6 +222,7 @@ describe('Session domain', () => {
       createdAt: header.timestamp,
       updatedAt: header.timestamp,
       resources: [],
+      activeResourceId: null,
     };
 
     expect(Session.restore({ metadata, header, entries: [] }).getTitle()).toBeNull();
@@ -249,6 +266,7 @@ describe('Session domain', () => {
         createdAt: header.timestamp,
         updatedAt: header.timestamp,
         resources: [],
+        activeResourceId: null,
       },
       header,
       entries: [

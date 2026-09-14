@@ -7,6 +7,7 @@ export interface SessionMetadata {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly resources: readonly SessionResourceRef[];
+  readonly activeResourceId: string | null;
 }
 
 /** Returns a canonical non-empty title or raises a domain validation error. */

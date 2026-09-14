@@ -35,10 +35,18 @@ export function findHeaderContext(
     return { headerRow: null, availableColumns: [], matches: new Map() };
   }
 
-  const headerRow = detection.headerRow;
+  return createHeaderContext(worksheet, usedRange, detection.headerRow);
+}
+
+/** Indexes exact headers from a known row without running header detection. */
+export function createHeaderContext(
+  worksheet: Worksheet,
+  range: CellRange,
+  headerRow: number,
+): ExcelHeaderContext {
   const matches = new Map<string, ExcelHeaderColumn[]>();
   const availableColumns: string[] = [];
-  for (let column = usedRange.start.column; column <= usedRange.end.column; column += 1) {
+  for (let column = range.start.column; column <= range.end.column; column += 1) {
     const cell = worksheet.findCell(headerRow, column);
     if (!cell || !hasActualCellValue(cell)) {
       continue;

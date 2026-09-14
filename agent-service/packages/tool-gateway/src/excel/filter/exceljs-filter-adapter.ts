@@ -1,29 +1,28 @@
 import type { Worksheet } from 'exceljs';
 
 import { formatCellAddress } from '../shared/cell-reference.js';
+import { resolveDatasetContext } from '../shared/exceljs/dataset-context.js';
 import { parseExcelCellValue, type ParsedExcelCellValue } from '../shared/exceljs/cell-value.js';
-import {
-  findHeaderContext,
-  resolveHeaderColumn,
-  type ExcelHeaderColumn,
-} from '../shared/exceljs/header.js';
+import { resolveHeaderColumn, type ExcelHeaderColumn } from '../shared/exceljs/header.js';
 import {
   executeExcelOperation,
   openWorkbook,
   requireWorksheet,
   throwIfAborted,
 } from '../shared/exceljs/workbook-io.js';
-import { findUsedRange, hasActualValueInRow } from '../shared/exceljs/used-range.js';
+import { hasActualValueInRow } from '../shared/exceljs/used-range.js';
 import type { FilterDataInput, FilterDataResult } from './contracts.js';
 import type { ExcelFilterConnector } from './connector.js';
 import {
   createMatchedRangeAccumulator,
   finalizeMatchedRanges,
-  matchesConditions,
   recordMatchedRow,
-  type ResolvedFilterCondition,
 } from './filter-engine.js';
 import { filterDataInputSchema } from './schemas.js';
+import {
+  evaluatePredicates,
+  type ResolvedExcelPredicate,
+} from '../shared/query/predicate-engine.js';
 
 export class ExcelJsFilterAdapter implements ExcelFilterConnector {
   /** Filters value-based worksheet rows with typed exact-header conditions. */
@@ -33,36 +32,48 @@ export class ExcelJsFilterAdapter implements ExcelFilterConnector {
     return executeExcelOperation('filterData', validated.filePath, signal, async () => {
       const workbook = await openWorkbook(validated.filePath, signal);
       const worksheet = requireWorksheet(workbook, validated.sheetName);
-      const usedRange = findUsedRange(worksheet, 'values');
-      const header = findHeaderContext(worksheet, usedRange, signal, 'filterData');
-      const conditions: ResolvedFilterCondition[] = validated.conditions.map((condition) => ({
-        condition,
-        columnIndex: resolveHeaderColumn(condition.column, header, validated.sheetName).columnIndex,
+      const dataset = resolveDatasetContext(
+        worksheet,
+        validated.range,
+        signal,
+        'filterData',
+      );
+      const predicates: ResolvedExcelPredicate[] = validated.conditions.map((predicate) => ({
+        predicate,
+        columnIndex: resolveHeaderColumn(predicate.column, dataset.header, validated.sheetName)
+          .columnIndex,
       }));
       const sourceColumns = uniqueColumns(
-        conditions.map((condition) => ({
-          name: condition.condition.column,
-          columnIndex: condition.columnIndex,
+        predicates.map((predicate) => ({
+          name: predicate.predicate.column,
+          columnIndex: predicate.columnIndex,
         })),
       );
       const accumulator = createMatchedRangeAccumulator();
       let sourceRowCount = 0;
 
-      if (usedRange !== undefined && header.headerRow !== null) {
-        for (let row = header.headerRow + 1; row <= usedRange.end.row; row += 1) {
+      if (dataset.range !== undefined && dataset.dataStartRow !== null) {
+        for (let row = dataset.dataStartRow; row <= dataset.range.end.row; row += 1) {
           throwIfAborted(signal, 'filterData');
-          if (!hasActualValueInRow(worksheet, row, usedRange.start.column, usedRange.end.column)) {
+          if (
+            !hasActualValueInRow(
+              worksheet,
+              row,
+              dataset.range.start.column,
+              dataset.range.end.column,
+            )
+          ) {
             continue;
           }
           sourceRowCount += 1;
 
           const rowValues = readSelectedValues(worksheet, row, sourceColumns);
           if (
-            matchesConditions(rowValues, conditions, validated.logic, (condition) => ({
+            evaluatePredicates(rowValues, predicates, validated.logic, (predicate) => ({
               sheetName: validated.sheetName,
-              column: condition.condition.column,
-              address: formatCellAddress({ row, column: condition.columnIndex }),
-              operator: condition.condition.operator,
+              column: predicate.predicate.column,
+              address: formatCellAddress({ row, column: predicate.columnIndex }),
+              operator: predicate.predicate.operator,
             }))
           ) {
             recordMatchedRow(accumulator, row);

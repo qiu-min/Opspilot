@@ -27,12 +27,18 @@ import {
   type SessionRunCoordinator,
 } from './session-run-coordinator.js';
 import { SessionRecoverableTurnConflictError } from './turn-errors.js';
+import {
+  resolveExcelResourceContext,
+  type ExcelResourceContext,
+  type ExcelSourceResourceStore,
+} from '../../resources/excel/index.js';
 
 const SAFE_TURN_FAILURE_MESSAGE = 'Turn failed.';
 
 /** Dependencies used to execute one application-level Turn. */
 export interface ExecuteTurnDependencies {
   readonly sessionStore: SessionStore;
+  readonly excelSourceResourceStore: ExcelSourceResourceStore;
   readonly turnStore: TurnStore;
   readonly turnExecutionContextStore?: TurnExecutionContextStore;
   readonly modelGateway: ModelGateway;
@@ -51,6 +57,7 @@ export interface ExecuteTurnDependencies {
 /** Orchestrates Session input commit, Agent Runtime execution, and Turn durability. */
 export class ExecuteTurn {
   private readonly sessionStore: SessionStore;
+  private readonly excelSourceResourceStore: ExcelSourceResourceStore;
   private readonly turnStore: TurnStore;
   private readonly turnExecutionContextStore?: TurnExecutionContextStore;
   private readonly modelGateway: ModelGateway;
@@ -67,6 +74,7 @@ export class ExecuteTurn {
 
   public constructor(options: ExecuteTurnDependencies) {
     this.sessionStore = options.sessionStore;
+    this.excelSourceResourceStore = options.excelSourceResourceStore;
     this.turnStore = options.turnStore;
     this.turnExecutionContextStore = options.turnExecutionContextStore;
     this.modelGateway = options.modelGateway;
@@ -121,13 +129,14 @@ export class ExecuteTurn {
       throw new SessionRecoverableTurnConflictError(sessionId, recoverableTurn.getId());
     }
 
-    this.registerExcelResourceIfPresent(session, input);
+    const excelResourceContext = await this.prepareExcelResourceContext(session, input);
+    const excelResource = input.excelResource ?? excelResourceContext.activeResource ?? undefined;
 
     const turn = Turn.create({ sessionId, baseLeafId: session.getLeafId() });
     this.turnStore.create(turn);
     this.turnExecutionContextStore?.save(turn.getId(), {
       version: 1,
-      ...(input.excelResource === undefined ? {} : { excelResource: input.excelResource }),
+      ...(excelResource === undefined ? {} : { excelResource }),
     });
     turn.start();
     this.turnStore.save(turn);
@@ -163,7 +172,7 @@ export class ExecuteTurn {
 
       const tools = wrapToolDefinitions(this.toolDefinitions, {
         sessionId,
-        ...(input.excelResource === undefined ? {} : { excelResource: input.excelResource }),
+        ...(excelResource === undefined ? {} : { excelResource }),
       });
       agentSession = createAgentSession({
         session,
@@ -174,7 +183,7 @@ export class ExecuteTurn {
         tools,
         systemPrompt: withExcelResourceGuidance(
           this.systemPrompt,
-          input.excelResource !== undefined,
+          excelResource !== undefined,
         ),
         contextManager: this.contextManager,
         compactionService: this.compactionService,
@@ -245,10 +254,20 @@ export class ExecuteTurn {
     }
   }
 
-  private registerExcelResourceIfPresent(session: Session, input: ExecuteTurnInput): void {
-    if (input.excelResource === undefined) return;
-    session.registerResource({ id: input.excelResource.id, kind: 'excel' });
-    this.sessionStore.saveMetadata(session.getId(), session.getMetadata());
+  private async prepareExcelResourceContext(
+    session: Session,
+    input: ExecuteTurnInput,
+  ): Promise<ExcelResourceContext> {
+    if (input.excelResource !== undefined) {
+      await this.excelSourceResourceStore.save(session.getId(), input.excelResource);
+      session.registerResource({ id: input.excelResource.id, kind: 'excel' });
+      session.setActiveResource(input.excelResource.id);
+      this.sessionStore.saveMetadata(session.getId(), session.getMetadata());
+
+      return await resolveExcelResourceContext(session, this.excelSourceResourceStore);
+    }
+
+    return await resolveExcelResourceContext(session, this.excelSourceResourceStore);
   }
 
   private publishTurnTerminal(

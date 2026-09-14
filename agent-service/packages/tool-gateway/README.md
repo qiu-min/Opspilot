@@ -43,7 +43,7 @@ src/
 - `discovery/`：Workbook / Worksheet 结构发现能力
 - `aggregate/`：数据聚合能力
 - `filter/`：按精确表头和类型条件筛选数据行的能力
-- `shared/`：Excel Capability 间复用的基础实现
+- `shared/`：Excel Capability 间复用的基础实现，包括 Dataset Range 解析和 Filter / Aggregate 共用的 Predicate Contract / Evaluator
 
 ## Architecture
 

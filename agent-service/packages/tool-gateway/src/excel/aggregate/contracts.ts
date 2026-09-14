@@ -1,3 +1,8 @@
+import type {
+  ExcelPredicate,
+  ExcelPredicateLogic,
+} from '../shared/query/predicate-contracts.js';
+
 export type AggregateOperation = 'sum' | 'count' | 'average' | 'min' | 'max';
 
 export interface AggregateMetric {
@@ -9,8 +14,15 @@ export interface AggregateMetric {
 export interface AggregateDataInput {
   readonly filePath: string;
   readonly sheetName: string;
+  readonly range?: string;
+  readonly where?: AggregateWhere;
   readonly groupBy?: readonly string[];
   readonly metrics: readonly AggregateMetric[];
+}
+
+export interface AggregateWhere {
+  readonly conditions: readonly ExcelPredicate[];
+  readonly logic?: ExcelPredicateLogic;
 }
 
 export type AggregateGroupValue = string | number | boolean | Date | null;

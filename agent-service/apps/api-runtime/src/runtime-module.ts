@@ -19,6 +19,7 @@ import {
 } from '@opspilot/application';
 import {
   FileSystemExcelWorkingResourceStore,
+  FileSystemExcelSourceResourceStore,
   FileSystemSessionStore,
   FileSystemTurnStore,
   FileSystemTurnExecutionContextStore,
@@ -62,6 +63,9 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
   const excelWorkingResourceStore = new FileSystemExcelWorkingResourceStore(
     config.workspaceStorageRoot,
   );
+  const excelSourceResourceStore = new FileSystemExcelSourceResourceStore(
+    config.workspaceStorageRoot,
+  );
   const excelWorkingResourceManager = new ExcelWorkingResourceManager({
     store: excelWorkingResourceStore,
     fileOperator: excelWorkingResourceStore,
@@ -80,6 +84,7 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
   const toolPresentationResolver = createExcelToolPresentationResolver();
   const executeTurn = new ExecuteTurn({
     sessionStore,
+    excelSourceResourceStore,
     turnStore,
     turnExecutionContextStore,
     modelGateway,

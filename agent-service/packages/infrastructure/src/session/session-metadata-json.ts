@@ -14,6 +14,7 @@ export interface SessionMetadataRecord {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly resources: readonly SessionResourceRef[];
+  readonly activeResourceId: string | null;
 }
 
 /** Raised when metadata.json cannot be read or does not satisfy its schema. */
@@ -35,6 +36,7 @@ export function serializeSessionMetadata(metadata: SessionMetadata): string {
     createdAt: metadata.createdAt,
     updatedAt: metadata.updatedAt,
     resources: resources.map((resource) => ({ ...resource })),
+    activeResourceId: metadata.activeResourceId ?? null,
   };
   return `${JSON.stringify(record, null, 2)}\n`;
 }
@@ -79,6 +81,12 @@ export function parseSessionMetadata(content: string): SessionMetadata {
   }
 
   const resources = parseSessionResources(value.resources);
+  const activeResourceId = parseActiveResourceId(value.activeResourceId);
+  if (activeResourceId !== null && !resources.some((resource) => resource.id === activeResourceId)) {
+    throw new SessionMetadataPersistenceError(
+      `metadata.json activeResourceId must reference a registered resource: ${activeResourceId}.`,
+    );
+  }
 
   return {
     id: value.id,
@@ -86,6 +94,7 @@ export function parseSessionMetadata(content: string): SessionMetadata {
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
     resources,
+    activeResourceId,
   };
 }
 
@@ -158,6 +167,25 @@ function validateSessionMetadata(metadata: SessionMetadata): void {
     );
   }
   parseSessionResources(metadata.resources);
+  const activeResourceId = parseActiveResourceId(metadata.activeResourceId);
+  if (
+    activeResourceId !== null &&
+    !metadata.resources.some((resource) => resource.id === activeResourceId)
+  ) {
+    throw new SessionMetadataPersistenceError(
+      `Session metadata activeResourceId must reference a registered resource: ${activeResourceId}.`,
+    );
+  }
+}
+
+function parseActiveResourceId(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (!isNonEmptyString(value)) {
+    throw new SessionMetadataPersistenceError(
+      'metadata.json activeResourceId must be null or a non-empty string.',
+    );
+  }
+  return value;
 }
 
 function parseSessionResources(value: unknown): readonly SessionResourceRef[] {

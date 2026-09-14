@@ -18,10 +18,15 @@ sessions/{sessionId}/
 └── history.jsonl   # append-only Session history
 ```
 
-`metadata.json` 保存 versioned filesystem record，包括 Session resource registry；`history.jsonl`
+`metadata.json` 保存 versioned filesystem record，包括 Session resource registry 和可空的
+`activeResourceId`；`history.jsonl`
 保留现有 Session header 和 entry 格式。旧的 `sessions/{sessionId}.jsonl` 会在首次成功读取后
 非破坏性 lazy migrate 到新目录，旧文件保持不变；新目录优先，且不完整的新目录不会 fallback
 到旧文件。旧 metadata 缺少 `resources` 时按空 registry 读取。
+旧 metadata 缺少 `activeResourceId` 时按 `null` 读取。Excel source locator 不进入 Session
+metadata，而由 Application 的 `ExcelSourceResourceStore` 独立持久化；filesystem adapter 使用
+`workspaces/{sessionId}/excel-source-locators.json`，后续 Turn 会按 registry 恢复所有仍有
+locator 的 Excel resources，并单独标识 active resource。
 
 `SessionStore.appendEntry()` 先追加 history，再原子更新 `metadata.updatedAt`；metadata update 失败会明确抛错，下一次 load 会根据 durable history reconciliation。`saveMetadata()` 通过 temp file + rename 原子替换整个 metadata snapshot。
 
@@ -95,8 +100,12 @@ live presentation 相同的 `ToolPresentationResolver` 重新解析，失败时�
 - `session/`：Session 创建、Runtime projection、history projection 与 Session persistence port。
 - `turn/`：Turn execution、recovery、live stream、presentation 与 persistence port。
 - `context/`、`tools/`、`system-prompt/`：保持为独立的应用能力模块。
-- `resources/excel/`：定义 Session-scoped Excel working resource、copy-on-write 生命周期及持久化 port；不依赖具体 filesystem adapter，也不改变 Tool Gateway contract。
-- `Session.registerResource()`：由 `ExecuteTurn` 在收到新 Excel resource 后登记轻量 `id + kind`；本次不自动选择历史资源，也不接入 Working Resource Manager。
+- `resources/excel/`：定义 Session-scoped Excel resource registry 的 source locator port、Turn
+  resource context，以及 Excel working resource、copy-on-write 生命周期及持久化 port；不依赖具体
+  filesystem adapter，也不改变 Tool Gateway contract。
+- `Session.registerResource()`：由 `ExecuteTurn` 在收到新 Excel resource 后登记轻量 `id + kind`；
+  后续 Turn 从独立 source locator store 恢复可用 resources，并以 `activeResourceId` 作为默认
+  resource；不接入 Working Resource Manager。
 
 ## Excel working resources
 

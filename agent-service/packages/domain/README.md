@@ -4,11 +4,12 @@ OpsPilot 的 Session Domain package。
 
 当前只包含纯内存 `Session` aggregate。Session 同时拥有两部分业务状态：
 
-- `SessionMetadata`：`id`、可空 `title`、`createdAt`、`updatedAt` 和 Session resource registry
+- `SessionMetadata`：`id`、可空 `title`、`createdAt`、`updatedAt`、Session resource registry 和可空的 `activeResourceId`
 - Session history tree：entries、parent、active leaf、branch 和 compaction invariants
 
 metadata mutation 不会生成 history entry，也不会改变 history tree。Resource registry 只记录
 Session 知道的资源 `id + kind`，不包含 storage path 或 working-copy 状态；重复注册是幂等的。
+`activeResourceId` 只能指向已登记资源，也不进入 history tree。
 持久化格式和文件布局属于上层 Application adapter；Domain 只通过显式的 restore/create API
 接收和返回业务状态。
 

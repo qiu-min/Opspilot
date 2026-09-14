@@ -28,14 +28,21 @@ import {
 } from '../src/index.js';
 import { InMemorySessionStore } from './support/in-memory-session-store.js';
 import { InMemoryTurnStore } from './support/in-memory-turn-store.js';
+import { InMemoryExcelSourceResourceStore } from './support/in-memory-excel-source-resource-store.js';
 
 class TestExecuteTurn extends ExecuteTurn {
   public constructor(
-    options: Omit<ExecuteTurnDependencies, 'turnStore'> & {
+    options: Omit<ExecuteTurnDependencies, 'turnStore' | 'excelSourceResourceStore'> & {
       readonly turnStore?: ExecuteTurnDependencies['turnStore'];
+      readonly excelSourceResourceStore?: ExecuteTurnDependencies['excelSourceResourceStore'];
     },
   ) {
-    super({ ...options, turnStore: options.turnStore ?? new InMemoryTurnStore() });
+    super({
+      ...options,
+      turnStore: options.turnStore ?? new InMemoryTurnStore(),
+      excelSourceResourceStore:
+        options.excelSourceResourceStore ?? new InMemoryExcelSourceResourceStore(),
+    });
   }
 }
 
@@ -252,6 +259,7 @@ describe('ExecuteTurn', () => {
     expect(store.load(result.sessionId).getResources()).toEqual([
       { id: 'resource-1', kind: 'excel' },
     ]);
+    expect(store.load(result.sessionId).getActiveResourceId()).toBe('resource-1');
     expect(gateway.requestedContexts[0]?.systemPrompt).toContain('SENTINEL_SYSTEM_PROMPT');
     expect(gateway.requestedContexts[0]?.systemPrompt).toContain(
       'This Turn includes an attached Excel workbook.',
@@ -314,6 +322,52 @@ describe('ExecuteTurn', () => {
       { id: 'resource-a', kind: 'excel' },
       { id: 'resource-b', kind: 'excel' },
     ]);
+    expect(store.load(first.sessionId).getActiveResourceId()).toBe('resource-a');
+  });
+
+  it('restores the active Excel source locator for a later Turn without explicit input', async () => {
+    const { store } = createStore();
+    const call: ModelToolCall = { callId: 'call-restored', name: 'lookup', arguments: {} };
+    const receivedContexts: ToolContext[] = [];
+    const definition: ToolDefinition = {
+      name: 'lookup',
+      description: 'Lookup description',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      execute: async (_callId, _args, _signal, context) => {
+        receivedContexts.push(context);
+        return { content: [{ type: 'text', text: 'looked up' }] };
+      },
+    };
+    const runner = new TestExecuteTurn({
+      sessionStore: store,
+      modelGateway: createGateway([
+        assistantStream(assistantMessage('', model, [call]), model),
+        assistantStream(assistantMessage('first done'), model),
+        assistantStream(assistantMessage('', model, [call]), model),
+        assistantStream(assistantMessage('second done'), model),
+      ]),
+      toolDefinitions: [definition],
+      defaultModel: model,
+    });
+    const resource = { id: 'resource-a', filePath: 'workbook-a.xlsx' };
+
+    const first = await runner.execute({
+      message: userMessage('use workbook a'),
+      excelResource: resource,
+    });
+    await runner.execute({
+      sessionId: first.sessionId,
+      message: userMessage('continue with the workbook'),
+    });
+
+    expect(receivedContexts).toEqual([
+      { sessionId: first.sessionId, excelResource: resource },
+      { sessionId: first.sessionId, excelResource: resource },
+    ]);
+    expect(store.load(first.sessionId).getResources()).toEqual([
+      { id: 'resource-a', kind: 'excel' },
+    ]);
+    expect(store.load(first.sessionId).getActiveResourceId()).toBe('resource-a');
   });
 
   it('persists a completed Turn with ordered events and an assistant checkpoint', async () => {

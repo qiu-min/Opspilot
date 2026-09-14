@@ -76,6 +76,38 @@ describe('ExcelJsFilterAdapter', () => {
     });
   });
 
+  it('uses the first row of an explicit range as the header and stays within the range', async () => {
+    await createWorkbook(filePath, (workbook) => {
+      const worksheet = workbook.addWorksheet('Sales');
+      worksheet.getCell('A1').value = '2026 Sales Report';
+      worksheet.getCell('A3').value = 'Product';
+      worksheet.getCell('B3').value = 'Region';
+      worksheet.getCell('C3').value = 'Amount';
+      worksheet.getCell('A4').value = 'A';
+      worksheet.getCell('B4').value = 'East';
+      worksheet.getCell('C4').value = 100;
+      worksheet.getCell('A5').value = 'B';
+      worksheet.getCell('B5').value = 'West';
+      worksheet.getCell('C5').value = 200;
+      worksheet.getCell('A6').value = 'Outside';
+      worksheet.getCell('B6').value = 'East';
+      worksheet.getCell('C6').value = 999;
+    });
+
+    await expect(
+      adapter.filterData({
+        filePath,
+        sheetName: 'Sales',
+        range: 'A3:C5',
+        conditions: [{ column: 'Region', operator: 'equals', value: 'East' }],
+      }),
+    ).resolves.toMatchObject({
+      sourceRowCount: 2,
+      matchedRowCount: 1,
+      matchedRanges: [{ startRow: 4, endRow: 4 }],
+    });
+  });
+
   it('supports notEquals and treats an empty cell as not equal', async () => {
     await createTableWorkbook(filePath);
 
@@ -466,6 +498,19 @@ describe('ExcelJsFilterAdapter', () => {
         conditions: [{ column: 'Region', operator: 'isEmpty', value: 'East' }],
       }),
     ).toThrow();
+  });
+
+  it('rejects invalid explicit ranges with a stable capability error', async () => {
+    await createTableWorkbook(filePath);
+
+    await expect(
+      adapter.filterData({
+        filePath,
+        sheetName: 'Sales',
+        range: 'A0:C3',
+        conditions: [{ column: 'Region', operator: 'isNotEmpty' }],
+      }),
+    ).rejects.toMatchObject({ code: ExcelCapabilityErrorCode.INVALID_CELL_REFERENCE });
   });
 });
 

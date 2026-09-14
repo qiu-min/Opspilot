@@ -9,6 +9,7 @@ import {
   aggregateDataInputSchema,
   ExcelCapabilityErrorCode,
   ExcelJsAggregateAdapter,
+  ExcelJsFilterAdapter,
 } from '../../../src/index.js';
 
 describe('ExcelJsAggregateAdapter', () => {
@@ -97,6 +98,149 @@ describe('ExcelJsAggregateAdapter', () => {
       ],
       sourceRowCount: 2,
     });
+  });
+
+  it('uses the first row of an explicit range as the header and stays within the range', async () => {
+    await createWorkbook(filePath, (workbook) => {
+      const worksheet = workbook.addWorksheet('Sales');
+      worksheet.getCell('A1').value = '2026 Sales Report';
+      worksheet.getCell('A3').value = 'Product';
+      worksheet.getCell('B3').value = 'Region';
+      worksheet.getCell('C3').value = 'Amount';
+      worksheet.getCell('A4').value = 'A';
+      worksheet.getCell('B4').value = 'East';
+      worksheet.getCell('C4').value = 100;
+      worksheet.getCell('A5').value = 'B';
+      worksheet.getCell('B5').value = 'West';
+      worksheet.getCell('C5').value = 200;
+      worksheet.getCell('A6').value = 'Outside';
+      worksheet.getCell('B6').value = 'East';
+      worksheet.getCell('C6').value = 999;
+    });
+
+    await expect(
+      adapter.aggregateData({
+        filePath,
+        sheetName: 'Sales',
+        range: 'A3:C5',
+        metrics: [{ column: 'Amount', operation: 'sum' }],
+      }),
+    ).resolves.toMatchObject({
+      rows: [[300]],
+      sourceRowCount: 2,
+      resultRowCount: 1,
+    });
+  });
+
+  it('rejects invalid explicit ranges with a stable capability error', async () => {
+    await createGroupedWorkbook(filePath);
+
+    await expect(
+      adapter.aggregateData({
+        filePath,
+        sheetName: 'Sales',
+        range: 'C10:A1',
+        metrics: [{ column: 'Amount', operation: 'sum' }],
+      }),
+    ).rejects.toMatchObject({ code: ExcelCapabilityErrorCode.INVALID_CELL_REFERENCE });
+  });
+
+  it('applies where predicates before grouping and aggregation', async () => {
+    await createWorkbook(filePath, (workbook) => {
+      const worksheet = workbook.addWorksheet('Sales');
+      worksheet.getCell('A1').value = 'Product';
+      worksheet.getCell('B1').value = 'Region';
+      worksheet.getCell('C1').value = 'Amount';
+      worksheet.getCell('A2').value = 'A';
+      worksheet.getCell('B2').value = 'East';
+      worksheet.getCell('C2').value = 100;
+      worksheet.getCell('A3').value = 'A';
+      worksheet.getCell('B3').value = 'West';
+      worksheet.getCell('C3').value = 200;
+      worksheet.getCell('A4').value = 'B';
+      worksheet.getCell('B4').value = 'East';
+      worksheet.getCell('C4').value = 300;
+    });
+
+    await expect(
+      adapter.aggregateData({
+        filePath,
+        sheetName: 'Sales',
+        where: {
+          conditions: [{ column: 'Region', operator: 'equals', value: 'East' }],
+        },
+        groupBy: ['Product'],
+        metrics: [{ column: 'Amount', operation: 'sum' }],
+      }),
+    ).resolves.toMatchObject({ rows: [['A', 100], ['B', 300]], sourceRowCount: 3 });
+
+    const allResult = await adapter.aggregateData({
+      filePath,
+      sheetName: 'Sales',
+      where: {
+        conditions: [
+          { column: 'Region', operator: 'equals', value: 'East' },
+          { column: 'Amount', operator: 'greaterThan', value: 100 },
+        ],
+        logic: 'all',
+      },
+      metrics: [{ column: 'Amount', operation: 'sum' }],
+    });
+    const anyResult = await adapter.aggregateData({
+      filePath,
+      sheetName: 'Sales',
+      where: {
+        conditions: [
+          { column: 'Region', operator: 'equals', value: 'East' },
+          { column: 'Region', operator: 'equals', value: 'West' },
+        ],
+        logic: 'any',
+      },
+      metrics: [{ column: 'Amount', operation: 'sum' }],
+    });
+
+    expect(allResult.rows).toEqual([[300]]);
+    expect(anyResult.rows).toEqual([[600]]);
+  });
+
+  it('shares predicate semantics with filter without using a filter result', async () => {
+    await createWorkbook(filePath, (workbook) => {
+      const worksheet = workbook.addWorksheet('Sales');
+      worksheet.getCell('A1').value = 'Product';
+      worksheet.getCell('B1').value = 'Region';
+      worksheet.getCell('C1').value = 'Amount';
+      worksheet.getCell('A2').value = 'A';
+      worksheet.getCell('B2').value = 'East';
+      worksheet.getCell('C2').value = 100;
+      worksheet.getCell('A3').value = 'A';
+      worksheet.getCell('B3').value = 'West';
+      worksheet.getCell('C3').value = 200;
+      worksheet.getCell('A4').value = 'B';
+      worksheet.getCell('B4').value = 'East';
+      worksheet.getCell('C4').value = 300;
+    });
+
+    const predicate = {
+      conditions: [
+        { column: 'Region', operator: 'equals' as const, value: 'East' },
+        { column: 'Amount', operator: 'greaterThan' as const, value: 100 },
+      ],
+      logic: 'all' as const,
+    };
+    const filterResult = await new ExcelJsFilterAdapter().filterData({
+      filePath,
+      sheetName: 'Sales',
+      ...predicate,
+    });
+    const aggregateResult = await adapter.aggregateData({
+      filePath,
+      sheetName: 'Sales',
+      where: predicate,
+      metrics: [{ column: 'Amount', operation: 'count' }],
+    });
+
+    expect(filterResult.matchedRowCount).toBe(1);
+    expect(aggregateResult.rows).toEqual([[1]]);
   });
 
   it('groups by one column and keeps null groups', async () => {

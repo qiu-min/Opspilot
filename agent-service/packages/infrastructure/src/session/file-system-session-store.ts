@@ -151,6 +151,7 @@ export class FileSystemSessionStore implements SessionStore {
       createdAt: loaded.header.timestamp,
       updatedAt: loaded.entries.at(-1)?.timestamp ?? loaded.header.timestamp,
       resources: [],
+      activeResourceId: null,
     };
     const session = Session.restore({
       metadata,

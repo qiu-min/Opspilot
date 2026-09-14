@@ -24,7 +24,11 @@ import {
   ExecuteTurn,
   type TurnExecutionEvent,
 } from '@opspilot/application';
-import { FileSystemSessionStore, FileSystemTurnStore } from '@opspilot/infrastructure';
+import {
+  FileSystemExcelSourceResourceStore,
+  FileSystemSessionStore,
+  FileSystemTurnStore,
+} from '@opspilot/infrastructure';
 
 const model: Model = {
   provider: 'test-provider',
@@ -60,6 +64,9 @@ describe('Application Excel discovery Turn integration', () => {
     const store = new FileSystemSessionStore(sessionDirectory);
     const runner = new ExecuteTurn({
       sessionStore: store,
+      excelSourceResourceStore: new FileSystemExcelSourceResourceStore(
+        join(sessionDirectory, 'workspaces'),
+      ),
       turnStore: new FileSystemTurnStore(sessionDirectory),
       modelGateway: gateway,
       defaultModel: model,
@@ -121,6 +128,9 @@ describe('Application Excel discovery Turn integration', () => {
     const store = new FileSystemSessionStore(sessionDirectory);
     const runner = new ExecuteTurn({
       sessionStore: store,
+      excelSourceResourceStore: new FileSystemExcelSourceResourceStore(
+        join(sessionDirectory, 'workspaces'),
+      ),
       turnStore: new FileSystemTurnStore(sessionDirectory),
       modelGateway: gateway,
       defaultModel: model,
@@ -203,6 +213,9 @@ describe('Application Excel discovery Turn integration', () => {
     const store = new FileSystemSessionStore(sessionDirectory);
     const runner = new ExecuteTurn({
       sessionStore: store,
+      excelSourceResourceStore: new FileSystemExcelSourceResourceStore(
+        join(sessionDirectory, 'workspaces'),
+      ),
       turnStore: new FileSystemTurnStore(sessionDirectory),
       modelGateway: gateway,
       defaultModel: model,
