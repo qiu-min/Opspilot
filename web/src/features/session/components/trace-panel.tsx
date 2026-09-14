@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { cn } from "../../../lib/utils";
+import { formatModelRetryDelay, humanizeModelFailureKind } from "../model-reliability";
 import { humanizeToolName } from "../turn-stream-projection";
 import { formatDuration } from "../turn-metrics";
 import type {
@@ -28,6 +29,7 @@ export type TraceSummary = {
   toolCallCount: number;
   totalTokens: number;
   attemptCount: number;
+  retryCount: number;
 };
 
 export type TraceAttemptGroup = {
@@ -42,6 +44,7 @@ export function getTraceSummary(spans: readonly TraceSpanResponse[]): TraceSumma
     toolCallCount: spans.filter((span) => span.kind === "tool").length,
     totalTokens: spans.reduce((total, span) => total + (span.kind === "model" ? span.usage?.totalTokens ?? 0 : 0), 0),
     attemptCount: attempts.size,
+    retryCount: spans.reduce((total, span) => total + (span.kind === "model" ? span.retries.length : 0), 0),
   };
 }
 
@@ -183,6 +186,7 @@ function TraceSummaryCard({ trace, summary }: { trace: TurnTraceResponse; summar
         <SummaryMetric label="Tool calls" value={formatCount(summary.toolCallCount, "tool", "tools")} />
         <SummaryMetric label="Tokens" value={`${summary.totalTokens.toLocaleString()} tokens`} />
         <SummaryMetric label="Attempts" value={formatCount(summary.attemptCount, "attempt", "attempts")} />
+        <SummaryMetric label="Retries" value={formatCount(summary.retryCount, "retry", "retries")} />
         <SummaryMetric label="Spans" value={formatCount(trace.spans.length, "span", "spans")} />
       </div>
     </section>
@@ -222,19 +226,20 @@ function TraceSpanRow({
         <span className="min-w-0 flex-1 pt-0.5">
           <span className={cn("block truncate text-xs font-semibold", span.status === "error" ? "text-danger" : span.status === "incomplete" ? "text-mutedInk" : "text-ink")}>{getTraceSpanLabel(span)}</span>
           <span className="mt-0.5 block truncate font-mono text-[10px] text-mutedInk">{getTraceSpanIdentity(span)}</span>
+          {span.kind === "model" && span.retries.length > 0 && <span className="mt-1 block truncate text-[10px] text-mutedInk">{formatCount(span.retries.length, "retry", "retries")}</span>}
         </span>
         <span className="flex shrink-0 flex-col items-end gap-1">
           <span className="text-[11px] tabular-nums text-mutedInk">{formatTraceDuration(span.durationMs)}</span>
           <Badge tone={getSpanStatusTone(span.status)}>{statusLabel}</Badge>
         </span>
       </button>
-      {isExpanded && <div id={detailId} className="relative z-10 ml-[38px] mr-1 mb-2 rounded-lg border border-line bg-slate-50/80 px-3 py-2.5"><dl className="grid grid-cols-2 gap-x-3 gap-y-2">{details.map((detail) => <TraceDetail key={detail.label} detail={detail} />)}</dl></div>}
+      {isExpanded && <div id={detailId} className="relative z-10 ml-[38px] mr-1 mb-2 rounded-lg border border-line bg-slate-50/80 px-3 py-2.5"><dl className="grid grid-cols-2 gap-x-3 gap-y-2">{details.map((detail) => <TraceDetail key={detail.label} detail={detail} />)}</dl>{span.kind === "model" && <ModelReliabilityDetails span={span} />}</div>}
     </div>
   );
 }
 
 function TraceDetail({ detail }: { detail: TraceDetail }) {
-  return <div className="min-w-0"><dt className="text-[9px] font-semibold uppercase tracking-[0.08em] text-mutedInk">{detail.label}</dt><dd className={cn("mt-0.5 text-[10px] text-ink", detail.mono && "break-all font-mono")}>{detail.value}</dd></div>;
+  return <div className="min-w-0"><dt className="text-[9px] font-semibold uppercase tracking-[0.08em] text-mutedInk">{detail.label}</dt><dd className={cn("mt-0.5 break-words text-[10px] text-ink", detail.mono && "break-all font-mono")}>{detail.value}</dd></div>;
 }
 
 type TraceDetail = { label: string; value: string; mono?: boolean };
@@ -279,6 +284,56 @@ export function getTraceSpanDetails(span: TraceSpanResponse): TraceDetail[] {
   ];
 }
 
+export function ModelReliabilityDetails({ span }: { span: Extract<TraceSpanResponse, { kind: "model" }> }) {
+  const hasFinalFailure = span.error !== null;
+  return (
+    <>
+      {span.retries.length > 0 && (
+        <section className="mt-3 border-t border-line pt-3" aria-label="Retry history">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-[10px] font-semibold uppercase tracking-[0.1em] text-mutedInk">Retry history</h3>
+            <Badge tone="orange">{formatCount(span.retries.length, "retry", "retries")}</Badge>
+          </div>
+          {span.status === "completed" && !hasFinalFailure && <p className="mt-2 text-[10px] font-medium text-teal">Retry happened · Final result succeeded</p>}
+          {hasFinalFailure && <p className="mt-2 text-[10px] font-medium text-mutedInk">Previous retries</p>}
+          <ol className="mt-2 space-y-2.5">
+            {span.retries.map((retry, index) => (
+              <li key={`${retry.failedAttempt}-${retry.nextAttempt}-${index}`} className="rounded-md border border-line/80 bg-surface px-2.5 py-2">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-[10px] font-semibold text-ink">Retry {retry.failedAttempt} → {retry.nextAttempt}</p>
+                  <Badge tone="orange" className="shrink-0">{humanizeModelFailureKind(retry.error.kind)}</Badge>
+                </div>
+                <p className="mt-1 text-[10px] tabular-nums text-mutedInk">{formatModelRetryDelay(retry.delayMs)} · {formatTraceDate(retry.timestamp)}</p>
+                <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2">
+                  {getModelErrorDiagnosticDetails(retry.error).map((detail) => <TraceDetail key={detail.label} detail={detail} />)}
+                </dl>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+      {hasFinalFailure && (
+        <section className="mt-3 border-t border-danger/20 pt-3" aria-label="Final failure">
+          <h3 className="text-[10px] font-semibold uppercase tracking-[0.1em] text-danger">Final failure</h3>
+          <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2">
+            {getModelErrorDiagnosticDetails(span.error!, true).map((detail) => <TraceDetail key={detail.label} detail={detail} />)}
+          </dl>
+        </section>
+      )}
+    </>
+  );
+}
+
+function getModelErrorDiagnosticDetails(error: NonNullable<Extract<TraceSpanResponse, { kind: "model" }>["error"]>, includeMessage = false): TraceDetail[] {
+  return [
+    { label: "Error kind", value: humanizeModelFailureKind(error.kind) },
+    { label: "Code", value: error.code, mono: true },
+    ...(includeMessage ? [{ label: "Message", value: error.message }] : []),
+    ...(error.statusCode == null ? [] : [{ label: "HTTP status", value: `HTTP ${error.statusCode}` }]),
+    ...(error.providerCode == null ? [] : [{ label: "Provider code", value: error.providerCode, mono: true }]),
+    ...(includeMessage ? [{ label: "Retryable", value: error.retryable ? "Yes" : "No" }] : []),
+  ];
+}
 function SpanIcon({ span }: { span: TraceSpanResponse }) {
   const Icon = span.kind === "model" ? Sparkles : span.kind === "tool" ? Wrench : Layers;
   return <span className={cn("flex h-6 w-6 shrink-0 items-center justify-center rounded-full", getSpanIconClasses(span.status))} aria-hidden="true"><Icon size={13} /></span>;

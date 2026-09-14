@@ -1,9 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { TracePanel, formatTraceDuration, formatTraceIdentifier, getTraceSpanDetails, getTraceSpanLabel, getTraceSummary, groupTraceSpansByAttempt } from "./trace-panel";
-import type { TraceSpanResponse, TurnTraceResponse } from "../../../api/sessions/turn-trace-contracts";
+import { ModelReliabilityDetails, TracePanel, formatTraceDuration, formatTraceIdentifier, getTraceSpanDetails, getTraceSpanLabel, getTraceSummary, groupTraceSpansByAttempt } from "./trace-panel";
+import type { ModelTraceErrorResponse, TraceSpanResponse, TurnTraceResponse } from "../../../api/sessions/turn-trace-contracts";
 
-const modelSpan: TraceSpanResponse = {
+const modelSpan: Extract<TraceSpanResponse, { kind: "model" }> = {
   id: "model:model-call-A",
   kind: "model",
   attempt: 1,
@@ -15,6 +15,34 @@ const modelSpan: TraceSpanResponse = {
   durationMs: 1_000,
   modelCallId: "model-call-A",
   usage: { inputTokens: 1_000, outputTokens: 1_250, totalTokens: 2_250 },
+  error: null,
+  retries: [],
+};
+
+const rateLimitError: ModelTraceErrorResponse = {
+  kind: "rate_limit",
+  code: "MODEL_RATE_LIMIT",
+  message: "Model provider rate limit exceeded.",
+  retryable: true,
+  statusCode: 429,
+  providerCode: "provider_rate_limit",
+};
+
+const retriedModelSpan: Extract<TraceSpanResponse, { kind: "model" }> = {
+  ...modelSpan,
+  retries: [
+    { failedAttempt: 1, nextAttempt: 2, delayMs: 500, error: rateLimitError, timestamp: "2026-09-09T00:00:00.500Z" },
+    { failedAttempt: 2, nextAttempt: 3, delayMs: 1_000, error: { ...rateLimitError, kind: "timeout", code: "MODEL_TIMEOUT", providerCode: null, statusCode: null }, timestamp: "2026-09-09T00:00:01.500Z" },
+  ],
+};
+
+const finalFailure: ModelTraceErrorResponse = {
+  kind: "server_error",
+  code: "MODEL_SERVER_ERROR",
+  message: "Model provider request failed.",
+  retryable: true,
+  statusCode: 503,
+  providerCode: "provider_unavailable",
 };
 
 const toolSpan: TraceSpanResponse = {
@@ -60,11 +88,15 @@ const trace: TurnTraceResponse = {
 describe("TracePanel helpers", () => {
   it("derives summary metrics and preserves recovery attempt grouping", () => {
     const recoveryModel = { ...modelSpan, id: "model:model-call-B", modelCallId: "model-call-B", attempt: 2 };
-    expect(getTraceSummary([...trace.spans, recoveryModel])).toEqual({ modelCallCount: 2, toolCallCount: 1, totalTokens: 4_500, attemptCount: 2 });
+    expect(getTraceSummary([...trace.spans, recoveryModel])).toEqual({ modelCallCount: 2, toolCallCount: 1, totalTokens: 4_500, attemptCount: 2, retryCount: 0 });
     expect(groupTraceSpansByAttempt([...trace.spans, recoveryModel])).toEqual([
       { attempt: 1, spans: [modelSpan, toolSpan, compactionSpan] },
       { attempt: 2, spans: [recoveryModel] },
     ]);
+  });
+
+  it("counts retries across logical model spans", () => {
+    expect(getTraceSummary([retriedModelSpan, toolSpan]).retryCount).toBe(2);
   });
 
   it("uses shared tool labels and exposes detail fields for every span kind", () => {
@@ -91,6 +123,40 @@ describe("TracePanel", () => {
     expect(markup).toContain("Attempt 1");
     expect(markup).toContain("Attempt 2");
     expect(markup).toContain("Incomplete");
+  });
+
+  it("shows retry history and successful recovery without a final failure", () => {
+    const collapsed = renderToStaticMarkup(<TracePanel turnId="turn-1" trace={{ ...trace, spans: [retriedModelSpan] }} isLoading={false} error={null} onRefresh={vi.fn()} />);
+    const expanded = renderToStaticMarkup(<ModelReliabilityDetails span={retriedModelSpan} />);
+
+    expect(collapsed).toContain("2 retries");
+    expect(expanded).toContain("Retry history");
+    expect(expanded).toContain("Retry 1 → 2");
+    expect(expanded).toContain("Retry 2 → 3");
+    expect(expanded).toContain("Rate limited");
+    expect(expanded).toContain("Request timed out");
+    expect(expanded).toContain("Final result succeeded");
+    expect(expanded).not.toContain("Final failure");
+  });
+
+  it("shows final failure after retries and omits absent diagnostics", () => {
+    const failed = { ...retriedModelSpan, status: "error" as const, error: finalFailure };
+    const markup = renderToStaticMarkup(<ModelReliabilityDetails span={failed} />);
+
+    expect(markup).toContain("Previous retries");
+    expect(markup).toContain("Final failure");
+    expect(markup).toContain("Provider server error");
+    expect(markup).toContain("MODEL_SERVER_ERROR");
+    expect(markup).toContain("Model provider request failed.");
+    expect(markup).toContain("HTTP 503");
+    expect(markup).toContain("provider_unavailable");
+    expect(markup).toContain("Yes");
+
+    const noDiagnostics = renderToStaticMarkup(<ModelReliabilityDetails span={{ ...modelSpan, error: { ...finalFailure, statusCode: null, providerCode: null } }} />);
+    expect(noDiagnostics).not.toContain("HTTP status");
+    expect(noDiagnostics).not.toContain("Provider code");
+    expect(noDiagnostics).not.toContain("undefined");
+    expect(noDiagnostics).not.toContain("null");
   });
 
   it("shortens long timeline identifiers while keeping full detail values", () => {

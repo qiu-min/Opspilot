@@ -1,3 +1,5 @@
+import type { ModelFailureKind } from "./turn-stream-contracts";
+
 export type TurnTraceStatus = "running" | "completed" | "failed" | "cancelled";
 
 export type TraceSpanStatus = "completed" | "incomplete" | "error";
@@ -20,10 +22,29 @@ export type TraceUsageResponse = {
   totalTokens: number;
 };
 
+export type ModelTraceErrorResponse = {
+  kind: ModelFailureKind;
+  code: string;
+  message: string;
+  retryable: boolean;
+  statusCode: number | null;
+  providerCode: string | null;
+};
+
+export type ModelRetryTraceResponse = {
+  failedAttempt: number;
+  nextAttempt: number;
+  delayMs: number;
+  error: ModelTraceErrorResponse;
+  timestamp: string;
+};
+
 export type ModelTraceSpanResponse = TraceSpanBase & {
   kind: "model";
   modelCallId: string;
   usage: TraceUsageResponse | null;
+  error: ModelTraceErrorResponse | null;
+  retries: ModelRetryTraceResponse[];
 };
 
 export type ToolTraceSpanResponse = TraceSpanBase & {

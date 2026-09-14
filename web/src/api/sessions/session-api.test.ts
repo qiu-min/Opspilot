@@ -25,6 +25,8 @@ describe("getSessionTurnTrace", () => {
           durationMs: 1_000,
           modelCallId: "model-call-A",
           usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+          error: null,
+          retries: [],
         },
         {
           id: "tool:call-A:attempt:1",
