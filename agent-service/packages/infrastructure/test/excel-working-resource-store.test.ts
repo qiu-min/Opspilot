@@ -14,6 +14,10 @@ import {
   ExcelWorkingResourceStoreError,
   FileSystemExcelWorkingResourceStore,
 } from '../src/index.js';
+import {
+  removeDirectoryIfPresent,
+  removeTemporaryFile,
+} from '../src/workspaces/filesystem-excel-working-resource-store.js';
 
 const directories: string[] = [];
 
@@ -129,7 +133,7 @@ describe('FileSystemExcelWorkingResourceStore', () => {
     const legacyDirectory = join(resourcesDirectory, 'file-1');
     const staleDirectory = join(resourcesDirectory, '.creating-file-1-stale');
     await mkdir(legacyDirectory, { recursive: true });
-    await writeFile(join(legacyDirectory, 'working.xlsx'), 'legacy unpublished copy', 'utf8');
+    await writeFile(join(legacyDirectory, 'working.xlsx'), await readFile(sourcePath));
     await mkdir(staleDirectory, { recursive: true });
     await writeFile(join(staleDirectory, 'working.xlsx'), 'stale unpublished copy', 'utf8');
 
@@ -143,6 +147,21 @@ describe('FileSystemExcelWorkingResourceStore', () => {
     await expect(readFile(join(legacyDirectory, 'metadata.json'), 'utf8')).resolves.toContain(
       '"revision": 0',
     );
+  });
+
+  it('refuses to delete a legacy orphan whose contents differ from the source', async () => {
+    const { manager, sourcePath, workspaceRoot } = await createManager();
+    const resourcesDirectory = join(workspaceRoot, 'session-a', 'resources');
+    const legacyDirectory = join(resourcesDirectory, 'file-1');
+    const workingPath = join(legacyDirectory, 'working.xlsx');
+    await mkdir(legacyDirectory, { recursive: true });
+    await writeFile(workingPath, 'user changes', 'utf8');
+
+    await expect(
+      manager.ensureWritableResource(resourceRequest('session-a', 'file-1', sourcePath)),
+    ).rejects.toThrow(/legacy working\.xlsx differs from sourcePath/);
+    await expect(readFile(workingPath, 'utf8')).resolves.toBe('user changes');
+    await expect(readdir(resourcesDirectory)).resolves.toEqual(['file-1']);
   });
 
   it('removes staging after an abort following a successful copy and allows retry', async () => {
@@ -218,6 +237,24 @@ describe('FileSystemExcelWorkingResourceStore', () => {
     expect(resource.workingPath).toContain(join('session-a', 'resources', 'file-1'));
     await expect(store.get('../outside', 'file-1')).rejects.toThrow(/cannot escape workspaceRoot/);
   });
+
+  it('ignores ENOENT but propagates other errors from cleanup helpers', async () => {
+    const cleanupHelpers = [removeTemporaryFile, removeDirectoryIfPresent];
+    for (const cleanup of cleanupHelpers) {
+      await expect(
+        cleanup('missing', async () => {
+          throw filesystemError('ENOENT');
+        }),
+      ).resolves.toBeUndefined();
+
+      const error = filesystemError('EACCES');
+      await expect(
+        cleanup('blocked', async () => {
+          throw error;
+        }),
+      ).rejects.toBe(error);
+    }
+  });
 });
 
 async function createManager(): Promise<{
@@ -244,6 +281,10 @@ function resourceRequest(
   sourcePath: string,
 ): { readonly sessionId: string; readonly sourceResourceId: string; readonly sourcePath: string } {
   return { sessionId, sourceResourceId, sourcePath };
+}
+
+function filesystemError(code: string): NodeJS.ErrnoException {
+  return Object.assign(new Error(code), { code });
 }
 
 class MetadataWriteFailureStore extends FileSystemExcelWorkingResourceStore {

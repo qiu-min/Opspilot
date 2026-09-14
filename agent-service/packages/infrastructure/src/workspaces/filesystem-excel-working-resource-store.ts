@@ -101,7 +101,7 @@ export class FileSystemExcelWorkingResourceStore
     throwIfAborted(input.signal);
 
     await ensureDirectoryInsideWorkspace(paths.resourcesDirectory, this.workspaceRoot);
-    await this.removeSafeLegacyOrphan(paths);
+    await this.removeSafeLegacyOrphan(paths, input.sourcePath);
     await this.removeStaleStagingDirectories(paths.resourcesDirectory, input.sourceResourceId);
     if (await existsAsPath(paths.directory)) {
       throw new ExcelWorkingResourceStoreError(
@@ -293,7 +293,10 @@ export class FileSystemExcelWorkingResourceStore
     await rename(stagingDirectory, finalDirectory);
   }
 
-  private async removeSafeLegacyOrphan(paths: WorkingResourcePaths): Promise<void> {
+  private async removeSafeLegacyOrphan(
+    paths: WorkingResourcePaths,
+    sourcePath: string,
+  ): Promise<void> {
     if (!(await existsAsPath(paths.directory))) return;
     await assertDirectoryInsideWorkspace(paths.directory, this.workspaceRoot);
     const entries = await readdir(paths.directory, { withFileTypes: true });
@@ -307,6 +310,28 @@ export class FileSystemExcelWorkingResourceStore
       throw new ExcelWorkingResourceStoreError(
         `Cannot initialize ${paths.directory}: an unpublished resource directory contains unexpected files.`,
       );
+    }
+    if (entries.length === 1) {
+      await assertRegularFileInsideWorkspace(
+        paths.working,
+        this.workspaceRoot,
+        'legacy working copy',
+      );
+      let hasSameContent: boolean;
+      try {
+        hasSameContent = await filesHaveSameContent(paths.working, sourcePath);
+      } catch (error) {
+        throw new ExcelWorkingResourceStoreError(
+          `Unable to compare legacy Excel working copy ${paths.working} with sourcePath.`,
+          { cause: error },
+        );
+      }
+      if (!hasSameContent) {
+        throw new ExcelWorkingResourceStoreError(
+          `Cannot initialize ${paths.directory}: legacy working.xlsx differs from sourcePath ` +
+            'and may contain user changes.',
+        );
+      }
     }
     await rm(paths.directory, { recursive: true, force: true });
   }
@@ -543,20 +568,37 @@ async function existsAsPath(filePath: string): Promise<boolean> {
   }
 }
 
-async function removeTemporaryFile(filePath: string): Promise<void> {
+type RemovePath = (path: string) => Promise<void>;
+
+/** @internal Filesystem cleanup helper; not re-exported from the infrastructure barrel. */
+export async function removeTemporaryFile(
+  filePath: string,
+  remove: RemovePath = async (path) => unlink(path),
+): Promise<void> {
   try {
-    await unlink(filePath);
+    await remove(filePath);
   } catch (error) {
-    if (!isFileNotFoundError(error)) return;
+    if (isFileNotFoundError(error)) return;
+    throw error;
   }
 }
 
-async function removeDirectoryIfPresent(directory: string): Promise<void> {
+/** @internal Filesystem cleanup helper; not re-exported from the infrastructure barrel. */
+export async function removeDirectoryIfPresent(
+  directory: string,
+  remove: RemovePath = async (path) => rm(path, { recursive: true, force: true }),
+): Promise<void> {
   try {
-    await rm(directory, { recursive: true, force: true });
+    await remove(directory);
   } catch (error) {
-    if (!isFileNotFoundError(error)) return;
+    if (isFileNotFoundError(error)) return;
+    throw error;
   }
+}
+
+async function filesHaveSameContent(firstPath: string, secondPath: string): Promise<boolean> {
+  const [first, second] = await Promise.all([readFile(firstPath), readFile(secondPath)]);
+  return first.equals(second);
 }
 
 function isPathWithin(rootPath: string, candidatePath: string): boolean {
