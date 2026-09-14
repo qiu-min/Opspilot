@@ -11,16 +11,20 @@ import { throwIfAborted } from './workbook-io.js';
 
 const HEADER_DETECTION_CONFIG = {
   maxCandidateRows: 20,
+  maxDataScanRows: 50,
   maxDataSampleRows: 20,
   continuityRowTarget: 5,
   minimumHeaderCells: 2,
   singleColumnPenalty: 0.12,
-  confidenceThreshold: 0.47,
+  candidateScoreThreshold: 0.47,
   densityWeight: 0.2,
   textRatioWeight: 0.2,
   uniquenessWeight: 0.15,
   continuityWeight: 0.2,
   typeBoundaryWeight: 0.25,
+  confidenceBestWeight: 0.7,
+  confidenceMarginWeight: 0.3,
+  confidenceMarginScale: 0.5,
   singleCellPenalty: 0.28,
   nonTextPenalty: 0.08,
   lowDensityPenaltyWeight: 0.13,
@@ -72,6 +76,7 @@ export function detectHeaderRow(
   }
 
   let bestCandidate: HeaderCandidateScore | undefined;
+  let secondBestCandidate: HeaderCandidateScore | undefined;
   const lastCandidateRow = Math.min(
     usedRange.start.row + HEADER_DETECTION_CONFIG.maxCandidateRows - 1,
     usedRange.end.row,
@@ -87,14 +92,18 @@ export function detectHeaderRow(
     const dataRows = sampleDataRows(worksheet, row, usedRange, signal);
     const score = scoreHeaderCandidate(worksheet, usedRange, row, candidate, dataRows);
     if (bestCandidate === undefined || score.score > bestCandidate.score) {
+      secondBestCandidate = bestCandidate;
       bestCandidate = score;
+    } else if (secondBestCandidate === undefined || score.score > secondBestCandidate.score) {
+      secondBestCandidate = score;
     }
   }
 
-  const confidence = bestCandidate?.score ?? 0;
+  const confidence = calculateConfidence(bestCandidate, secondBestCandidate);
   return {
     headerRow:
-      bestCandidate !== undefined && confidence >= HEADER_DETECTION_CONFIG.confidenceThreshold
+      bestCandidate !== undefined &&
+      bestCandidate.score >= HEADER_DETECTION_CONFIG.candidateScoreThreshold
         ? bestCandidate.row
         : null,
     confidence,
@@ -131,9 +140,13 @@ function sampleDataRows(
   signal: AbortSignal | undefined,
 ): readonly RowSnapshot[] {
   const rows: RowSnapshot[] = [];
+  const lastScanRow = Math.min(
+    candidateRow + HEADER_DETECTION_CONFIG.maxDataScanRows,
+    usedRange.end.row,
+  );
   for (
     let row = candidateRow + 1;
-    row <= usedRange.end.row && rows.length < HEADER_DETECTION_CONFIG.maxDataSampleRows;
+    row <= lastScanRow && rows.length < HEADER_DETECTION_CONFIG.maxDataSampleRows;
     row += 1
   ) {
     throwIfAborted(signal, 'detectHeaderRow');
@@ -144,6 +157,27 @@ function sampleDataRows(
   }
 
   return rows;
+}
+
+/** Combines candidate quality with the separation from the runner-up candidate. */
+function calculateConfidence(
+  bestCandidate: HeaderCandidateScore | undefined,
+  secondBestCandidate: HeaderCandidateScore | undefined,
+): number {
+  if (bestCandidate === undefined) {
+    return 0;
+  }
+
+  if (secondBestCandidate === undefined) {
+    return bestCandidate.score;
+  }
+
+  const margin = Math.max(0, bestCandidate.score - secondBestCandidate.score);
+  const normalizedMargin = clamp01(margin / HEADER_DETECTION_CONFIG.confidenceMarginScale);
+  return clamp01(
+    bestCandidate.score * HEADER_DETECTION_CONFIG.confidenceBestWeight +
+      normalizedMargin * HEADER_DETECTION_CONFIG.confidenceMarginWeight,
+  );
 }
 
 /** Calculates the explainable score for one candidate and its downstream sample. */

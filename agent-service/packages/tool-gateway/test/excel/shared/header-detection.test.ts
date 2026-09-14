@@ -31,7 +31,54 @@ describe('detectHeaderRow', () => {
     const result = detect(worksheet);
 
     expect(result.headerRow).toBe(1);
-    expect(result.confidence).toBeGreaterThan(0.7);
+    expect(result.confidence).toBeGreaterThan(0.6);
+  });
+
+  it('prefers a real header over a dense title row', async () => {
+    const worksheet = await createWorksheet(filePath, (sheet) => {
+      setRow(sheet, 1, ['2025 Sales Report', 'Q1', 'Q2']);
+      setRow(sheet, 3, ['Product', 'Region', 'Amount']);
+      setRow(sheet, 4, ['A', 'East', 100]);
+      setRow(sheet, 5, ['B', 'South', 200]);
+    });
+
+    const result = detect(worksheet);
+
+    expect(result.headerRow).toBe(3);
+    expect(result.confidence).toBeGreaterThan(0.47);
+    expect(result.confidence).toBeLessThan(0.7);
+  });
+
+  it('lowers confidence when multiple rows are plausible header candidates', async () => {
+    const ambiguousWorksheet = await createWorksheet(join(directory, 'ambiguous.xlsx'), (sheet) => {
+      setRow(sheet, 1, ['Report', 'Region', 'Amount']);
+      setRow(sheet, 3, ['Product', 'Region', 'Amount']);
+      setRow(sheet, 4, ['A', 'East', 100]);
+      setRow(sheet, 5, ['B', 'South', 200]);
+    });
+    const clearWorksheet = await createWorksheet(join(directory, 'clear.xlsx'), (sheet) => {
+      setRow(sheet, 1, ['Product', 'Date', 'Amount']);
+      setRow(sheet, 2, ['A', new Date('2026-01-01T00:00:00.000Z'), 100]);
+      setRow(sheet, 3, ['B', new Date('2026-01-02T00:00:00.000Z'), 200]);
+    });
+
+    const ambiguousResult = detect(ambiguousWorksheet);
+    const clearResult = detect(clearWorksheet);
+
+    expect(ambiguousResult.headerRow).toBe(3);
+    expect(clearResult.headerRow).toBe(1);
+    expect(clearResult.confidence).toBeGreaterThan(ambiguousResult.confidence);
+  });
+
+  it('does not use data beyond the bounded scan window', async () => {
+    const worksheet = await createWorksheet(filePath, (sheet) => {
+      setRow(sheet, 1, ['Report', 'Q1', 'Q2']);
+      setRow(sheet, 101, ['A', 'East', 100]);
+    });
+
+    const result = detect(worksheet);
+
+    expect(result.confidence).toBeLessThan(0.65);
   });
 
   it('prefers a header after a title and blank row', async () => {
