@@ -96,8 +96,9 @@ live presentation 相同的 `ToolPresentationResolver` 重新解析，失败时�
 
 Backend 提供的 Excel source 是 immutable input。Application 的
 `ExcelWorkingResourceManager` 以 `sessionId + sourceResourceId` 为稳定身份：读取时优先返回
-已存在的 `workingPath`，首次 writable 请求通过文件操作 port 创建副本并以 `revision = 0`
-发布 metadata；`markModified()` 才会递增并持久化 revision。sourcePath 变更会被拒绝。
+已存在的 `workingPath`，首次 writable 请求通过初始化 port 创建并发布完整副本（`revision = 0`）；
+`markModified()` 才会递增并持久化 revision。sourcePath 变更会被拒绝。staging、metadata
+写入和目录 rename 等 filesystem 细节不出现在 Application。
 
 Filesystem adapter 位于 `@opspilot/infrastructure`，使用：
 

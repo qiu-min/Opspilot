@@ -35,7 +35,7 @@ Infrastructure 保留 legacy `{sessionId}.jsonl` 读取和 lazy migration 行为
 ## Excel working resource adapter
 
 `FileSystemExcelWorkingResourceStore` 实现 Application 的
-`ExcelWorkingResourceStore` 与 copy-on-write 文件操作 port。Working copy 使用独立布局：
+`ExcelWorkingResourceStore` 与 working-resource initialization port。Working copy 使用独立布局：
 
 ```text
 workspaces/{sessionId}/resources/{sourceResourceId}/
@@ -43,9 +43,17 @@ workspaces/{sessionId}/resources/{sourceResourceId}/
 └── metadata.json
 ```
 
-metadata 使用 UTF-8 JSON 和 temp-file + rename 原子替换；读取时校验版本、资源身份、
-revision，以及 working path 和 workspace root 的关系。首次复制使用 exclusive copy，避免
-覆盖已有 working file。Application manager 负责单进程内同一 resource 的并发串行化。
+首次初始化先在同一 `resources/` 父目录下创建 `.creating-{sourceResourceId}-{uuid}/`，将
+`working.xlsx` 与完整 metadata 写入并校验后，通过 directory rename 发布到正式目录；rename
+成功是 commit point。metadata 后续更新使用 UTF-8 JSON 和 temp-file + rename 原子替换。
+读取时校验版本、资源身份、revision，以及 working path 和 workspace root 的关系。首次复制
+使用 exclusive copy，避免覆盖已有 working file。Application manager 负责单进程内同一
+resource 的并发串行化。
+
+初始化失败或 commit 前 abort 时会清理 staging。没有 metadata 的旧 PR1 formal orphan 只有
+在目录为空或只包含一个普通 `working.xlsx` 时才会被视为可安全清理；包含其他内容时拒绝
+自动删除，避免误删未知数据。stale `.creating-*` 目录不会被当作已发布 resource，并会在
+下一次同资源初始化前清理。
 
 ## Live stream adapter
 

@@ -1,8 +1,13 @@
-/** Filesystem-facing operations needed by the Application copy-on-write coordinator. */
-export interface ExcelWorkingResourceFileOperator {
-  /** Returns the deterministic workspace path for one Session/resource identity. */
-  getWorkingPath(sessionId: string, sourceResourceId: string): string;
+import type {
+  ExcelWorkingResource,
+  ExcelWorkingResourceRequest,
+} from './excel-working-resource.js';
 
-  /** Copies an immutable source into a not-yet-created working copy. */
-  copySourceToWorking(sourcePath: string, workingPath: string, signal?: AbortSignal): Promise<void>;
+/** Filesystem boundary for atomically initializing a complete working resource. */
+export interface ExcelWorkingResourceFileOperator {
+  /**
+   * Initializes a working resource from its immutable source. Implementations own
+   * staging, metadata creation, validation, and atomic publication details.
+   */
+  initializeWorkingResource(input: ExcelWorkingResourceRequest): Promise<ExcelWorkingResource>;
 }

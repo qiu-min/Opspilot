@@ -1,10 +1,12 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
   ExcelWorkingResourceManager,
   ExcelWorkingResourceSourceMismatchError,
+  type ExcelWorkingResource,
+  type ExcelWorkingResourceRequest,
 } from '@opspilot/application';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -121,6 +123,85 @@ describe('FileSystemExcelWorkingResourceStore', () => {
     ).resolves.toBe('source workbook');
   });
 
+  it('cleans stale staging and the known legacy initial-copy orphan before retrying', async () => {
+    const { manager, sourcePath, workspaceRoot } = await createManager();
+    const resourcesDirectory = join(workspaceRoot, 'session-a', 'resources');
+    const legacyDirectory = join(resourcesDirectory, 'file-1');
+    const staleDirectory = join(resourcesDirectory, '.creating-file-1-stale');
+    await mkdir(legacyDirectory, { recursive: true });
+    await writeFile(join(legacyDirectory, 'working.xlsx'), 'legacy unpublished copy', 'utf8');
+    await mkdir(staleDirectory, { recursive: true });
+    await writeFile(join(staleDirectory, 'working.xlsx'), 'stale unpublished copy', 'utf8');
+
+    const resource = await manager.ensureWritableResource(
+      resourceRequest('session-a', 'file-1', sourcePath),
+    );
+    const entries = await readdir(resourcesDirectory);
+
+    expect(entries).toEqual(['file-1']);
+    await expect(readFile(resource.workingPath, 'utf8')).resolves.toBe('source workbook');
+    await expect(readFile(join(legacyDirectory, 'metadata.json'), 'utf8')).resolves.toContain(
+      '"revision": 0',
+    );
+  });
+
+  it('removes staging after an abort following a successful copy and allows retry', async () => {
+    const { sourcePath, workspaceRoot } = await createManager();
+    const store = new FileSystemExcelWorkingResourceStore(workspaceRoot);
+    const controller = new AbortController();
+    let signalReads = 0;
+    const abortingRequest = {
+      sessionId: 'session-a',
+      sourceResourceId: 'file-1',
+      sourcePath,
+      get signal(): AbortSignal {
+        signalReads += 1;
+        if (signalReads === 3) controller.abort();
+        return controller.signal;
+      },
+    };
+
+    await expect(store.initializeWorkingResource(abortingRequest)).rejects.toThrow();
+    const resourcesDirectory = join(workspaceRoot, 'session-a', 'resources');
+    const entries = await readdir(resourcesDirectory);
+    expect(entries).toEqual([]);
+
+    const manager = new ExcelWorkingResourceManager({ store, fileOperator: store });
+    await expect(
+      manager.ensureWritableResource(resourceRequest('session-a', 'file-1', sourcePath)),
+    ).resolves.toMatchObject({ revision: 0 });
+  });
+
+  it('cleans staging when metadata creation fails and allows a later initialization', async () => {
+    const { sourcePath, workspaceRoot } = await createManager();
+    const request = resourceRequest('session-a', 'file-1', sourcePath);
+    const failingStore = new MetadataWriteFailureStore(workspaceRoot);
+
+    await expect(failingStore.initializeWorkingResource(request)).rejects.toThrow(
+      'Unable to initialize Excel working resource',
+    );
+    await expect(readdir(join(workspaceRoot, 'session-a', 'resources'))).resolves.toEqual([]);
+
+    const store = new FileSystemExcelWorkingResourceStore(workspaceRoot);
+    const manager = new ExcelWorkingResourceManager({ store, fileOperator: store });
+    await expect(manager.ensureWritableResource(request)).resolves.toMatchObject({ revision: 0 });
+  });
+
+  it('cleans staging when publication fails after metadata is ready', async () => {
+    const { sourcePath, workspaceRoot } = await createManager();
+    const request = resourceRequest('session-a', 'file-1', sourcePath);
+    const failingStore = new PublishFailureStore(workspaceRoot);
+
+    await expect(failingStore.initializeWorkingResource(request)).rejects.toThrow(
+      'Unable to initialize Excel working resource',
+    );
+    await expect(readdir(join(workspaceRoot, 'session-a', 'resources'))).resolves.toEqual([]);
+
+    const store = new FileSystemExcelWorkingResourceStore(workspaceRoot);
+    const manager = new ExcelWorkingResourceManager({ store, fileOperator: store });
+    await expect(manager.ensureWritableResource(request)).resolves.toMatchObject({ revision: 0 });
+  });
+
   it('returns null for missing metadata and rejects metadata path tampering', async () => {
     const { manager, sourcePath, workspaceRoot } = await createManager();
     const store = new FileSystemExcelWorkingResourceStore(workspaceRoot);
@@ -163,4 +244,23 @@ function resourceRequest(
   sourcePath: string,
 ): { readonly sessionId: string; readonly sourceResourceId: string; readonly sourcePath: string } {
   return { sessionId, sourceResourceId, sourcePath };
+}
+
+class MetadataWriteFailureStore extends FileSystemExcelWorkingResourceStore {
+  protected override async writeStagedMetadata(
+    _metadataPath: string,
+    _resource: ExcelWorkingResource,
+  ): Promise<void> {
+    throw new Error('metadata write failure');
+  }
+}
+
+class PublishFailureStore extends FileSystemExcelWorkingResourceStore {
+  protected override async publishStagingDirectory(
+    _stagingDirectory: string,
+    _finalDirectory: string,
+    _input: ExcelWorkingResourceRequest,
+  ): Promise<void> {
+    throw new Error('publish failure');
+  }
 }

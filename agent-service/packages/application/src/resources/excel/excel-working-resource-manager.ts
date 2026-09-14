@@ -45,25 +45,8 @@ export class ExcelWorkingResourceManager {
       const existing = await this.loadExistingResource(input);
       if (existing !== null) return existing;
 
-      const workingPath = this.fileOperator.getWorkingPath(input.sessionId, input.sourceResourceId);
-      if (workingPath.trim().length === 0) {
-        throw new ExcelWorkingResourceError(
-          'Working resource file operator returned an empty path.',
-        );
-      }
-
-      const resource: ExcelWorkingResource = {
-        sessionId: input.sessionId,
-        sourceResourceId: input.sourceResourceId,
-        sourcePath: input.sourcePath,
-        workingPath,
-        revision: 0,
-      };
-
-      // The copy is created before metadata is published. A later ensure call can
-      // therefore never copy the immutable source over an already-created resource.
-      await this.fileOperator.copySourceToWorking(input.sourcePath, workingPath, input.signal);
-      await this.store.save(resource, input.signal);
+      const resource = await this.fileOperator.initializeWorkingResource(input);
+      this.assertInitializedResource(input, resource);
       return resource;
     });
   }
@@ -116,6 +99,38 @@ export class ExcelWorkingResourceManager {
     }
     if (typeof input.sourcePath !== 'string' || input.sourcePath.trim().length === 0) {
       throw new ExcelWorkingResourceError('sourcePath is required.');
+    }
+  }
+
+  private assertInitializedResource(
+    input: ExcelWorkingResourceRequest,
+    resource: ExcelWorkingResource,
+  ): void {
+    if (
+      resource.sessionId !== input.sessionId ||
+      resource.sourceResourceId !== input.sourceResourceId
+    ) {
+      throw new ExcelWorkingResourceError(
+        'Working resource initializer returned a different resource identity.',
+      );
+    }
+    if (resource.sourcePath !== input.sourcePath) {
+      throw new ExcelWorkingResourceSourceMismatchError(
+        input.sessionId,
+        input.sourceResourceId,
+        resource.sourcePath,
+        input.sourcePath,
+      );
+    }
+    if (resource.workingPath.trim().length === 0) {
+      throw new ExcelWorkingResourceError(
+        'Working resource initializer returned an empty workingPath.',
+      );
+    }
+    if (resource.revision !== 0) {
+      throw new ExcelWorkingResourceError(
+        `A newly initialized Excel working resource must start at revision 0, received ${resource.revision}.`,
+      );
     }
   }
 

@@ -16,7 +16,7 @@ describe('ExcelWorkingResourceManager', () => {
     const request = resourceRequest('session-a', 'file-1');
 
     await expect(manager.resolveReadablePath(request)).resolves.toBe(request.sourcePath);
-    expect(fileOperator.copyCount).toBe(0);
+    expect(fileOperator.initializeCount).toBe(0);
   });
 
   it('creates one copy on the first writable request and reuses it afterwards', async () => {
@@ -36,7 +36,7 @@ describe('ExcelWorkingResourceManager', () => {
     });
     expect(reused).toEqual(created);
     expect(files.get(created.workingPath)).toBe('changed by the first write');
-    expect(fileOperator.copyCount).toBe(1);
+    expect(fileOperator.initializeCount).toBe(1);
   });
 
   it('keeps Sessions and source resources isolated', async () => {
@@ -100,7 +100,7 @@ describe('ExcelWorkingResourceManager', () => {
       manager.ensureWritableResource(request),
     ]);
 
-    expect(fileOperator.copyCount).toBe(1);
+    expect(fileOperator.initializeCount).toBe(1);
     expect(new Set(resources.map((resource) => resource.workingPath))).toEqual(
       new Set(['/workspace/session-a/resources/file-1/working.xlsx']),
     );
@@ -126,17 +126,27 @@ class FakeStore implements ExcelWorkingResourceStore {
 }
 
 class FakeFileOperator implements ExcelWorkingResourceFileOperator {
-  public copyCount = 0;
+  public initializeCount = 0;
   public readonly files = new Map<string, string>([['/source/book.xlsx', 'source workbook']]);
 
-  public getWorkingPath(sessionId: string, sourceResourceId: string): string {
-    return `/workspace/${sessionId}/resources/${sourceResourceId}/working.xlsx`;
-  }
+  public constructor(private readonly publish: (resource: ExcelWorkingResource) => Promise<void>) {}
 
-  public async copySourceToWorking(sourcePath: string, workingPath: string): Promise<void> {
-    this.copyCount += 1;
+  public async initializeWorkingResource(
+    input: ExcelWorkingResourceRequest,
+  ): Promise<ExcelWorkingResource> {
+    this.initializeCount += 1;
+    const workingPath = `/workspace/${input.sessionId}/resources/${input.sourceResourceId}/working.xlsx`;
     await new Promise((resolve) => setTimeout(resolve, 1));
-    this.files.set(workingPath, this.files.get(sourcePath) ?? 'source workbook');
+    this.files.set(workingPath, this.files.get(input.sourcePath) ?? 'source workbook');
+    const resource: ExcelWorkingResource = {
+      sessionId: input.sessionId,
+      sourceResourceId: input.sourceResourceId,
+      sourcePath: input.sourcePath,
+      workingPath,
+      revision: 0,
+    };
+    await this.publish(resource);
+    return resource;
   }
 }
 
@@ -147,7 +157,7 @@ function createManager(): {
   readonly files: Map<string, string>;
 } {
   const store = new FakeStore();
-  const fileOperator = new FakeFileOperator();
+  const fileOperator = new FakeFileOperator((resource) => store.save(resource));
   return {
     manager: new ExcelWorkingResourceManager({ store, fileOperator }),
     store,
