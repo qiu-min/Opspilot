@@ -87,6 +87,32 @@ describe('buildOpsPilotSystemPrompt', () => {
     expect(prompt).toContain('Base prompt.');
   });
 
+  it('lists available resource ids and the active resource without exposing file paths', () => {
+    const prompt = withExcelResourceGuidance('Base prompt.', {
+      resources: [
+        { id: 'resource-a', filePath: 'C:/private/a.xlsx' },
+        { id: 'resource-b', filePath: 'C:/private/b.xlsx' },
+      ],
+      activeResourceId: 'resource-b',
+    });
+
+    expect(prompt).toContain('Available Excel resources:\n- resource-a\n- resource-b');
+    expect(prompt).toContain('Active Excel resource:\n- resource-b');
+    expect(prompt).toContain('pass its resourceId to the Excel tool');
+    expect(prompt).not.toContain('C:/private');
+    expect(prompt).not.toContain('a.xlsx');
+    expect(prompt).not.toContain('b.xlsx');
+  });
+
+  it('does not add resource guidance when the current Turn has no Excel resources', () => {
+    expect(
+      withExcelResourceGuidance('Base prompt.', {
+        resources: [],
+        activeResourceId: null,
+      }),
+    ).toBe('Base prompt.');
+  });
+
   it('does not change the prompt when no Excel workbook is attached', () => {
     expect(withExcelResourceGuidance('Base prompt.', false)).toBe('Base prompt.');
   });

@@ -31,6 +31,8 @@ describe('ToolDefinition wrappers', () => {
 
     const wrapped = wrapToolDefinition(definition, {
       sessionId: 'session-1',
+      excelResources: [],
+      activeExcelResourceId: null,
     });
 
     expect(wrapped.name).toBe(definition.name);
@@ -42,6 +44,8 @@ describe('ToolDefinition wrappers', () => {
   it('forwards runtime execute arguments and returns the definition result', async () => {
     const context: ToolContext = {
       sessionId: 'session-1',
+      excelResources: [],
+      activeExcelResourceId: null,
     };
     const args: JsonObject = { query: 'value' };
     const signal = new AbortController().signal;
@@ -90,6 +94,8 @@ describe('ToolDefinition wrappers', () => {
 
     const wrapped = wrapToolDefinitions(definitions, {
       sessionId: 'session-1',
+      excelResources: [],
+      activeExcelResourceId: null,
     });
 
     expect(wrapped.map((tool) => tool.name)).toEqual(['first', 'second']);
@@ -104,13 +110,18 @@ describe('ToolDefinition wrappers', () => {
       },
     ];
 
-    expect(wrapToolDefinitions(definitions, { sessionId: 'session-1' }).map((tool) => tool.name)).toEqual([
-      'lookup',
-    ]);
     expect(
       wrapToolDefinitions(definitions, {
         sessionId: 'session-1',
-        excelResource: { id: 'resource-1', filePath: 'workbook.xlsx' },
+        excelResources: [],
+        activeExcelResourceId: null,
+      }).map((tool) => tool.name),
+    ).toEqual(['lookup']);
+    expect(
+      wrapToolDefinitions(definitions, {
+        sessionId: 'session-1',
+        excelResources: [{ id: 'resource-1', filePath: 'workbook.xlsx' }],
+        activeExcelResourceId: 'resource-1',
       }).map((tool) => tool.name),
     ).toEqual(['lookup', 'get_workbook_info']);
   });

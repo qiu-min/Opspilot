@@ -1,7 +1,7 @@
 import type { AgentToolResult } from '@opspilot/agent-runtime';
 import type { JsonObject } from '@opspilot/model-gateway';
 
-import type { ToolContext } from './tool-context.js';
+import type { ToolExecutionContext } from './tool-context.js';
 
 /** Controls whether an interrupted tool call may be retried automatically. */
 export type ToolRecoveryPolicy = 'retry_safe' | 'manual';
@@ -20,6 +20,6 @@ export interface ToolDefinition<TDetails = unknown> {
     callId: string,
     args: JsonObject,
     signal: AbortSignal | undefined,
-    context: ToolContext,
+    context: ToolExecutionContext,
   ): Promise<AgentToolResult<TDetails>>;
 }

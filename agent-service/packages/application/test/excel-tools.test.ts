@@ -10,13 +10,30 @@ import {
   createGetSheetProfileTool,
   createGetWorkbookInfoTool,
   requireExcelResource,
+  resolveExcelResource,
   type ToolContext,
 } from '../src/index.js';
 
 const excelResource = { id: 'resource-1', filePath: 'C:/workbooks/report.xlsx' };
-const context: ToolContext = { sessionId: 'session-1', excelResource };
+const context: ToolContext = {
+  sessionId: 'session-1',
+  excelResources: [excelResource],
+  activeExcelResourceId: excelResource.id,
+};
 
-const contextWithoutResource: ToolContext = { sessionId: 'session-1' };
+const contextWithoutResource: ToolContext = {
+  sessionId: 'session-1',
+  excelResources: [],
+  activeExcelResourceId: null,
+};
+
+const resourceA = { id: 'resource-a', filePath: 'C:/workbooks/a.xlsx' };
+const resourceB = { id: 'resource-b', filePath: 'C:/workbooks/b.xlsx' };
+const multiResourceContext: ToolContext = {
+  sessionId: 'session-1',
+  excelResources: [resourceA, resourceB],
+  activeExcelResourceId: resourceB.id,
+};
 
 const workbookInfo: GetWorkbookInfoResult = {
   sheetCount: 2,
@@ -57,8 +74,37 @@ const sheetProfile: GetSheetProfileResult = {
 };
 
 describe('Excel discovery Application Tools', () => {
-  it('returns the same ExcelResource when one is present', () => {
+  it('resolves the only Excel resource when no resourceId is provided', () => {
+    expect(resolveExcelResource(context)).toBe(excelResource);
     expect(requireExcelResource(context)).toBe(excelResource);
+  });
+
+  it('resolves an explicitly selected resource instead of the active resource', () => {
+    expect(resolveExcelResource(multiResourceContext, resourceA.id)).toBe(resourceA);
+  });
+
+  it('uses the active resource as the default when multiple resources are available', () => {
+    expect(resolveExcelResource(multiResourceContext)).toBe(resourceB);
+  });
+
+  it('returns recoverable errors for invalid resource selection states', () => {
+    expect(() => resolveExcelResource(multiResourceContext, 'missing')).toThrowError(
+      expect.objectContaining({
+        code: 'EXCEL_RESOURCE_NOT_FOUND',
+        message: 'Excel resource "missing" is not available in this Turn.',
+      }),
+    );
+    expect(() =>
+      resolveExcelResource({
+        ...multiResourceContext,
+        activeExcelResourceId: null,
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        code: 'EXCEL_RESOURCE_SELECTION_REQUIRED',
+        message: 'Multiple Excel resources are available. Specify resourceId.',
+      }),
+    );
   });
 
   it('throws a recoverable error with a stable code when no resource is present', () => {
@@ -86,7 +132,14 @@ describe('Excel discovery Application Tools', () => {
 
     expect(tool.parameters).toEqual({
       type: 'object',
-      properties: {},
+      properties: {
+        resourceId: {
+          type: 'string',
+          minLength: 1,
+          description:
+            'ID of the Excel resource to operate on. Use one of the resource IDs available in the current Session.',
+        },
+      },
       additionalProperties: false,
     });
     expect(tool.parameters).not.toHaveProperty('filePath');
@@ -120,6 +173,12 @@ describe('Excel discovery Application Tools', () => {
     expect(tool.parameters).toEqual({
       type: 'object',
       properties: {
+        resourceId: {
+          type: 'string',
+          minLength: 1,
+          description:
+            'ID of the Excel resource to operate on. Use one of the resource IDs available in the current Session.',
+        },
         sheetName: { type: 'string', minLength: 1 },
         sampleSize: { type: 'integer', minimum: 1, maximum: 200 },
       },
@@ -128,7 +187,6 @@ describe('Excel discovery Application Tools', () => {
     });
     expect(tool.parameters).not.toHaveProperty('filePath');
     expect(tool.parameters).not.toHaveProperty('fileId');
-    expect(tool.parameters).not.toHaveProperty('resourceId');
     expect(tool.parameters).not.toHaveProperty('sessionId');
 
     const result = await tool.execute(
@@ -160,6 +218,23 @@ describe('Excel discovery Application Tools', () => {
       'letter: B; header: Name; inferredType: string',
     );
     expect(result.details).toBe(sheetProfile);
+  });
+
+  it('passes the explicitly selected resource filePath to the workbook capability', async () => {
+    const getWorkbookInfo = vi.fn(async () => workbookInfo);
+    const connector: ExcelDiscoveryConnector = {
+      getWorkbookInfo,
+      getSheetProfile: vi.fn(),
+    };
+
+    await createGetWorkbookInfoTool(connector).execute(
+      'call-resource-id',
+      { resourceId: resourceA.id },
+      undefined,
+      multiResourceContext,
+    );
+
+    expect(getWorkbookInfo).toHaveBeenCalledWith({ filePath: resourceA.filePath }, undefined);
   });
 
   it('omits sampleSize when the model does not provide it', async () => {

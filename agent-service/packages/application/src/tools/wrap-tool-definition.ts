@@ -1,12 +1,12 @@
 import type { AgentTool } from '@opspilot/agent-runtime';
 
-import type { ToolContext } from './tool-context.js';
+import type { ToolExecutionContext } from './tool-context.js';
 import type { ToolDefinition } from './tool-definition.js';
 
 /** Adapts one Application ToolDefinition to the Agent Runtime tool contract. */
 export function wrapToolDefinition<TDetails>(
   definition: ToolDefinition<TDetails>,
-  context: ToolContext,
+  context: ToolExecutionContext,
 ): AgentTool<TDetails> {
   return {
     name: definition.name,
@@ -21,12 +21,12 @@ export function wrapToolDefinition<TDetails>(
 /** Adapts Application ToolDefinitions in their original order. */
 export function wrapToolDefinitions(
   definitions: readonly ToolDefinition[],
-  context: ToolContext,
+  context: ToolExecutionContext,
 ): readonly AgentTool[] {
   return definitions
     .filter(
       (definition) =>
-        definition.requiresExcelResource !== true || context.excelResource !== undefined,
+        definition.requiresExcelResource !== true || context.excelResources.length > 0,
     )
     .map((definition) => wrapToolDefinition(definition, context));
 }

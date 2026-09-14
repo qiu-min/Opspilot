@@ -91,6 +91,13 @@ live presentation 相同的 `ToolPresentationResolver` 重新解析，失败时�
 - 组合具体 Agent 所需的模型配置、System Prompt 与工具
 - 向上层 API 提供稳定的应用用例接口
 
+Excel Application Tools 使用当前 Turn 的 `ToolExecutionContext` 携带完整的
+`excelResources` 与 `activeExcelResourceId`。模型可以在工具参数中传入 `resourceId`；Application
+在调用 Capability 前将其解析为对应 `ExcelResource.filePath`。因此 `resourceId`、Session
+状态和默认资源选择不会进入 `@opspilot/tool-gateway`，Gateway 仍只接收业务无关的
+`filePath` 等 Capability 参数。durable `TurnExecutionContext` 仍保持现有的单 active
+Excel resource 契约，恢复扩展留待后续变更。
+
 当前范围暂不包含动态切换模型或 thinking level、复杂重试、扩展系统和 Session 切换等 Coding Agent 能力。
 
 ## 模块布局

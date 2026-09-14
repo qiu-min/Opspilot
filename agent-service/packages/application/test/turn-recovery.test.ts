@@ -344,7 +344,11 @@ it('restores the Excel resource, tools, and guidance when resuming a Turn', asyn
   }).execute(turn.getId());
 
   expect(result.kind).toBe('resumed');
-  expect(toolContext).toEqual({ sessionId: session.getId(), excelResource: resource });
+  expect(toolContext).toEqual({
+    sessionId: session.getId(),
+    excelResources: [resource],
+    activeExcelResourceId: resource.id,
+  });
   expect(modelGateway.requestedContexts[0]?.systemPrompt).toContain(
     'This Turn includes an attached Excel workbook.',
   );

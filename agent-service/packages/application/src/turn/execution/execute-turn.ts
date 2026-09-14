@@ -130,13 +130,13 @@ export class ExecuteTurn {
     }
 
     const excelResourceContext = await this.prepareExcelResourceContext(session, input);
-    const excelResource = input.excelResource ?? excelResourceContext.activeResource ?? undefined;
+    const activeExcelResource = excelResourceContext.activeResource ?? undefined;
 
     const turn = Turn.create({ sessionId, baseLeafId: session.getLeafId() });
     this.turnStore.create(turn);
     this.turnExecutionContextStore?.save(turn.getId(), {
       version: 1,
-      ...(excelResource === undefined ? {} : { excelResource }),
+      ...(activeExcelResource === undefined ? {} : { excelResource: activeExcelResource }),
     });
     turn.start();
     this.turnStore.save(turn);
@@ -172,7 +172,8 @@ export class ExecuteTurn {
 
       const tools = wrapToolDefinitions(this.toolDefinitions, {
         sessionId,
-        ...(excelResource === undefined ? {} : { excelResource }),
+        excelResources: excelResourceContext.resources,
+        activeExcelResourceId: excelResourceContext.activeResourceId,
       });
       agentSession = createAgentSession({
         session,
@@ -183,7 +184,7 @@ export class ExecuteTurn {
         tools,
         systemPrompt: withExcelResourceGuidance(
           this.systemPrompt,
-          excelResource !== undefined,
+          excelResourceContext,
         ),
         contextManager: this.contextManager,
         compactionService: this.compactionService,

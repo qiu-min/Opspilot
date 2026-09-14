@@ -246,13 +246,20 @@ export class ResumeTurn {
         modelGateway: this.modelGateway,
         tools: wrapToolDefinitions(this.toolDefinitions, {
           sessionId,
-          ...(executionContext?.excelResource === undefined
-            ? {}
-            : { excelResource: executionContext.excelResource }),
+          excelResources:
+            executionContext?.excelResource === undefined
+              ? []
+              : [executionContext.excelResource],
+          activeExcelResourceId: executionContext?.excelResource?.id ?? null,
         }),
         systemPrompt: withExcelResourceGuidance(
           this.systemPrompt,
-          executionContext?.excelResource !== undefined,
+          executionContext?.excelResource === undefined
+            ? { resources: [], activeResourceId: null }
+            : {
+                resources: [executionContext.excelResource],
+                activeResourceId: executionContext.excelResource.id,
+              },
         ),
         contextManager: this.contextManager,
         compactionService: this.compactionService,

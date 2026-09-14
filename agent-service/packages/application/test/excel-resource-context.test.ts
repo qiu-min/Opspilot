@@ -28,7 +28,7 @@ describe('resolveExcelResourceContext', () => {
     });
   });
 
-  it('skips a registered resource whose source locator is no longer available', async () => {
+  it('reports a registered resource whose source locator is no longer available', async () => {
     const session = Session.create({ id: 'session-1' });
     session.registerResource({ id: 'workbook-a', kind: 'excel' });
     session.registerResource({ id: 'workbook-b', kind: 'excel' });
@@ -38,10 +38,8 @@ describe('resolveExcelResourceContext', () => {
       save: async () => undefined,
     };
 
-    await expect(resolveExcelResourceContext(session, store)).resolves.toMatchObject({
-      resources: [{ id: 'workbook-a', filePath: 'a.xlsx' }],
-      activeResourceId: 'workbook-b',
-      activeResource: null,
-    });
+    await expect(resolveExcelResourceContext(session, store)).rejects.toThrow(
+      'Excel source locator is registered but not available: workbook-b.',
+    );
   });
 });

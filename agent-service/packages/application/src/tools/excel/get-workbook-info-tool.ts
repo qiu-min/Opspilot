@@ -1,12 +1,19 @@
 import type { ExcelDiscoveryConnector, GetWorkbookInfoResult } from '@opspilot/tool-gateway';
 import type { JsonObject } from '@opspilot/model-gateway';
 
-import { requireExcelResource } from './require-excel-resource.js';
+import { resolveExcelResource } from './require-excel-resource.js';
 import type { ToolDefinition } from '../tool-definition.js';
 
 const GET_WORKBOOK_INFO_PARAMETERS: JsonObject = {
   type: 'object',
-  properties: {},
+  properties: {
+    resourceId: {
+      type: 'string',
+      minLength: 1,
+      description:
+        'ID of the Excel resource to operate on. Use one of the resource IDs available in the current Session.',
+    },
+  },
   additionalProperties: false,
 };
 
@@ -20,8 +27,9 @@ export function createGetWorkbookInfoTool(
     parameters: GET_WORKBOOK_INFO_PARAMETERS,
     recoveryPolicy: 'retry_safe',
     requiresExcelResource: true,
-    async execute(_callId, _args, signal, context) {
-      const excelResource = requireExcelResource(context);
+    async execute(_callId, args, signal, context) {
+      const resourceId = narrowResourceId(args);
+      const excelResource = resolveExcelResource(context, resourceId);
       const result = await discoveryConnector.getWorkbookInfo(
         { filePath: excelResource.filePath },
         signal,
@@ -33,6 +41,17 @@ export function createGetWorkbookInfoTool(
       };
     },
   };
+}
+
+/** Narrows the optional resource selector after Agent Runtime validation. */
+function narrowResourceId(args: JsonObject): string | undefined {
+  const resourceId = args.resourceId;
+  if (resourceId === undefined) return undefined;
+  if (typeof resourceId !== 'string') {
+    throw new TypeError('get_workbook_info resourceId must be a string when provided.');
+  }
+
+  return resourceId;
 }
 
 /** Formats workbook metadata as stable, compact text for the model context. */

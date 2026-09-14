@@ -10,10 +10,12 @@ import type {
   ModelGateway,
 } from '@opspilot/model-gateway';
 import { createModelEventStream } from '@opspilot/model-gateway';
+import type { ExcelDiscoveryConnector } from '@opspilot/tool-gateway';
 
 import {
   AgentSession,
   buildSessionContext,
+  createGetWorkbookInfoTool,
   createCompactionSummaryMessage,
   type ContextManager,
   ExecuteTurn,
@@ -325,6 +327,61 @@ describe('ExecuteTurn', () => {
     expect(store.load(first.sessionId).getActiveResourceId()).toBe('resource-a');
   });
 
+  it('routes explicit and default Excel tool calls to the selected resource in one Session', async () => {
+    const { store } = createStore();
+    const resourceA = { id: 'resource-a', filePath: 'workbook-a.xlsx' };
+    const resourceB = { id: 'resource-b', filePath: 'workbook-b.xlsx' };
+    const getWorkbookInfo = vi.fn<ExcelDiscoveryConnector['getWorkbookInfo']>(async () => ({
+      sheetCount: 0,
+      sheets: [],
+    }));
+    const connector: ExcelDiscoveryConnector = {
+      getWorkbookInfo,
+      getSheetProfile: vi.fn(),
+    };
+    const explicitCall: ModelToolCall = {
+      callId: 'call-explicit-a',
+      name: 'get_workbook_info',
+      arguments: { resourceId: resourceA.id },
+    };
+    const defaultCall: ModelToolCall = {
+      callId: 'call-default-b',
+      name: 'get_workbook_info',
+      arguments: {},
+    };
+    const runner = new TestExecuteTurn({
+      sessionStore: store,
+      modelGateway: createGateway([
+        assistantStream(assistantMessage('attached a'), model),
+        assistantStream(assistantMessage('', model, [explicitCall]), model),
+        assistantStream(assistantMessage('explicit a'), model),
+        assistantStream(assistantMessage('', model, [defaultCall]), model),
+        assistantStream(assistantMessage('default b'), model),
+      ]),
+      toolDefinitions: [createGetWorkbookInfoTool(connector)],
+      defaultModel: model,
+    });
+
+    const first = await runner.execute({
+      message: userMessage('attach workbook a'),
+      excelResource: resourceA,
+    });
+    await runner.execute({
+      sessionId: first.sessionId,
+      message: userMessage('attach workbook b'),
+      excelResource: resourceB,
+    });
+    await runner.execute({
+      sessionId: first.sessionId,
+      message: userMessage('use the active workbook'),
+    });
+
+    expect(getWorkbookInfo.mock.calls.map(([input]) => input.filePath)).toEqual([
+      resourceA.filePath,
+      resourceB.filePath,
+    ]);
+  });
+
   it('restores the active Excel source locator for a later Turn without explicit input', async () => {
     const { store } = createStore();
     const call: ModelToolCall = { callId: 'call-restored', name: 'lookup', arguments: {} };
@@ -361,8 +418,16 @@ describe('ExecuteTurn', () => {
     });
 
     expect(receivedContexts).toEqual([
-      { sessionId: first.sessionId, excelResource: resource },
-      { sessionId: first.sessionId, excelResource: resource },
+      {
+        sessionId: first.sessionId,
+        excelResources: [resource],
+        activeExcelResourceId: resource.id,
+      },
+      {
+        sessionId: first.sessionId,
+        excelResources: [resource],
+        activeExcelResourceId: resource.id,
+      },
     ]);
     expect(store.load(first.sessionId).getResources()).toEqual([
       { id: 'resource-a', kind: 'excel' },
@@ -1390,7 +1455,8 @@ describe('ExecuteTurn', () => {
 
     expect(receivedContext).toEqual({
       sessionId: result.sessionId,
-      excelResource: { id: 'resource-1', filePath: 'workbook.xlsx' },
+      excelResources: [{ id: 'resource-1', filePath: 'workbook.xlsx' }],
+      activeExcelResourceId: 'resource-1',
     });
     expect(receivedSignal).toBe(gateway.requestedOptions[0]?.signal);
     expect(result.messages[2]).toEqual({
@@ -1449,7 +1515,11 @@ describe('ExecuteTurn', () => {
 
     await runner.execute({ message: userMessage('use lookup') });
 
-    expect(receivedContext).toEqual({ sessionId: expect.any(String) });
+    expect(receivedContext).toEqual({
+      sessionId: expect.any(String),
+      excelResources: [],
+      activeExcelResourceId: null,
+    });
   });
 
   it('uses the input ExcelResource independently for each turn on one runner', async () => {
@@ -1492,8 +1562,16 @@ describe('ExecuteTurn', () => {
     });
 
     expect(receivedContexts).toEqual([
-      { sessionId: firstResult.sessionId, excelResource: resourceA },
-      { sessionId: firstResult.sessionId, excelResource: resourceB },
+      {
+        sessionId: firstResult.sessionId,
+        excelResources: [resourceA],
+        activeExcelResourceId: resourceA.id,
+      },
+      {
+        sessionId: firstResult.sessionId,
+        excelResources: [resourceA, resourceB],
+        activeExcelResourceId: resourceB.id,
+      },
     ]);
   });
 

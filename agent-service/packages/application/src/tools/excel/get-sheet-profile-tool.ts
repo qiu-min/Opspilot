@@ -1,12 +1,18 @@
 import type { ExcelDiscoveryConnector, GetSheetProfileResult } from '@opspilot/tool-gateway';
 import type { JsonObject } from '@opspilot/model-gateway';
 
-import { requireExcelResource } from './require-excel-resource.js';
+import { resolveExcelResource } from './require-excel-resource.js';
 import type { ToolDefinition } from '../tool-definition.js';
 
 const GET_SHEET_PROFILE_PARAMETERS: JsonObject = {
   type: 'object',
   properties: {
+    resourceId: {
+      type: 'string',
+      minLength: 1,
+      description:
+        'ID of the Excel resource to operate on. Use one of the resource IDs available in the current Session.',
+    },
     sheetName: { type: 'string', minLength: 1 },
     sampleSize: { type: 'integer', minimum: 1, maximum: 200 },
   },
@@ -17,6 +23,7 @@ const GET_SHEET_PROFILE_PARAMETERS: JsonObject = {
 interface GetSheetProfileToolArguments {
   readonly sheetName: string;
   readonly sampleSize?: number;
+  readonly resourceId?: string;
 }
 
 /** Creates the Application Tool that profiles one worksheet in the current Excel resource. */
@@ -30,8 +37,8 @@ export function createGetSheetProfileTool(
     recoveryPolicy: 'retry_safe',
     requiresExcelResource: true,
     async execute(_callId, args, signal, context) {
-      const { sheetName, sampleSize } = narrowArguments(args);
-      const excelResource = requireExcelResource(context);
+      const { sheetName, sampleSize, resourceId } = narrowArguments(args);
+      const excelResource = resolveExcelResource(context, resourceId);
       const input = {
         filePath: excelResource.filePath,
         sheetName,
@@ -49,6 +56,11 @@ export function createGetSheetProfileTool(
 
 /** Narrows arguments that have already passed the Agent Runtime schema validation. */
 function narrowArguments(args: JsonObject): GetSheetProfileToolArguments {
+  const resourceId = args.resourceId;
+  if (resourceId !== undefined && typeof resourceId !== 'string') {
+    throw new TypeError('get_sheet_profile resourceId must be a string when provided.');
+  }
+
   const sheetName = args.sheetName;
   if (typeof sheetName !== 'string') {
     throw new TypeError('get_sheet_profile requires a string sheetName argument.');
@@ -59,7 +71,11 @@ function narrowArguments(args: JsonObject): GetSheetProfileToolArguments {
     throw new TypeError('get_sheet_profile sampleSize must be a number when provided.');
   }
 
-  return sampleSize === undefined ? { sheetName } : { sheetName, sampleSize };
+  return {
+    sheetName,
+    ...(resourceId === undefined ? {} : { resourceId }),
+    ...(sampleSize === undefined ? {} : { sampleSize }),
+  };
 }
 
 /** Formats a sheet profile as stable, compact text for the model context. */

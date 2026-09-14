@@ -22,7 +22,10 @@ export async function resolveExcelResourceContext(
 
   for (const registered of registeredResources) {
     const resource = await sourceResourceStore.get(session.getId(), registered.id);
-    if (resource === null) continue;
+    if (resource === null)
+      throw new Error(
+        `Excel source locator is registered but not available: ${registered.id}.`,
+      );
     if (resource.id !== registered.id) {
       throw new Error(
         `Excel source locator id does not match the requested resource: ${resource.id} !== ${registered.id}.`,

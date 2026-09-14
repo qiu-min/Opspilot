@@ -1,4 +1,5 @@
 import type { ToolDefinition } from '../tools/tool-definition.js';
+import type { ExcelResourceContext } from '../resources/excel/excel-resource-context.js';
 
 const WORKBOOK_DISCOVERY_TOOL_NAMES = new Set([
   'get_workbook_info',
@@ -82,14 +83,42 @@ export function buildOpsPilotSystemPrompt(
 /** Adds per-Turn resource state without exposing the server-side file path to the model. */
 export function withExcelResourceGuidance(
   systemPrompt: string | undefined,
-  hasExcelResource: boolean,
+  resourceContext:
+    | Pick<ExcelResourceContext, 'resources' | 'activeResourceId'>
+    | boolean,
 ): string | undefined {
-  if (!hasExcelResource) return systemPrompt;
-
-  const guidance =
-    'This Turn includes an attached Excel workbook. The workbook is available through the Excel tools. When the user asks to inspect or analyze the workbook, call the relevant Excel tool before answering; do not say that no workbook is attached.';
   const basePrompt = systemPrompt?.trim();
-  return basePrompt === undefined || basePrompt.length === 0
-    ? guidance
-    : `${basePrompt}\n\n${guidance}`;
+  const appendGuidance = (guidance: string): string =>
+    basePrompt === undefined || basePrompt.length === 0
+      ? guidance
+      : `${basePrompt}\n\n${guidance}`;
+
+  if (typeof resourceContext === 'boolean') {
+    if (!resourceContext) return systemPrompt;
+
+    return appendGuidance(
+      'This Turn includes an attached Excel workbook. The workbook is available through the Excel tools. When the user asks to inspect or analyze the workbook, call the relevant Excel tool before answering; do not say that no workbook is attached.',
+    );
+  }
+
+  if (resourceContext.resources.length === 0) return systemPrompt;
+
+  const activeResourceIsAvailable = resourceContext.resources.some(
+    (resource) => resource.id === resourceContext.activeResourceId,
+  );
+  const guidance = [
+    resourceContext.resources.length === 1
+      ? 'This Turn includes an attached Excel workbook. When the user asks to inspect or analyze it, call the relevant Excel tool before answering.'
+      : 'This Turn includes multiple Excel resources. When the user asks to inspect or analyze a workbook, call the relevant Excel tool before answering.',
+    'Available Excel resources:',
+    ...resourceContext.resources.map((resource) => `- ${resource.id}`),
+    ...(activeResourceIsAvailable
+      ? ['Active Excel resource:', `- ${resourceContext.activeResourceId!}`]
+      : []),
+    ...(resourceContext.resources.length > 1
+      ? ['When operating on a specific workbook, pass its resourceId to the Excel tool.']
+      : []),
+  ].join('\n');
+
+  return appendGuidance(guidance);
 }
