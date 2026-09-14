@@ -87,10 +87,48 @@ describe('FileSystemSessionStore', () => {
       title: null,
       createdAt: session.getCreatedAt(),
       updatedAt: session.getUpdatedAt(),
+      resources: [],
     });
     expect(readFileSync(join(directory, sessionId, 'history.jsonl'), 'utf8')).toContain(
       `"id":"${sessionId}"`,
     );
+  });
+
+  it('persists and restores the Session resource registry', () => {
+    const { directory, store } = createStore();
+    const session = store.create();
+    session.registerResource({ id: 'workbook-a', kind: 'excel' });
+    session.registerResource({ id: 'workbook-b', kind: 'excel' });
+    store.saveMetadata(session.getId(), session.getMetadata());
+
+    const restarted = new FileSystemSessionStore(directory);
+    expect(restarted.load(session.getId()).getResources()).toEqual([
+      { id: 'workbook-a', kind: 'excel' },
+      { id: 'workbook-b', kind: 'excel' },
+    ]);
+  });
+
+  it('restores an empty resource registry from metadata written before the registry existed', () => {
+    const { directory, store } = createStore();
+    const session = Session.create({
+      id: '66666666-6666-4666-8666-666666666666',
+      timestamp: '2026-01-01T00:00:00.000Z',
+    });
+    const sessionDirectory = join(directory, session.getId());
+    mkdirSync(sessionDirectory, { recursive: true });
+    writeFileSync(
+      join(sessionDirectory, 'metadata.json'),
+      JSON.stringify({
+        version: 1,
+        id: session.getId(),
+        title: null,
+        createdAt: session.getCreatedAt(),
+        updatedAt: session.getUpdatedAt(),
+      }),
+    );
+    createSessionFile(join(sessionDirectory, 'history.jsonl'), session.getHeader());
+
+    expect(store.load(session.getId()).getResources()).toEqual([]);
   });
 
   it('loads a newly created session and restores metadata, entries, leaf, and branch', () => {
@@ -264,6 +302,7 @@ describe('FileSystemSessionStore', () => {
         title: null,
         createdAt: header.timestamp,
         updatedAt: '2026-01-02T00:00:00.000Z',
+        resources: [],
       }),
     );
     createSessionFile(join(sessionDirectory, 'history.jsonl'), header);

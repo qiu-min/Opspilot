@@ -17,6 +17,7 @@ import {
   SessionTreeError,
 } from './session-errors.js';
 import { normalizeSessionTitle, type SessionMetadata } from './session-metadata.js';
+import type { SessionResourceRef } from './session-resource.js';
 
 /** The only Session version currently understood by the domain. */
 export const CURRENT_SESSION_VERSION = 1;
@@ -50,7 +51,8 @@ export class Session {
     header: SessionHeader,
     entries: readonly SessionEntry[],
   ) {
-    validateMetadata(metadata);
+    const normalizedMetadata = normalizeMetadataResources(metadata);
+    validateMetadata(normalizedMetadata);
     validateHeader(header);
     if (metadata.id !== header.id) {
       throw new SessionMetadataError(
@@ -62,7 +64,10 @@ export class Session {
         `Session metadata createdAt does not match history header timestamp: ${metadata.createdAt} !== ${header.timestamp}.`,
       );
     }
-    this.metadata = { ...metadata };
+    this.metadata = {
+      ...normalizedMetadata,
+      resources: normalizedMetadata.resources.map(cloneResourceRef),
+    };
     this.header = { ...header };
     this.restoreEntries(entries);
     this.metadata = {
@@ -85,6 +90,7 @@ export class Session {
       title: null,
       createdAt: timestamp,
       updatedAt: timestamp,
+      resources: [],
     };
     return new Session(
       metadata,
@@ -132,7 +138,7 @@ export class Session {
 
   /** Returns an immutable snapshot of product metadata. */
   public getMetadata(): SessionMetadata {
-    return { ...this.metadata };
+    return { ...this.metadata, resources: this.getResources() };
   }
 
   /** Returns the Session product id. */
@@ -153,6 +159,29 @@ export class Session {
   /** Returns the timestamp of the latest durable Session mutation. */
   public getUpdatedAt(): string {
     return this.metadata.updatedAt;
+  }
+
+  /** Registers a lightweight Session resource reference idempotently. */
+  public registerResource(resource: SessionResourceRef): void {
+    validateResourceRef(resource);
+    if (
+      this.metadata.resources.some(
+        (registered) => registered.id === resource.id && registered.kind === resource.kind,
+      )
+    ) {
+      return;
+    }
+
+    this.metadata = {
+      ...this.metadata,
+      resources: [...this.metadata.resources, cloneResourceRef(resource)],
+      updatedAt: this.nextMutationTimestamp(),
+    };
+  }
+
+  /** Returns an immutable snapshot of the registered resource references. */
+  public getResources(): readonly SessionResourceRef[] {
+    return this.metadata.resources.map(cloneResourceRef);
   }
 
   /** Renames the Session without adding an entry to the history tree. */
@@ -404,6 +433,20 @@ function validateMetadata(metadata: SessionMetadata): void {
   if (Date.parse(metadata.updatedAt) < Date.parse(metadata.createdAt)) {
     throw new SessionMetadataError('Session metadata updatedAt cannot be earlier than createdAt.');
   }
+  if (!Array.isArray(metadata.resources)) {
+    throw new SessionMetadataError('Session metadata resources must be an array.');
+  }
+  const resourceKeys = new Set<string>();
+  for (const resource of metadata.resources) {
+    validateResourceRef(resource);
+    const key = `${resource.kind}\u0000${resource.id}`;
+    if (resourceKeys.has(key)) {
+      throw new SessionMetadataError(
+        `Duplicate Session resource: ${resource.kind}/${resource.id}.`,
+      );
+    }
+    resourceKeys.add(key);
+  }
 }
 
 function normalizeTitle(title: string): string {
@@ -435,7 +478,31 @@ function deriveCompatibilityMetadata(
     title: null,
     createdAt: header.timestamp,
     updatedAt: entries.at(-1)?.timestamp ?? header.timestamp,
+    resources: [],
   };
+}
+
+function normalizeMetadataResources(metadata: SessionMetadata): SessionMetadata {
+  return {
+    ...metadata,
+    resources: metadata.resources === undefined ? [] : metadata.resources,
+  };
+}
+
+function validateResourceRef(resource: unknown): asserts resource is SessionResourceRef {
+  if (!isRecord(resource)) {
+    throw new SessionMetadataError('Session resource must be an object.');
+  }
+  if (!isNonEmptyString(resource.id)) {
+    throw new SessionMetadataError('Session resource id must be non-empty.');
+  }
+  if (resource.kind !== 'excel') {
+    throw new SessionMetadataError(`Unsupported Session resource kind: ${String(resource.kind)}.`);
+  }
+}
+
+function cloneResourceRef(resource: SessionResourceRef): SessionResourceRef {
+  return { id: resource.id, kind: resource.kind };
 }
 
 function isRestoreInput(
@@ -522,6 +589,10 @@ function cloneValue<T>(value: T): T {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function isTimestamp(value: unknown): value is string {

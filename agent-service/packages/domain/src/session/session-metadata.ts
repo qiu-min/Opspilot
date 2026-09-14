@@ -1,9 +1,12 @@
+import type { SessionResourceRef } from './session-resource.js';
+
 /** Mutable product metadata owned by the Session aggregate. */
 export interface SessionMetadata {
   readonly id: string;
   readonly title: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly resources: readonly SessionResourceRef[];
 }
 
 /** Returns a canonical non-empty title or raises a domain validation error. */

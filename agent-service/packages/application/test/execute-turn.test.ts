@@ -244,11 +244,14 @@ describe('ExecuteTurn', () => {
       systemPrompt: 'SENTINEL_SYSTEM_PROMPT',
     });
 
-    await runner.execute({
+    const result = await runner.execute({
       message: userMessage('analyze the workbook'),
       excelResource: { id: 'resource-1', filePath: 'workbook.xlsx' },
     });
 
+    expect(store.load(result.sessionId).getResources()).toEqual([
+      { id: 'resource-1', kind: 'excel' },
+    ]);
     expect(gateway.requestedContexts[0]?.systemPrompt).toContain('SENTINEL_SYSTEM_PROMPT');
     expect(gateway.requestedContexts[0]?.systemPrompt).toContain(
       'This Turn includes an attached Excel workbook.',
@@ -274,6 +277,43 @@ describe('ExecuteTurn', () => {
     expect(result.leafId).toBe(loaded.getLeafId());
     expect(result.messages).toEqual([inputMessage, response]);
     expect(messageEntries(loaded)).toEqual([inputMessage, response]);
+    expect(loaded.getResources()).toEqual([]);
+  });
+
+  it('registers new Excel resources on an existing Session and keeps repeats idempotent', async () => {
+    const { store } = createStore();
+    const runner = new TestExecuteTurn({
+      sessionStore: store,
+      modelGateway: createGateway([
+        assistantStream(assistantMessage('first'), model),
+        assistantStream(assistantMessage('second'), model),
+        assistantStream(assistantMessage('third'), model),
+      ]),
+      toolDefinitions: [],
+      defaultModel: model,
+    });
+    const resourceA = { id: 'resource-a', filePath: 'workbook-a.xlsx' };
+    const resourceB = { id: 'resource-b', filePath: 'workbook-b.xlsx' };
+
+    const first = await runner.execute({
+      message: userMessage('use workbook a'),
+      excelResource: resourceA,
+    });
+    await runner.execute({
+      sessionId: first.sessionId,
+      message: userMessage('use workbook b'),
+      excelResource: resourceB,
+    });
+    await runner.execute({
+      sessionId: first.sessionId,
+      message: userMessage('use workbook a again'),
+      excelResource: resourceA,
+    });
+
+    expect(store.load(first.sessionId).getResources()).toEqual([
+      { id: 'resource-a', kind: 'excel' },
+      { id: 'resource-b', kind: 'excel' },
+    ]);
   });
 
   it('persists a completed Turn with ordered events and an assistant checkpoint', async () => {

@@ -8,7 +8,9 @@ OpsPilot Agent Service 的应用层。
 
 ## Session persistence
 
-`Session` 是用户可见长期会话的 Domain aggregate，由 `SessionMetadata` 和 history tree 组成。Application 只定义 `SessionStore` port；`@opspilot/infrastructure` 的 `FileSystemSessionStore` 使用以下新布局：
+`Session` 是用户可见长期会话的 Domain aggregate，由 `SessionMetadata`（包含轻量 resource
+registry）和 history tree 组成。Application 只定义 `SessionStore` port；`@opspilot/infrastructure`
+的 `FileSystemSessionStore` 使用以下新布局：
 
 ```text
 sessions/{sessionId}/
@@ -16,7 +18,10 @@ sessions/{sessionId}/
 └── history.jsonl   # append-only Session history
 ```
 
-`metadata.json` 保存 versioned filesystem record；`history.jsonl` 保留现有 Session header 和 entry 格式。旧的 `sessions/{sessionId}.jsonl` 会在首次成功读取后非破坏性 lazy migrate 到新目录，旧文件保持不变；新目录优先，且不完整的新目录不会 fallback 到旧文件。
+`metadata.json` 保存 versioned filesystem record，包括 Session resource registry；`history.jsonl`
+保留现有 Session header 和 entry 格式。旧的 `sessions/{sessionId}.jsonl` 会在首次成功读取后
+非破坏性 lazy migrate 到新目录，旧文件保持不变；新目录优先，且不完整的新目录不会 fallback
+到旧文件。旧 metadata 缺少 `resources` 时按空 registry 读取。
 
 `SessionStore.appendEntry()` 先追加 history，再原子更新 `metadata.updatedAt`；metadata update 失败会明确抛错，下一次 load 会根据 durable history reconciliation。`saveMetadata()` 通过 temp file + rename 原子替换整个 metadata snapshot。
 
@@ -91,6 +96,7 @@ live presentation 相同的 `ToolPresentationResolver` 重新解析，失败时�
 - `turn/`：Turn execution、recovery、live stream、presentation 与 persistence port。
 - `context/`、`tools/`、`system-prompt/`：保持为独立的应用能力模块。
 - `resources/excel/`：定义 Session-scoped Excel working resource、copy-on-write 生命周期及持久化 port；不依赖具体 filesystem adapter，也不改变 Tool Gateway contract。
+- `Session.registerResource()`：由 `ExecuteTurn` 在收到新 Excel resource 后登记轻量 `id + kind`；本次不自动选择历史资源，也不接入 Working Resource Manager。
 
 ## Excel working resources
 

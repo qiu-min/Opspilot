@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
-import type { SessionMetadata } from '@opspilot/domain';
+import type { SessionMetadata, SessionResourceRef } from '@opspilot/domain';
 
 /** Current version of the filesystem metadata document. */
 export const CURRENT_SESSION_METADATA_VERSION = 1;
@@ -13,6 +13,7 @@ export interface SessionMetadataRecord {
   readonly title: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly resources: readonly SessionResourceRef[];
 }
 
 /** Raised when metadata.json cannot be read or does not satisfy its schema. */
@@ -26,12 +27,14 @@ export class SessionMetadataPersistenceError extends Error {
 /** Serializes Domain metadata into the versioned filesystem DTO. */
 export function serializeSessionMetadata(metadata: SessionMetadata): string {
   validateSessionMetadata(metadata);
+  const resources = parseSessionResources(metadata.resources);
   const record: SessionMetadataRecord = {
     version: CURRENT_SESSION_METADATA_VERSION,
     id: metadata.id,
     title: metadata.title,
     createdAt: metadata.createdAt,
     updatedAt: metadata.updatedAt,
+    resources: resources.map((resource) => ({ ...resource })),
   };
   return `${JSON.stringify(record, null, 2)}\n`;
 }
@@ -75,11 +78,14 @@ export function parseSessionMetadata(content: string): SessionMetadata {
     );
   }
 
+  const resources = parseSessionResources(value.resources);
+
   return {
     id: value.id,
     title: value.title === null ? null : value.title.trim(),
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
+    resources,
   };
 }
 
@@ -151,6 +157,34 @@ function validateSessionMetadata(metadata: SessionMetadata): void {
       'Session metadata updatedAt cannot be earlier than createdAt.',
     );
   }
+  parseSessionResources(metadata.resources);
+}
+
+function parseSessionResources(value: unknown): readonly SessionResourceRef[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new SessionMetadataPersistenceError('metadata.json resources must be an array.');
+  }
+
+  const resources: SessionResourceRef[] = [];
+  const keys = new Set<string>();
+  for (const [index, item] of value.entries()) {
+    if (!isRecord(item) || !isNonEmptyString(item.id) || item.kind !== 'excel') {
+      throw new SessionMetadataPersistenceError(
+        `metadata.json resources[${index}] must contain a non-empty id and supported kind.`,
+      );
+    }
+    const resource = { id: item.id, kind: 'excel' as const };
+    const key = `${resource.kind}\u0000${resource.id}`;
+    if (keys.has(key)) {
+      throw new SessionMetadataPersistenceError(
+        `metadata.json contains duplicate resource: ${resource.kind}/${resource.id}.`,
+      );
+    }
+    keys.add(key);
+    resources.push(resource);
+  }
+  return resources;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -5,6 +5,7 @@ export {
   SessionTreeError,
 } from './session-errors.js';
 export { normalizeSessionTitle, type SessionMetadata } from './session-metadata.js';
+export type { SessionResourceKind, SessionResourceRef } from './session-resource.js';
 export type { SessionRestoreInput } from './session.js';
 export {
   isSessionThinkingLevel,

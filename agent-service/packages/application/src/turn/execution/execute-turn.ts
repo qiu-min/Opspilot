@@ -121,6 +121,8 @@ export class ExecuteTurn {
       throw new SessionRecoverableTurnConflictError(sessionId, recoverableTurn.getId());
     }
 
+    this.registerExcelResourceIfPresent(session, input);
+
     const turn = Turn.create({ sessionId, baseLeafId: session.getLeafId() });
     this.turnStore.create(turn);
     this.turnExecutionContextStore?.save(turn.getId(), {
@@ -241,6 +243,12 @@ export class ExecuteTurn {
       }
       if (agentSession !== undefined) agentSession.dispose();
     }
+  }
+
+  private registerExcelResourceIfPresent(session: Session, input: ExecuteTurnInput): void {
+    if (input.excelResource === undefined) return;
+    session.registerResource({ id: input.excelResource.id, kind: 'excel' });
+    this.sessionStore.saveMetadata(session.getId(), session.getMetadata());
   }
 
   private publishTurnTerminal(

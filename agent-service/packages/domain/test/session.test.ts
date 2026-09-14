@@ -119,6 +119,7 @@ describe('Session domain', () => {
       title: null,
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
+      resources: [],
     });
     expect(session.getHeader().timestamp).toBe(session.getCreatedAt());
   });
@@ -136,6 +137,35 @@ describe('Session domain', () => {
     expect(session.getEntries()).toEqual([first]);
     expect(session.getLeafId()).toBe(first.id);
     expect(session.getBranch()).toEqual(beforeBranch);
+  });
+
+  it('registers unique Excel resources and returns isolated snapshots', () => {
+    const session = Session.create();
+
+    expect(session.getResources()).toEqual([]);
+    session.registerResource({ id: 'workbook-a', kind: 'excel' });
+    session.registerResource({ id: 'workbook-a', kind: 'excel' });
+    session.registerResource({ id: 'workbook-b', kind: 'excel' });
+
+    const snapshot = session.getResources() as Array<{ id: string; kind: 'excel' }>;
+    snapshot[0]!.id = 'mutated';
+    snapshot.push({ id: 'workbook-c', kind: 'excel' });
+
+    expect(session.getResources()).toEqual([
+      { id: 'workbook-a', kind: 'excel' },
+      { id: 'workbook-b', kind: 'excel' },
+    ]);
+  });
+
+  it('rejects invalid Session resource references', () => {
+    const session = Session.create();
+
+    expect(() => session.registerResource({ id: '', kind: 'excel' })).toThrow(
+      'Session resource id must be non-empty',
+    );
+    expect(() => session.registerResource({ id: 'workbook-a', kind: 'pdf' as never })).toThrow(
+      'Unsupported Session resource kind',
+    );
   });
 
   it.each(['', '   '])('rejects an empty title: %j', (title) => {
@@ -175,6 +205,7 @@ describe('Session domain', () => {
       title: null,
       createdAt: header.timestamp,
       updatedAt: header.timestamp,
+      resources: [],
     };
 
     expect(Session.restore({ metadata, header, entries: [] }).getTitle()).toBeNull();
@@ -217,6 +248,7 @@ describe('Session domain', () => {
         title: null,
         createdAt: header.timestamp,
         updatedAt: header.timestamp,
+        resources: [],
       },
       header,
       entries: [
