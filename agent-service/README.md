@@ -120,7 +120,7 @@ pnpm build
 2. 复制 `.env.example` 为 `.env`
 3. 在 `.env` 中配置 `MOONSHOT_API_KEY`
 4. 配置 `OPS_PILOT_SHARED_STORAGE_ROOT` 为 Backend 共享文件存储根目录；Turn/Session durable state 不写入此目录
-5. 根据需要设置 `SESSION_DIRECTORY`、`TURN_STORAGE_ROOT`、`DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID`
+5. 根据需要设置 `SESSION_DIRECTORY`、`TURN_STORAGE_ROOT`、`WORKSPACE_STORAGE_ROOT`、`DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID`
 6. 执行 `pnpm dev:api`
 7. 手动验证真实 Excel Tool Calling 可执行 `pnpm --filter @opspilot/api-runtime smoke:excel:kimi`
 

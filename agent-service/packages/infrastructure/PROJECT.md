@@ -32,6 +32,21 @@ Infrastructure 保留 legacy `{sessionId}.jsonl` 读取和 lazy migration 行为
 
 本 package 不定义 Turn 业务状态转换；它只实现 Application 的持久化 port 和进程内 live stream hub，不直接引入 Prisma、SQLite、Redis 或数据库 repository。`InMemoryTurnStreamHub` 的 projection、ring buffer 和 subscriber queue 都不持久化，进程重启后丢失是允许的。
 
+## Excel working resource adapter
+
+`FileSystemExcelWorkingResourceStore` 实现 Application 的
+`ExcelWorkingResourceStore` 与 copy-on-write 文件操作 port。Working copy 使用独立布局：
+
+```text
+workspaces/{sessionId}/resources/{sourceResourceId}/
+├── working.xlsx
+└── metadata.json
+```
+
+metadata 使用 UTF-8 JSON 和 temp-file + rename 原子替换；读取时校验版本、资源身份、
+revision，以及 working path 和 workspace root 的关系。首次复制使用 exclusive copy，避免
+覆盖已有 working file。Application manager 负责单进程内同一 resource 的并发串行化。
+
 ## Live stream adapter
 
 每个 active Turn 有独立 channel，保存 Turn identity、下一个 stream sequence、当前

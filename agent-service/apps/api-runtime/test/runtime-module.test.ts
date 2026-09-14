@@ -4,7 +4,7 @@ import { join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { ApiModule, EXCEL_RESOURCE_PATH_RESOLVER } from '@opspilot/api';
-import { ExecuteTurn, GetTurnTrace } from '@opspilot/application';
+import { ExecuteTurn, ExcelWorkingResourceManager, GetTurnTrace } from '@opspilot/application';
 import { describe, expect, it } from 'vitest';
 
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -51,6 +51,7 @@ describe('API runtime composition root', () => {
 
       expect(module.get(ExecuteTurn)).toBeInstanceOf(ExecuteTurn);
       expect(module.get(GetTurnTrace)).toBeInstanceOf(GetTurnTrace);
+      expect(module.get(ExcelWorkingResourceManager)).toBeInstanceOf(ExcelWorkingResourceManager);
       expect(module.get(EXCEL_RESOURCE_PATH_RESOLVER)).toBeInstanceOf(
         FileSystemExcelResourcePathResolver,
       );
@@ -98,6 +99,7 @@ describe('API runtime composition root', () => {
       ).toMatchObject({
         sessionDirectory: fileURLToPath(new URL('../../../data/sessions', import.meta.url)),
         turnStorageRoot: fileURLToPath(new URL('../../../data', import.meta.url)),
+        workspaceStorageRoot: fileURLToPath(new URL('../../../data/workspaces', import.meta.url)),
         modelConfigPath: fileURLToPath(
           new URL('../../../config/model-providers.json', import.meta.url),
         ),
@@ -114,6 +116,7 @@ describe('API runtime composition root', () => {
       loadRuntimeConfig({
         SESSION_DIRECTORY: 'custom/sessions',
         TURN_STORAGE_ROOT: 'custom/agent-state',
+        WORKSPACE_STORAGE_ROOT: 'custom/workspaces',
         MODEL_CONFIG_PATH: 'custom/models.json',
         OPS_PILOT_SHARED_STORAGE_ROOT: 'custom/storage',
         DEFAULT_MODEL_PROVIDER: testProviderId,
@@ -122,6 +125,7 @@ describe('API runtime composition root', () => {
     ).toMatchObject({
       sessionDirectory: 'custom/sessions',
       turnStorageRoot: resolvePath('custom/agent-state'),
+      workspaceStorageRoot: resolvePath('custom/workspaces'),
       modelConfigPath: 'custom/models.json',
       sharedStorageRoot: resolvePath('custom/storage'),
     });
@@ -197,6 +201,7 @@ function createRuntimeConfig(modelConfigPath: string, sessionDirectory: string):
     host: '127.0.0.1',
     sessionDirectory,
     turnStorageRoot: sessionDirectory,
+    workspaceStorageRoot: sessionDirectory,
     modelConfigPath,
     sharedStorageRoot: sessionDirectory,
     defaultProviderId: testProviderId,

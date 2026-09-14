@@ -90,6 +90,24 @@ live presentation 相同的 `ToolPresentationResolver` 重新解析，失败时�
 - `session/`：Session 创建、Runtime projection、history projection 与 Session persistence port。
 - `turn/`：Turn execution、recovery、live stream、presentation 与 persistence port。
 - `context/`、`tools/`、`system-prompt/`：保持为独立的应用能力模块。
+- `resources/excel/`：定义 Session-scoped Excel working resource、copy-on-write 生命周期及持久化 port；不依赖具体 filesystem adapter，也不改变 Tool Gateway contract。
+
+## Excel working resources
+
+Backend 提供的 Excel source 是 immutable input。Application 的
+`ExcelWorkingResourceManager` 以 `sessionId + sourceResourceId` 为稳定身份：读取时优先返回
+已存在的 `workingPath`，首次 writable 请求通过文件操作 port 创建副本并以 `revision = 0`
+发布 metadata；`markModified()` 才会递增并持久化 revision。sourcePath 变更会被拒绝。
+
+Filesystem adapter 位于 `@opspilot/infrastructure`，使用：
+
+```text
+data/workspaces/{sessionId}/resources/{sourceResourceId}/
+├── working.xlsx
+└── metadata.json
+```
+
+Tool Gateway 仍然只接收 `filePath`。Excel tools 的 working resource 接入留给后续 PR。
 
 其中 `turn/presentation/` 提供 live stream 与历史 Turn presentation 共用的工具展示解析能力；`turn/ports/` 与 `session/ports/` 只定义 Application persistence port，不包含 infrastructure 实现。
 

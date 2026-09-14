@@ -10,6 +10,7 @@ import {
   GetTurnTrace,
   ExecuteTurn,
   InMemorySessionRunCoordinator,
+  ExcelWorkingResourceManager,
   RecoverTurnsOnStartup,
   ResumeTurn,
   type SessionRunCoordinator,
@@ -17,6 +18,7 @@ import {
   type ToolDefinition,
 } from '@opspilot/application';
 import {
+  FileSystemExcelWorkingResourceStore,
   FileSystemSessionStore,
   FileSystemTurnStore,
   FileSystemTurnExecutionContextStore,
@@ -57,6 +59,13 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     tools: toolDefinitions,
   });
   const sessionStore = new FileSystemSessionStore(config.sessionDirectory);
+  const excelWorkingResourceStore = new FileSystemExcelWorkingResourceStore(
+    config.workspaceStorageRoot,
+  );
+  const excelWorkingResourceManager = new ExcelWorkingResourceManager({
+    store: excelWorkingResourceStore,
+    fileOperator: excelWorkingResourceStore,
+  });
   /**一次业务层级别的 Turn实例：包括events.json和metadata.json，前者保存追加式执行事实，后者保存当前 Turn snapshot */
   const turnStore = new FileSystemTurnStore(config.turnStorageRoot);
   /** excution.json保存的是一次 Turn 恢复所需、但不属于 Domain Turn 的最小输入，目前主要是excel业务 */
@@ -116,6 +125,7 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
       { provide: GetActiveTurn, useValue: getActiveTurn },
       { provide: SubscribeTurnStream, useValue: subscribeTurnStream },
       { provide: EXCEL_RESOURCE_PATH_RESOLVER, useValue: excelResourcePathResolver },
+      { provide: ExcelWorkingResourceManager, useValue: excelWorkingResourceManager },
     ],
     exports: [
       ExecuteTurn,
@@ -127,6 +137,7 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
       ResumeTurn,
       RecoverTurnsOnStartup,
       EXCEL_RESOURCE_PATH_RESOLVER,
+      ExcelWorkingResourceManager,
     ],
   });
 }

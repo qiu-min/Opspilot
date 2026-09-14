@@ -7,6 +7,9 @@ const defaultPort = 3000;
 const defaultHost = '127.0.0.1';
 const defaultSessionDirectory = fileURLToPath(new URL('../../../data/sessions', import.meta.url));
 const defaultTurnStorageRoot = fileURLToPath(new URL('../../../data', import.meta.url));
+const defaultWorkspaceStorageRoot = fileURLToPath(
+  new URL('../../../data/workspaces', import.meta.url),
+);
 const defaultModelConfigPath = fileURLToPath(
   new URL('../../../config/model-providers.json', import.meta.url),
 );
@@ -21,6 +24,12 @@ export const runtimeConfigSchema = z.object({
     .min(1)
     .transform((value) => resolvePath(value))
     .default(defaultTurnStorageRoot),
+  workspaceStorageRoot: z
+    .string()
+    .trim()
+    .min(1)
+    .transform((value) => resolvePath(value))
+    .default(defaultWorkspaceStorageRoot),
   modelConfigPath: z.string().trim().min(1).default(defaultModelConfigPath),
   sharedStorageRoot: z
     .string()
@@ -44,6 +53,7 @@ export function loadRuntimeConfig(environment: NodeJS.ProcessEnv = process.env):
     host: optionalEnvironmentValue(environment.HOST),
     sessionDirectory: optionalEnvironmentValue(environment.SESSION_DIRECTORY),
     turnStorageRoot: optionalEnvironmentValue(environment.TURN_STORAGE_ROOT),
+    workspaceStorageRoot: optionalEnvironmentValue(environment.WORKSPACE_STORAGE_ROOT),
     modelConfigPath: optionalEnvironmentValue(environment.MODEL_CONFIG_PATH),
     sharedStorageRoot,
     defaultProviderId: environment.DEFAULT_MODEL_PROVIDER,
