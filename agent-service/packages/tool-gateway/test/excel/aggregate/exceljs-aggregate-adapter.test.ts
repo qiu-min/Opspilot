@@ -71,6 +71,34 @@ describe('ExcelJsAggregateAdapter', () => {
     });
   });
 
+  it('uses the detected header after a title row', async () => {
+    await createWorkbook(filePath, (workbook) => {
+      const worksheet = workbook.addWorksheet('Sales');
+      worksheet.getCell('A1').value = '2025 Sales Report';
+      worksheet.getCell('A3').value = 'Region';
+      worksheet.getCell('B3').value = 'Amount';
+      worksheet.getCell('A4').value = 'East';
+      worksheet.getCell('B4').value = 100;
+      worksheet.getCell('A5').value = 'South';
+      worksheet.getCell('B5').value = 200;
+    });
+
+    await expect(
+      adapter.aggregateData({
+        filePath,
+        sheetName: 'Sales',
+        groupBy: ['Region'],
+        metrics: [{ column: 'Amount', operation: 'sum' }],
+      }),
+    ).resolves.toMatchObject({
+      rows: [
+        ['East', 100],
+        ['South', 200],
+      ],
+      sourceRowCount: 2,
+    });
+  });
+
   it('groups by one column and keeps null groups', async () => {
     await createGroupedWorkbook(filePath);
 

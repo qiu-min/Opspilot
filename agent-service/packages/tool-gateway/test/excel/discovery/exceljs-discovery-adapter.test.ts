@@ -158,6 +158,7 @@ describe('ExcelJsDiscoveryAdapter', () => {
         rowCount: 3,
         columnCount: 9,
         headerRow: 3,
+        headerConfidence: expect.any(Number),
         sampledRowCount: 2,
         columns: [
           { index: 2, letter: 'B', header: 'Name', inferredType: 'string' },
@@ -171,6 +172,7 @@ describe('ExcelJsDiscoveryAdapter', () => {
           { index: 10, letter: 'J', header: 'Error', inferredType: 'error' },
         ],
       });
+      expect(result.headerConfidence).toBeGreaterThan(0.58);
       expect(result).not.toHaveProperty('rows');
       expect(result).not.toHaveProperty('values');
     });
@@ -189,6 +191,52 @@ describe('ExcelJsDiscoveryAdapter', () => {
       expect(result.columnCount).toBe(9);
       expect(result.sampledRowCount).toBe(1);
       expect(result.columns.find((column) => column.letter === 'H')?.inferredType).toBe('number');
+    });
+
+    it('uses the detected header after a title instead of treating the title as a header', async () => {
+      await createWorkbook(filePath, (workbook) => {
+        const worksheet = workbook.addWorksheet('Data');
+        worksheet.getCell('A1').value = '2025 Sales Report';
+        worksheet.getCell('A3').value = 'Product';
+        worksheet.getCell('B3').value = 'Region';
+        worksheet.getCell('C3').value = 'Amount';
+        worksheet.getCell('A4').value = 'A';
+        worksheet.getCell('B4').value = 'East';
+        worksheet.getCell('C4').value = 100;
+      });
+
+      const result = await adapter.getSheetProfile({
+        filePath,
+        sheetName: 'Data',
+      });
+
+      expect(result.headerRow).toBe(3);
+      expect(result.headerConfidence).toBeGreaterThan(0.47);
+      expect(result.columns.map((column) => column.header)).toEqual([
+        'Product',
+        'Region',
+        'Amount',
+      ]);
+      expect(result.sampledRowCount).toBe(1);
+    });
+
+    it('does not treat numeric-only rows as a header', async () => {
+      await createWorkbook(filePath, (workbook) => {
+        const worksheet = workbook.addWorksheet('Numbers');
+        worksheet.getCell('A1').value = 100;
+        worksheet.getCell('B1').value = 200;
+        worksheet.getCell('A2').value = 300;
+        worksheet.getCell('B2').value = 400;
+      });
+
+      const result = await adapter.getSheetProfile({
+        filePath,
+        sheetName: 'Numbers',
+      });
+
+      expect(result.headerRow).toBeNull();
+      expect(result.headerConfidence).toBeLessThan(0.47);
+      expect(result.columns.every((column) => column.header === null)).toBe(true);
     });
 
     it('treats hyperlink and rich text values as strings', async () => {
@@ -237,6 +285,7 @@ describe('ExcelJsDiscoveryAdapter', () => {
         rowCount: 0,
         columnCount: 0,
         headerRow: null,
+        headerConfidence: 0,
         sampledRowCount: 0,
         columns: [],
       });

@@ -55,7 +55,7 @@ export class ExcelJsAggregateAdapter implements ExcelAggregateConnector {
       }
 
       let sourceRowCount = 0;
-      if (usedRange !== undefined) {
+      if (usedRange !== undefined && plan.headerRow !== null) {
         for (let row = plan.headerRow + 1; row <= usedRange.end.row; row += 1) {
           throwIfAborted(signal, 'aggregateData');
           if (!hasActualValueInRow(worksheet, row, usedRange.start.column, usedRange.end.column)) {
@@ -129,7 +129,7 @@ interface ResolvedMetric {
 }
 
 interface AggregationPlan {
-  readonly headerRow: number;
+  readonly headerRow: number | null;
   readonly groupBy: readonly ResolvedColumn[];
   readonly metrics: readonly ResolvedMetric[];
   readonly sourceColumns: readonly ResolvedColumn[];

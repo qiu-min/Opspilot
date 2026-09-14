@@ -47,6 +47,7 @@ const sheetProfile: GetSheetProfileResult = {
   rowCount: 6,
   columnCount: 3,
   headerRow: 3,
+  headerConfidence: 0.91,
   sampledRowCount: 5,
   columns: [
     { index: 2, letter: 'B', header: 'Name', inferredType: 'string' },
@@ -152,6 +153,9 @@ describe('Excel discovery Application Tools', () => {
       'usedRange: B3:D8',
     );
     expect(result.content[0]?.type === 'text' && result.content[0].text).toContain('headerRow: 3');
+    expect(result.content[0]?.type === 'text' && result.content[0].text).toContain(
+      'headerConfidence: 0.91',
+    );
     expect(result.content[0]?.type === 'text' && result.content[0].text).toContain(
       'letter: B; header: Name; inferredType: string',
     );

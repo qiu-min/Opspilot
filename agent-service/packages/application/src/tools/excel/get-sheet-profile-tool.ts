@@ -70,6 +70,7 @@ function formatSheetProfile(result: GetSheetProfileResult): string {
     `rowCount: ${result.rowCount}`,
     `columnCount: ${result.columnCount}`,
     `headerRow: ${result.headerRow ?? 'null'}`,
+    `headerConfidence: ${result.headerConfidence}`,
     `sampledRowCount: ${result.sampledRowCount}`,
     'columns:',
   ];

@@ -48,7 +48,7 @@ export class ExcelJsFilterAdapter implements ExcelFilterConnector {
       const accumulator = createMatchedRangeAccumulator();
       let sourceRowCount = 0;
 
-      if (usedRange !== undefined) {
+      if (usedRange !== undefined && header.headerRow !== null) {
         for (let row = header.headerRow + 1; row <= usedRange.end.row; row += 1) {
           throwIfAborted(signal, 'filterData');
           if (!hasActualValueInRow(worksheet, row, usedRange.start.column, usedRange.end.column)) {

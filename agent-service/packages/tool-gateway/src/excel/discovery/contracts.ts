@@ -39,6 +39,7 @@ export interface GetSheetProfileResult {
   readonly rowCount: number;
   readonly columnCount: number;
   readonly headerRow: number | null;
+  readonly headerConfidence: number;
   readonly sampledRowCount: number;
   readonly columns: readonly SheetColumnProfile[];
 }

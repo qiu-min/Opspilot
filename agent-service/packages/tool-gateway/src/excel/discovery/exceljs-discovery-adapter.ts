@@ -9,7 +9,8 @@ import {
   throwIfAborted,
 } from '../shared/exceljs/workbook-io.js';
 import { headerText } from '../shared/exceljs/cell-value.js';
-import { findUsedRange, hasActualValueInRow } from '../shared/exceljs/used-range.js';
+import { detectHeaderRow } from '../shared/exceljs/header-detection.js';
+import { findUsedRange } from '../shared/exceljs/used-range.js';
 import type { ExcelDiscoveryConnector } from './connector.js';
 import type {
   GetSheetProfileInput,
@@ -62,22 +63,23 @@ export class ExcelJsDiscoveryAdapter implements ExcelDiscoveryConnector {
         return emptySheetProfile(worksheet.name);
       }
 
-      const headerRow = findHeaderRow(worksheet, usedRange, signal);
+      const detection = detectHeaderRow(worksheet, usedRange, signal);
       const sampleValues = createSampleBuckets(
         usedRange,
-        headerRow,
+        detection.headerRow,
         worksheet,
         validated.sampleSize,
         signal,
       );
-      const columns = createColumnProfiles(worksheet, usedRange, headerRow, sampleValues);
+      const columns = createColumnProfiles(worksheet, usedRange, detection.headerRow, sampleValues);
 
       return {
         sheetName: worksheet.name,
         usedRange: formatCellRange(usedRange),
         rowCount: usedRange.end.row - usedRange.start.row + 1,
         columnCount: usedRange.end.column - usedRange.start.column + 1,
-        headerRow,
+        headerRow: detection.headerRow,
+        headerConfidence: detection.confidence,
         sampledRowCount: sampleValues.sampledRowCount,
         columns,
       };
@@ -107,25 +109,10 @@ function emptySheetProfile(sheetName: string): GetSheetProfileResult {
     rowCount: 0,
     columnCount: 0,
     headerRow: null,
+    headerConfidence: 0,
     sampledRowCount: 0,
     columns: [],
   };
-}
-
-/** Finds the first row containing an actual value. */
-function findHeaderRow(
-  worksheet: Worksheet,
-  usedRange: CellRange,
-  signal: AbortSignal | undefined,
-): number | null {
-  for (let row = usedRange.start.row; row <= usedRange.end.row; row += 1) {
-    throwIfAborted(signal, 'getSheetProfile');
-    if (hasActualValueInRow(worksheet, row, usedRange.start.column, usedRange.end.column)) {
-      return row;
-    }
-  }
-
-  return null;
 }
 
 interface SampleBuckets {
