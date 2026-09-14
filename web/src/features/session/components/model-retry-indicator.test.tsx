@@ -25,6 +25,8 @@ describe("ModelRetryIndicator", () => {
     expect(markup).toContain("Rate limited");
     expect(markup).toContain("500 ms");
     expect(markup).not.toContain("model-1");
+    expect(markup).not.toContain('role="status"');
+    expect(markup).not.toContain("aria-live");
   });
 
   it("renders nothing after the retry state is cleared", () => {

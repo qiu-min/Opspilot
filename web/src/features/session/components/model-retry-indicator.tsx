@@ -12,8 +12,7 @@ export function ModelRetryIndicator({ retry }: ModelRetryIndicatorProps) {
 
   return (
     <div
-      className="mb-5 flex items-start gap-2.5 rounded-lg border border-orange-200/80 bg-orange-50/70 px-3.5 py-2.5 text-[#8a4b2c]"
-      role="status"
+      className="my-5 flex items-start gap-2.5 rounded-lg border border-orange-200/80 bg-orange-50/70 px-3.5 py-2.5 text-[#8a4b2c]"
       aria-label="Retrying model request"
     >
       <RefreshCw size={15} className="mt-0.5 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />
