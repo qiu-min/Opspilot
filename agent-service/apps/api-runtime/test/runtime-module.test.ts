@@ -28,12 +28,20 @@ describe('API runtime composition root', () => {
     expect(tools).toHaveLength(2);
     expect(tools[0]?.parameters).toEqual({
       type: 'object',
-      properties: {},
+      properties: {
+        resource: {
+          type: 'string',
+          minLength: 1,
+          description:
+            'Logical alias of the Excel resource to operate on. Use one of the aliases available in the current Session.',
+        },
+      },
       additionalProperties: false,
     });
     expect(tools[1]?.parameters).toMatchObject({
       type: 'object',
       properties: {
+        resource: expect.any(Object),
         sheetName: expect.any(Object),
         sampleSize: expect.any(Object),
       },

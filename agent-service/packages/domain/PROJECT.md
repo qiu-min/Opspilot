@@ -22,8 +22,9 @@ Session
 ```
 
 `rename()` 和 `registerResource()` 只修改 product metadata，不进入 entries，不改变 leaf 或
-branch。Resource registry 只保存 `id + kind`，当前 kind 只有 `excel`；同一个引用重复注册
-不会产生重复项，`getResources()` 返回副本。所有 durable history mutation 都会以 entry timestamp
+branch。Resource registry 保存内部 `id`、kind 以及 Session-local 的稳定 `alias`，当前 kind 只有
+`excel`；同一个引用重复注册不会产生重复项，`getResources()` 返回副本。旧 metadata 缺失 alias
+时按确定性的 `excel-N` 顺序补齐。所有 durable history mutation 都会以 entry timestamp
 推进 `updatedAt`。`Session.restore()` 会验证 metadata 与 history header 的 id、creation timestamp
 一致，并重建 tree invariants；如果 metadata 落后于已恢复 entry，会将 `updatedAt` reconciliation
 到最新 durable timestamp。

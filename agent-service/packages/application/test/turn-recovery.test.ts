@@ -277,10 +277,7 @@ it('publishes a terminal live failure when resumed AgentSession construction fai
   ).rejects.toThrow('Unable to restore session model');
 
   expect(turnStore.load(turn.getId()).getState().status).toBe('failed');
-  expect(publish.mock.calls.map(([event]) => event.type)).toEqual([
-    'turn_started',
-    'turn_failed',
-  ]);
+  expect(publish.mock.calls.map(([event]) => event.type)).toEqual(['turn_started', 'turn_failed']);
   expect(closeTurn).toHaveBeenCalledOnce();
 });
 
@@ -347,6 +344,7 @@ it('restores the Excel resource, tools, and guidance when resuming a Turn', asyn
   expect(toolContext).toEqual({
     sessionId: session.getId(),
     excelResources: [resource],
+    excelResourceRefs: [{ id: resource.id, kind: 'excel', alias: 'excel-1' }],
     activeExcelResourceId: resource.id,
   });
   expect(modelGateway.requestedContexts[0]?.systemPrompt).toContain(

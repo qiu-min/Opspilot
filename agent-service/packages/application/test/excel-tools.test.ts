@@ -18,12 +18,14 @@ const excelResource = { id: 'resource-1', filePath: 'C:/workbooks/report.xlsx' }
 const context: ToolContext = {
   sessionId: 'session-1',
   excelResources: [excelResource],
+  excelResourceRefs: [{ id: excelResource.id, kind: 'excel', alias: 'excel-1' }],
   activeExcelResourceId: excelResource.id,
 };
 
 const contextWithoutResource: ToolContext = {
   sessionId: 'session-1',
   excelResources: [],
+  excelResourceRefs: [],
   activeExcelResourceId: null,
 };
 
@@ -32,6 +34,10 @@ const resourceB = { id: 'resource-b', filePath: 'C:/workbooks/b.xlsx' };
 const multiResourceContext: ToolContext = {
   sessionId: 'session-1',
   excelResources: [resourceA, resourceB],
+  excelResourceRefs: [
+    { id: resourceA.id, kind: 'excel', alias: 'excel-1' },
+    { id: resourceB.id, kind: 'excel', alias: 'excel-2' },
+  ],
   activeExcelResourceId: resourceB.id,
 };
 
@@ -74,13 +80,22 @@ const sheetProfile: GetSheetProfileResult = {
 };
 
 describe('Excel discovery Application Tools', () => {
-  it('resolves the only Excel resource when no resourceId is provided', () => {
+  it('resolves the only Excel resource when no resource alias is provided', () => {
     expect(resolveExcelResource(context)).toBe(excelResource);
     expect(requireExcelResource(context)).toBe(excelResource);
   });
 
   it('resolves an explicitly selected resource instead of the active resource', () => {
-    expect(resolveExcelResource(multiResourceContext, resourceA.id)).toBe(resourceA);
+    expect(resolveExcelResource(multiResourceContext, 'excel-1')).toBe(resourceA);
+  });
+
+  it('does not treat an internal resource id as a model-facing alias', () => {
+    expect(() => resolveExcelResource(multiResourceContext, resourceA.id)).toThrowError(
+      expect.objectContaining({
+        code: 'EXCEL_RESOURCE_NOT_FOUND',
+        message: `Unknown Excel resource: ${resourceA.id}`,
+      }),
+    );
   });
 
   it('uses the active resource as the default when multiple resources are available', () => {
@@ -91,7 +106,7 @@ describe('Excel discovery Application Tools', () => {
     expect(() => resolveExcelResource(multiResourceContext, 'missing')).toThrowError(
       expect.objectContaining({
         code: 'EXCEL_RESOURCE_NOT_FOUND',
-        message: 'Excel resource "missing" is not available in this Turn.',
+        message: 'Unknown Excel resource: missing',
       }),
     );
     expect(() =>
@@ -102,7 +117,7 @@ describe('Excel discovery Application Tools', () => {
     ).toThrowError(
       expect.objectContaining({
         code: 'EXCEL_RESOURCE_SELECTION_REQUIRED',
-        message: 'Multiple Excel resources are available. Specify resourceId.',
+        message: 'Multiple Excel resources are available. Specify resource.',
       }),
     );
   });
@@ -133,11 +148,11 @@ describe('Excel discovery Application Tools', () => {
     expect(tool.parameters).toEqual({
       type: 'object',
       properties: {
-        resourceId: {
+        resource: {
           type: 'string',
           minLength: 1,
           description:
-            'ID of the Excel resource to operate on. Use one of the resource IDs available in the current Session.',
+            'Logical alias of the Excel resource to operate on. Use one of the aliases available in the current Session.',
         },
       },
       additionalProperties: false,
@@ -173,11 +188,11 @@ describe('Excel discovery Application Tools', () => {
     expect(tool.parameters).toEqual({
       type: 'object',
       properties: {
-        resourceId: {
+        resource: {
           type: 'string',
           minLength: 1,
           description:
-            'ID of the Excel resource to operate on. Use one of the resource IDs available in the current Session.',
+            'Logical alias of the Excel resource to operate on. Use one of the aliases available in the current Session.',
         },
         sheetName: { type: 'string', minLength: 1 },
         sampleSize: { type: 'integer', minimum: 1, maximum: 200 },
@@ -228,8 +243,8 @@ describe('Excel discovery Application Tools', () => {
     };
 
     await createGetWorkbookInfoTool(connector).execute(
-      'call-resource-id',
-      { resourceId: resourceA.id },
+      'call-resource-alias',
+      { resource: 'excel-1' },
       undefined,
       multiResourceContext,
     );

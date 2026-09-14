@@ -1,7 +1,12 @@
 import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
-import type { SessionMetadata, SessionResourceRef } from '@opspilot/domain';
+import {
+  assignSessionResourceAliases,
+  type SessionMetadata,
+  type SessionResourceRef,
+  type SessionResourceRefInput,
+} from '@opspilot/domain';
 
 /** Current version of the filesystem metadata document. */
 export const CURRENT_SESSION_METADATA_VERSION = 1;
@@ -82,7 +87,10 @@ export function parseSessionMetadata(content: string): SessionMetadata {
 
   const resources = parseSessionResources(value.resources);
   const activeResourceId = parseActiveResourceId(value.activeResourceId);
-  if (activeResourceId !== null && !resources.some((resource) => resource.id === activeResourceId)) {
+  if (
+    activeResourceId !== null &&
+    !resources.some((resource) => resource.id === activeResourceId)
+  ) {
     throw new SessionMetadataPersistenceError(
       `metadata.json activeResourceId must reference a registered resource: ${activeResourceId}.`,
     );
@@ -194,7 +202,7 @@ function parseSessionResources(value: unknown): readonly SessionResourceRef[] {
     throw new SessionMetadataPersistenceError('metadata.json resources must be an array.');
   }
 
-  const resources: SessionResourceRef[] = [];
+  const resources: SessionResourceRefInput[] = [];
   const keys = new Set<string>();
   for (const [index, item] of value.entries()) {
     if (!isRecord(item) || !isNonEmptyString(item.id) || item.kind !== 'excel') {
@@ -202,7 +210,16 @@ function parseSessionResources(value: unknown): readonly SessionResourceRef[] {
         `metadata.json resources[${index}] must contain a non-empty id and supported kind.`,
       );
     }
-    const resource = { id: item.id, kind: 'excel' as const };
+    if (item.alias !== undefined && !isNonEmptyString(item.alias)) {
+      throw new SessionMetadataPersistenceError(
+        `metadata.json resources[${index}] alias must be a non-empty string when provided.`,
+      );
+    }
+    const resource = {
+      id: item.id,
+      kind: 'excel' as const,
+      ...(item.alias === undefined ? {} : { alias: item.alias.trim() }),
+    };
     const key = `${resource.kind}\u0000${resource.id}`;
     if (keys.has(key)) {
       throw new SessionMetadataPersistenceError(
@@ -212,7 +229,17 @@ function parseSessionResources(value: unknown): readonly SessionResourceRef[] {
     keys.add(key);
     resources.push(resource);
   }
-  return resources;
+  const normalizedResources = assignSessionResourceAliases(resources);
+  const aliases = new Set<string>();
+  for (const resource of normalizedResources) {
+    if (aliases.has(resource.alias)) {
+      throw new SessionMetadataPersistenceError(
+        `metadata.json contains duplicate resource alias: ${resource.alias}.`,
+      );
+    }
+    aliases.add(resource.alias);
+  }
+  return normalizedResources;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

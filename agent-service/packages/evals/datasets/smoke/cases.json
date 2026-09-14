@@ -1,0 +1,9 @@
+[
+  {
+    "id": "smoke-agent-turn",
+    "name": "Smoke Agent Turn",
+    "description": "Runs one short prompt through the real Application Agent Turn path.",
+    "input": "Reply with a short acknowledgement.",
+    "tags": ["smoke", "agent-turn"]
+  }
+]

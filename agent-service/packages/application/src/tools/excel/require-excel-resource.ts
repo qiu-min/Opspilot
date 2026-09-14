@@ -6,7 +6,7 @@ import type { ToolExecutionContext } from '../tool-context.js';
 /** Resolves the Excel resource selected by a tool call or the current Turn default. */
 export function resolveExcelResource(
   context: ToolExecutionContext,
-  resourceId?: string,
+  resourceAlias?: string,
 ): ExcelResource {
   if (context.excelResources.length === 0) {
     throw new AgentToolExecutionError(
@@ -15,14 +15,20 @@ export function resolveExcelResource(
     );
   }
 
-  if (resourceId !== undefined) {
-    const resource = context.excelResources.find((candidate) => candidate.id === resourceId);
+  if (resourceAlias !== undefined) {
+    const resourceRef = context.excelResourceRefs.find(
+      (candidate) => candidate.alias === resourceAlias,
+    );
+    const resource =
+      resourceRef === undefined
+        ? undefined
+        : context.excelResources.find((candidate) => candidate.id === resourceRef.id);
     if (resource !== undefined) return resource;
 
     throw new AgentToolExecutionError(
-      `Excel resource "${resourceId}" is not available in this Turn.`,
+      `Unknown Excel resource: ${resourceAlias}`,
       'EXCEL_RESOURCE_NOT_FOUND',
-      { resourceId },
+      { resource: resourceAlias },
     );
   }
 
@@ -34,7 +40,7 @@ export function resolveExcelResource(
   if (activeResource !== undefined) return activeResource;
 
   throw new AgentToolExecutionError(
-    'Multiple Excel resources are available. Specify resourceId.',
+    'Multiple Excel resources are available. Specify resource.',
     'EXCEL_RESOURCE_SELECTION_REQUIRED',
   );
 }

@@ -148,15 +148,48 @@ describe('Session domain', () => {
     session.registerResource({ id: 'workbook-a', kind: 'excel' });
     session.registerResource({ id: 'workbook-b', kind: 'excel' });
 
-    const snapshot = session.getResources() as Array<{ id: string; kind: 'excel' }>;
+    const snapshot = [...session.getResources()] as Array<{
+      id: string;
+      kind: 'excel';
+      alias: string;
+    }>;
     snapshot[0]!.id = 'mutated';
-    snapshot.push({ id: 'workbook-c', kind: 'excel' });
+    snapshot.push({ id: 'workbook-c', kind: 'excel', alias: 'excel-3' });
 
     expect(session.getResources()).toEqual([
-      { id: 'workbook-a', kind: 'excel' },
-      { id: 'workbook-b', kind: 'excel' },
+      { id: 'workbook-a', kind: 'excel', alias: 'excel-1' },
+      { id: 'workbook-b', kind: 'excel', alias: 'excel-2' },
     ]);
     expect(session.getActiveResourceId()).toBe('workbook-b');
+    expect(session.getResourceByAlias('excel-1')).toEqual({
+      id: 'workbook-a',
+      kind: 'excel',
+      alias: 'excel-1',
+    });
+    expect(session.getResourceByAlias('missing')).toBeUndefined();
+  });
+
+  it('fills missing aliases from the first available Session-local slot', () => {
+    const session = Session.restore(
+      {
+        id: 'session-1',
+        title: null,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        resources: [
+          { id: 'workbook-a', kind: 'excel', alias: 'excel-2' },
+          { id: 'workbook-b', kind: 'excel' },
+        ] as never,
+        activeResourceId: 'workbook-b',
+      },
+      { type: 'session', version: 1, id: 'session-1', timestamp: '2026-01-01T00:00:00.000Z' },
+      [],
+    );
+
+    expect(session.getResources()).toEqual([
+      { id: 'workbook-a', kind: 'excel', alias: 'excel-2' },
+      { id: 'workbook-b', kind: 'excel', alias: 'excel-1' },
+    ]);
   });
 
   it('selects only registered resources as active and keeps the selection out of history', () => {

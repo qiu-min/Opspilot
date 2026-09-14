@@ -1,10 +1,7 @@
 import type { ToolDefinition } from '../tools/tool-definition.js';
 import type { ExcelResourceContext } from '../resources/excel/excel-resource-context.js';
 
-const WORKBOOK_DISCOVERY_TOOL_NAMES = new Set([
-  'get_workbook_info',
-  'get_sheet_profile',
-]);
+const WORKBOOK_DISCOVERY_TOOL_NAMES = new Set(['get_workbook_info', 'get_sheet_profile']);
 
 const BASE_GUIDELINES = [
   "Respond in the user's language unless they ask otherwise.",
@@ -36,9 +33,7 @@ export interface BuildOpsPilotSystemPromptOptions {
 }
 
 /** Builds the stable OpsPilot behavior policy for the capabilities of one runtime. */
-export function buildOpsPilotSystemPrompt(
-  options: BuildOpsPilotSystemPromptOptions,
-): string {
+export function buildOpsPilotSystemPrompt(options: BuildOpsPilotSystemPromptOptions): string {
   const toolNames = new Set(options.tools.map((tool) => tool.name));
   const guidelines: string[] = [];
   const seen = new Set<string>();
@@ -84,14 +79,11 @@ export function buildOpsPilotSystemPrompt(
 export function withExcelResourceGuidance(
   systemPrompt: string | undefined,
   resourceContext:
-    | Pick<ExcelResourceContext, 'resources' | 'activeResourceId'>
-    | boolean,
+    Pick<ExcelResourceContext, 'resources' | 'excelResourceRefs' | 'activeResourceId'> | boolean,
 ): string | undefined {
   const basePrompt = systemPrompt?.trim();
   const appendGuidance = (guidance: string): string =>
-    basePrompt === undefined || basePrompt.length === 0
-      ? guidance
-      : `${basePrompt}\n\n${guidance}`;
+    basePrompt === undefined || basePrompt.length === 0 ? guidance : `${basePrompt}\n\n${guidance}`;
 
   if (typeof resourceContext === 'boolean') {
     if (!resourceContext) return systemPrompt;
@@ -103,20 +95,25 @@ export function withExcelResourceGuidance(
 
   if (resourceContext.resources.length === 0) return systemPrompt;
 
-  const activeResourceIsAvailable = resourceContext.resources.some(
-    (resource) => resource.id === resourceContext.activeResourceId,
+  const availableResourceRefs = resourceContext.excelResourceRefs.filter((resourceRef) =>
+    resourceContext.resources.some((resource) => resource.id === resourceRef.id),
   );
+  const activeResourceAlias = availableResourceRefs.find(
+    (resourceRef) => resourceRef.id === resourceContext.activeResourceId,
+  )?.alias;
   const guidance = [
     resourceContext.resources.length === 1
       ? 'This Turn includes an attached Excel workbook. When the user asks to inspect or analyze it, call the relevant Excel tool before answering.'
       : 'This Turn includes multiple Excel resources. When the user asks to inspect or analyze a workbook, call the relevant Excel tool before answering.',
     'Available Excel resources:',
-    ...resourceContext.resources.map((resource) => `- ${resource.id}`),
-    ...(activeResourceIsAvailable
-      ? ['Active Excel resource:', `- ${resourceContext.activeResourceId!}`]
+    ...availableResourceRefs.map((resourceRef) => `- ${resourceRef.alias}`),
+    ...(activeResourceAlias !== undefined
+      ? ['Active Excel resource:', `- ${activeResourceAlias}`]
       : []),
     ...(resourceContext.resources.length > 1
-      ? ['When operating on a specific workbook, pass its resourceId to the Excel tool.']
+      ? [
+          'When operating on a specific workbook, pass its resource alias in the resource argument to the Excel tool.',
+        ]
       : []),
   ].join('\n');
 

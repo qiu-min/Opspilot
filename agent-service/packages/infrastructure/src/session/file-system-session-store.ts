@@ -4,6 +4,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -119,6 +120,7 @@ export class FileSystemSessionStore implements SessionStore {
     }
     this.assertCompleteNewLayout(sessionId, paths);
 
+    const metadataContent = readFileSync(paths.metadata, 'utf8');
     const metadata = loadSessionMetadata(paths.metadata);
     if (metadata.id !== sessionId) {
       throw new SessionStoreError(
@@ -134,7 +136,10 @@ export class FileSystemSessionStore implements SessionStore {
       entries: loaded.entries,
     });
 
-    if (session.getUpdatedAt() !== metadata.updatedAt) {
+    if (
+      session.getUpdatedAt() !== metadata.updatedAt ||
+      hasMissingResourceAliases(metadataContent)
+    ) {
       this.repairReconciledMetadata(sessionId, paths, session.getMetadata());
     }
     return session;
@@ -257,6 +262,16 @@ export class FileSystemSessionStore implements SessionStore {
       throw new SessionStoreError(`Invalid sessionId: ${sessionId}.`);
     }
   }
+}
+
+function hasMissingResourceAliases(content: string): boolean {
+  const value = JSON.parse(content) as unknown;
+  if (!isRecord(value) || !Array.isArray(value.resources)) return false;
+  return value.resources.some((resource) => isRecord(resource) && resource.alias === undefined);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function isDirectory(path: string): boolean {

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildOpsPilotSystemPrompt, type ToolDefinition, withExcelResourceGuidance } from '../src/index.js';
+import {
+  buildOpsPilotSystemPrompt,
+  type ToolDefinition,
+  withExcelResourceGuidance,
+} from '../src/index.js';
 
 function fakeTool(
   name: string,
@@ -33,19 +37,22 @@ describe('buildOpsPilotSystemPrompt', () => {
     expect(prompt).toContain('- Use clear, concise, and professional language.');
     expect(prompt).toContain('- Prefer plain prose and simple Markdown.');
     expect(prompt).toContain('- Do not use emojis unless explicitly requested.');
-    expect(prompt).toContain('- Avoid decorative symbols, ornamental separators, and excessive formatting.');
-    expect(prompt).toContain('- Use headings, lists, tables, code blocks, and bold text only when they improve readability.');
+    expect(prompt).toContain(
+      '- Avoid decorative symbols, ornamental separators, and excessive formatting.',
+    );
+    expect(prompt).toContain(
+      '- Use headings, lists, tables, code blocks, and bold text only when they improve readability.',
+    );
     expect(prompt).toContain('- Keep formatting proportional to the complexity of the answer.');
   });
 
   it('does not copy tool descriptions or parameter schemas', () => {
     const prompt = buildOpsPilotSystemPrompt({
       tools: [
-        fakeTool(
-          'fake_tool',
-          'SENTINEL_TOOL_DESCRIPTION_SHOULD_NOT_APPEAR',
-          { type: 'object', properties: { sentinel: { const: 'SENTINEL_PARAMETER_SCHEMA_SHOULD_NOT_APPEAR' } } },
-        ),
+        fakeTool('fake_tool', 'SENTINEL_TOOL_DESCRIPTION_SHOULD_NOT_APPEAR', {
+          type: 'object',
+          properties: { sentinel: { const: 'SENTINEL_PARAMETER_SCHEMA_SHOULD_NOT_APPEAR' } },
+        }),
       ],
     });
 
@@ -57,7 +64,9 @@ describe('buildOpsPilotSystemPrompt', () => {
   it('adds workbook grounding guidance when a discovery capability is available', () => {
     const prompt = buildOpsPilotSystemPrompt({ tools: [fakeTool('get_sheet_profile')] });
 
-    expect(prompt).toContain('When workbook-specific facts are required, inspect the workbook before answering.');
+    expect(prompt).toContain(
+      'When workbook-specific facts are required, inspect the workbook before answering.',
+    );
   });
 
   it('does not promise workbook inspection without a discovery capability', () => {
@@ -70,7 +79,11 @@ describe('buildOpsPilotSystemPrompt', () => {
   it('deduplicates additional guidelines and appends extra prompt text', () => {
     const prompt = buildOpsPilotSystemPrompt({
       tools: [],
-      additionalGuidelines: ['Be concise and focus on the user\'s actual task.', '  Use evidence.  ', 'Use evidence.'],
+      additionalGuidelines: [
+        "Be concise and focus on the user's actual task.",
+        '  Use evidence.  ',
+        'Use evidence.',
+      ],
       appendSystemPrompt: 'Additional runtime instruction.',
     });
 
@@ -87,18 +100,24 @@ describe('buildOpsPilotSystemPrompt', () => {
     expect(prompt).toContain('Base prompt.');
   });
 
-  it('lists available resource ids and the active resource without exposing file paths', () => {
+  it('lists stable resource aliases and the active alias without exposing internal ids or paths', () => {
     const prompt = withExcelResourceGuidance('Base prompt.', {
       resources: [
         { id: 'resource-a', filePath: 'C:/private/a.xlsx' },
         { id: 'resource-b', filePath: 'C:/private/b.xlsx' },
       ],
+      excelResourceRefs: [
+        { id: 'resource-a', kind: 'excel', alias: 'excel-1' },
+        { id: 'resource-b', kind: 'excel', alias: 'excel-2' },
+      ],
       activeResourceId: 'resource-b',
     });
 
-    expect(prompt).toContain('Available Excel resources:\n- resource-a\n- resource-b');
-    expect(prompt).toContain('Active Excel resource:\n- resource-b');
-    expect(prompt).toContain('pass its resourceId to the Excel tool');
+    expect(prompt).toContain('Available Excel resources:\n- excel-1\n- excel-2');
+    expect(prompt).toContain('Active Excel resource:\n- excel-2');
+    expect(prompt).toContain('resource alias in the resource argument');
+    expect(prompt).not.toContain('resource-a');
+    expect(prompt).not.toContain('resource-b');
     expect(prompt).not.toContain('C:/private');
     expect(prompt).not.toContain('a.xlsx');
     expect(prompt).not.toContain('b.xlsx');
@@ -108,6 +127,7 @@ describe('buildOpsPilotSystemPrompt', () => {
     expect(
       withExcelResourceGuidance('Base prompt.', {
         resources: [],
+        excelResourceRefs: [],
         activeResourceId: null,
       }),
     ).toBe('Base prompt.');

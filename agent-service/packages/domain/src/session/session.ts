@@ -17,7 +17,11 @@ import {
   SessionTreeError,
 } from './session-errors.js';
 import { normalizeSessionTitle, type SessionMetadata } from './session-metadata.js';
-import type { SessionResourceRef } from './session-resource.js';
+import {
+  assignSessionResourceAliases,
+  type SessionResourceRef,
+  type SessionResourceRefInput,
+} from './session-resource.js';
 
 /** The only Session version currently understood by the domain. */
 export const CURRENT_SESSION_VERSION = 1;
@@ -163,8 +167,8 @@ export class Session {
   }
 
   /** Registers a lightweight Session resource reference idempotently. */
-  public registerResource(resource: SessionResourceRef): void {
-    validateResourceRef(resource);
+  public registerResource(resource: SessionResourceRefInput): void {
+    validateResourceInput(resource);
     if (
       this.metadata.resources.some(
         (registered) => registered.id === resource.id && registered.kind === resource.kind,
@@ -173,9 +177,11 @@ export class Session {
       return;
     }
 
+    const resources = assignSessionResourceAliases([...this.metadata.resources, resource]);
+    validateResourceList(resources);
     this.metadata = {
       ...this.metadata,
-      resources: [...this.metadata.resources, cloneResourceRef(resource)],
+      resources: resources.map(cloneResourceRef),
       activeResourceId: resource.id,
       updatedAt: this.nextMutationTimestamp(),
     };
@@ -184,6 +190,12 @@ export class Session {
   /** Returns an immutable snapshot of the registered resource references. */
   public getResources(): readonly SessionResourceRef[] {
     return this.metadata.resources.map(cloneResourceRef);
+  }
+
+  /** Returns the registered resource with the supplied Session-local alias. */
+  public getResourceByAlias(alias: string): SessionResourceRef | undefined {
+    const resource = this.metadata.resources.find((candidate) => candidate.alias === alias);
+    return resource === undefined ? undefined : cloneResourceRef(resource);
   }
 
   /** Returns the default resource id for the next Turn, if one is selected. */
@@ -197,9 +209,7 @@ export class Session {
       throw new SessionMetadataError('Session active resource id must be non-empty.');
     }
     if (!this.metadata.resources.some((resource) => resource.id === resourceId)) {
-      throw new SessionMetadataError(
-        `Session active resource must be registered: ${resourceId}.`,
-      );
+      throw new SessionMetadataError(`Session active resource must be registered: ${resourceId}.`);
     }
     if (this.metadata.activeResourceId === resourceId) return;
 
@@ -467,17 +477,7 @@ function validateMetadata(metadata: SessionMetadata): void {
       'Session active resource id must be null or a non-empty string.',
     );
   }
-  const resourceKeys = new Set<string>();
-  for (const resource of metadata.resources) {
-    validateResourceRef(resource);
-    const key = `${resource.kind}\u0000${resource.id}`;
-    if (resourceKeys.has(key)) {
-      throw new SessionMetadataError(
-        `Duplicate Session resource: ${resource.kind}/${resource.id}.`,
-      );
-    }
-    resourceKeys.add(key);
-  }
+  validateResourceList(metadata.resources);
   if (
     metadata.activeResourceId !== null &&
     !metadata.resources.some((resource) => resource.id === metadata.activeResourceId)
@@ -523,14 +523,17 @@ function deriveCompatibilityMetadata(
 }
 
 function normalizeMetadataResources(metadata: SessionMetadata): SessionMetadata {
+  const resources = assignSessionResourceAliases(
+    metadata.resources === undefined ? [] : metadata.resources,
+  );
   return {
     ...metadata,
-    resources: metadata.resources === undefined ? [] : metadata.resources,
+    resources,
     activeResourceId: metadata.activeResourceId === undefined ? null : metadata.activeResourceId,
   };
 }
 
-function validateResourceRef(resource: unknown): asserts resource is SessionResourceRef {
+function validateResourceInput(resource: unknown): asserts resource is SessionResourceRefInput {
   if (!isRecord(resource)) {
     throw new SessionMetadataError('Session resource must be an object.');
   }
@@ -540,10 +543,39 @@ function validateResourceRef(resource: unknown): asserts resource is SessionReso
   if (resource.kind !== 'excel') {
     throw new SessionMetadataError(`Unsupported Session resource kind: ${String(resource.kind)}.`);
   }
+  if (resource.alias !== undefined && !isNonEmptyString(resource.alias)) {
+    throw new SessionMetadataError('Session resource alias must be a non-empty string.');
+  }
+}
+
+function validateResourceRef(resource: unknown): asserts resource is SessionResourceRef {
+  validateResourceInput(resource);
+  if (!isNonEmptyString(resource.alias)) {
+    throw new SessionMetadataError('Session resource alias must be a non-empty string.');
+  }
+}
+
+function validateResourceList(resources: readonly SessionResourceRef[]): void {
+  const resourceKeys = new Set<string>();
+  const aliases = new Set<string>();
+  for (const resource of resources) {
+    validateResourceRef(resource);
+    const key = `${resource.kind}\u0000${resource.id}`;
+    if (resourceKeys.has(key)) {
+      throw new SessionMetadataError(
+        `Duplicate Session resource: ${resource.kind}/${resource.id}.`,
+      );
+    }
+    resourceKeys.add(key);
+    if (aliases.has(resource.alias)) {
+      throw new SessionMetadataError(`Duplicate Session resource alias: ${resource.alias}.`);
+    }
+    aliases.add(resource.alias);
+  }
 }
 
 function cloneResourceRef(resource: SessionResourceRef): SessionResourceRef {
-  return { id: resource.id, kind: resource.kind };
+  return { id: resource.id, kind: resource.kind, alias: resource.alias };
 }
 
 function isRestoreInput(

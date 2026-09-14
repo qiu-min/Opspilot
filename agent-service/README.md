@@ -25,7 +25,8 @@ Agent Service
 ├── Session Domain (`packages/domain`)
 ├── Agent Runtime
 ├── Model Gateway
-└── Tool Gateway
+├── Tool Gateway
+└── Eval Consumer (`packages/evals`)
 ```
 
 Application 是业务编排边界，可以理解 OpsPilot 的 `Session`、`Turn` 和 `FileReference` 等概念，并负责把这些概念转换为 Runtime 可消费的输入。它定义 `SessionStore`、`TurnStore` 与 `TurnExecutionContextStore` port；filesystem adapter 位于 `packages/infrastructure`，由 `apps/api-runtime` 组合。
@@ -69,6 +70,7 @@ sessions/{sessionId}/
 - `packages/model-gateway`：模型调用、Provider 适配、消息和流式响应契约。
 - `packages/tool-gateway`：Tool Contract、运行时校验、Connector / Adapter 和外部能力边界。
 - `packages/observability`：Agent Service 可观测性边界。
+- `packages/evals`：最外层离线 Eval Core、Runner、真实 Application Turn adapter、smoke evaluator 和 reporters；production package 不依赖它。
 
 这些核心 package 的实现和公开契约保持独立，Application 通过明确边界使用它们。
 
@@ -123,6 +125,15 @@ pnpm build
 5. 根据需要设置 `SESSION_DIRECTORY`、`TURN_STORAGE_ROOT`、`WORKSPACE_STORAGE_ROOT`、`DEFAULT_MODEL_PROVIDER` 和 `DEFAULT_MODEL_ID`
 6. 执行 `pnpm dev:api`
 7. 手动验证真实 Excel Tool Calling 可执行 `pnpm --filter @opspilot/api-runtime smoke:excel:kimi`
+
+运行离线 Eval smoke case：
+
+```bash
+pnpm --filter @opspilot/evals eval
+```
+
+该命令通过 Application 的 `ExecuteTurn` 驱动真实 Agent Turn，结果同时输出到 Console 和
+未纳入版本控制的 `packages/evals/results/eval-report.json`。
 
 本地 Backend → Agent Service 联调时，`FileStorage:RootPath` 与
 `OPS_PILOT_SHARED_STORAGE_ROOT` 必须指向同一个实际目录；Backend 保存的

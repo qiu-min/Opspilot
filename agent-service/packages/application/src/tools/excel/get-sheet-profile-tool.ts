@@ -7,11 +7,11 @@ import type { ToolDefinition } from '../tool-definition.js';
 const GET_SHEET_PROFILE_PARAMETERS: JsonObject = {
   type: 'object',
   properties: {
-    resourceId: {
+    resource: {
       type: 'string',
       minLength: 1,
       description:
-        'ID of the Excel resource to operate on. Use one of the resource IDs available in the current Session.',
+        'Logical alias of the Excel resource to operate on. Use one of the aliases available in the current Session.',
     },
     sheetName: { type: 'string', minLength: 1 },
     sampleSize: { type: 'integer', minimum: 1, maximum: 200 },
@@ -23,7 +23,7 @@ const GET_SHEET_PROFILE_PARAMETERS: JsonObject = {
 interface GetSheetProfileToolArguments {
   readonly sheetName: string;
   readonly sampleSize?: number;
-  readonly resourceId?: string;
+  readonly resource?: string;
 }
 
 /** Creates the Application Tool that profiles one worksheet in the current Excel resource. */
@@ -37,8 +37,8 @@ export function createGetSheetProfileTool(
     recoveryPolicy: 'retry_safe',
     requiresExcelResource: true,
     async execute(_callId, args, signal, context) {
-      const { sheetName, sampleSize, resourceId } = narrowArguments(args);
-      const excelResource = resolveExcelResource(context, resourceId);
+      const { sheetName, sampleSize, resource } = narrowArguments(args);
+      const excelResource = resolveExcelResource(context, resource);
       const input = {
         filePath: excelResource.filePath,
         sheetName,
@@ -56,9 +56,9 @@ export function createGetSheetProfileTool(
 
 /** Narrows arguments that have already passed the Agent Runtime schema validation. */
 function narrowArguments(args: JsonObject): GetSheetProfileToolArguments {
-  const resourceId = args.resourceId;
-  if (resourceId !== undefined && typeof resourceId !== 'string') {
-    throw new TypeError('get_sheet_profile resourceId must be a string when provided.');
+  const resource = args.resource;
+  if (resource !== undefined && typeof resource !== 'string') {
+    throw new TypeError('get_sheet_profile resource must be a string when provided.');
   }
 
   const sheetName = args.sheetName;
@@ -73,7 +73,7 @@ function narrowArguments(args: JsonObject): GetSheetProfileToolArguments {
 
   return {
     sheetName,
-    ...(resourceId === undefined ? {} : { resourceId }),
+    ...(resource === undefined ? {} : { resource }),
     ...(sampleSize === undefined ? {} : { sampleSize }),
   };
 }

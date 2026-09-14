@@ -1,6 +1,6 @@
 import type { AgentMessage, AgentTracer } from '@opspilot/agent-runtime';
 import type { Model, ModelGateway } from '@opspilot/model-gateway';
-import { Turn, type Session, type TurnEvent } from '@opspilot/domain';
+import { Turn, type Session, type SessionResourceRef, type TurnEvent } from '@opspilot/domain';
 
 import { createAgentSession } from '../../session/runtime/create-agent-session.js';
 import type { AgentSession } from '../../session/runtime/agent-session.js';
@@ -11,10 +11,7 @@ import { wrapToolDefinitions } from '../../tools/wrap-tool-definition.js';
 import type { TurnExecutionContext } from '../execution/turn-execution-context.js';
 import type { TurnExecutionContextStore } from '../ports/turn-execution-context-store.js';
 import type { TurnStore } from '../ports/turn-store.js';
-import {
-  TurnStreamProjector,
-  type TurnStreamHub,
-} from '../stream/index.js';
+import { TurnStreamProjector, type TurnStreamHub } from '../stream/index.js';
 import type { ToolPresentationResolver } from '../presentation/tool-presentation.js';
 import { TurnEventRecorder } from '../execution/turn-event-recorder.js';
 import { withExcelResourceGuidance } from '../../system-prompt/index.js';
@@ -240,25 +237,36 @@ export class ResumeTurn {
     let unsubscribe: (() => void) | undefined;
     let terminalPublished = false;
     try {
+      const executionResource = executionContext?.excelResource;
+      const executionResourceRef =
+        executionResource === undefined
+          ? undefined
+          : (session.getResources().find((resource) => resource.id === executionResource.id) ??
+            ({
+              id: executionResource.id,
+              kind: 'excel',
+              alias: 'excel-1',
+            } satisfies SessionResourceRef));
+      const excelResources = executionResource === undefined ? [] : [executionResource];
+      const excelResourceRefs = executionResourceRef === undefined ? [] : [executionResourceRef];
       agentSession = createAgentSession({
         session,
         sessionStore: this.sessionStore,
         modelGateway: this.modelGateway,
         tools: wrapToolDefinitions(this.toolDefinitions, {
           sessionId,
-          excelResources:
-            executionContext?.excelResource === undefined
-              ? []
-              : [executionContext.excelResource],
-          activeExcelResourceId: executionContext?.excelResource?.id ?? null,
+          excelResources,
+          excelResourceRefs,
+          activeExcelResourceId: executionResource?.id ?? null,
         }),
         systemPrompt: withExcelResourceGuidance(
           this.systemPrompt,
-          executionContext?.excelResource === undefined
-            ? { resources: [], activeResourceId: null }
+          executionResource === undefined
+            ? { resources: [], excelResourceRefs: [], activeResourceId: null }
             : {
-                resources: [executionContext.excelResource],
-                activeResourceId: executionContext.excelResource.id,
+                resources: excelResources,
+                excelResourceRefs,
+                activeResourceId: executionResource.id,
               },
         ),
         contextManager: this.contextManager,

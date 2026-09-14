@@ -259,7 +259,7 @@ describe('ExecuteTurn', () => {
     });
 
     expect(store.load(result.sessionId).getResources()).toEqual([
-      { id: 'resource-1', kind: 'excel' },
+      { id: 'resource-1', kind: 'excel', alias: 'excel-1' },
     ]);
     expect(store.load(result.sessionId).getActiveResourceId()).toBe('resource-1');
     expect(gateway.requestedContexts[0]?.systemPrompt).toContain('SENTINEL_SYSTEM_PROMPT');
@@ -321,8 +321,8 @@ describe('ExecuteTurn', () => {
     });
 
     expect(store.load(first.sessionId).getResources()).toEqual([
-      { id: 'resource-a', kind: 'excel' },
-      { id: 'resource-b', kind: 'excel' },
+      { id: 'resource-a', kind: 'excel', alias: 'excel-1' },
+      { id: 'resource-b', kind: 'excel', alias: 'excel-2' },
     ]);
     expect(store.load(first.sessionId).getActiveResourceId()).toBe('resource-a');
   });
@@ -342,7 +342,7 @@ describe('ExecuteTurn', () => {
     const explicitCall: ModelToolCall = {
       callId: 'call-explicit-a',
       name: 'get_workbook_info',
-      arguments: { resourceId: resourceA.id },
+      arguments: { resource: 'excel-1' },
     };
     const defaultCall: ModelToolCall = {
       callId: 'call-default-b',
@@ -421,16 +421,18 @@ describe('ExecuteTurn', () => {
       {
         sessionId: first.sessionId,
         excelResources: [resource],
+        excelResourceRefs: [{ id: resource.id, kind: 'excel', alias: 'excel-1' }],
         activeExcelResourceId: resource.id,
       },
       {
         sessionId: first.sessionId,
         excelResources: [resource],
+        excelResourceRefs: [{ id: resource.id, kind: 'excel', alias: 'excel-1' }],
         activeExcelResourceId: resource.id,
       },
     ]);
     expect(store.load(first.sessionId).getResources()).toEqual([
-      { id: 'resource-a', kind: 'excel' },
+      { id: 'resource-a', kind: 'excel', alias: 'excel-1' },
     ]);
     expect(store.load(first.sessionId).getActiveResourceId()).toBe('resource-a');
   });
@@ -1456,6 +1458,7 @@ describe('ExecuteTurn', () => {
     expect(receivedContext).toEqual({
       sessionId: result.sessionId,
       excelResources: [{ id: 'resource-1', filePath: 'workbook.xlsx' }],
+      excelResourceRefs: [{ id: 'resource-1', kind: 'excel', alias: 'excel-1' }],
       activeExcelResourceId: 'resource-1',
     });
     expect(receivedSignal).toBe(gateway.requestedOptions[0]?.signal);
@@ -1518,6 +1521,7 @@ describe('ExecuteTurn', () => {
     expect(receivedContext).toEqual({
       sessionId: expect.any(String),
       excelResources: [],
+      excelResourceRefs: [],
       activeExcelResourceId: null,
     });
   });
@@ -1565,11 +1569,16 @@ describe('ExecuteTurn', () => {
       {
         sessionId: firstResult.sessionId,
         excelResources: [resourceA],
+        excelResourceRefs: [{ id: resourceA.id, kind: 'excel', alias: 'excel-1' }],
         activeExcelResourceId: resourceA.id,
       },
       {
         sessionId: firstResult.sessionId,
         excelResources: [resourceA, resourceB],
+        excelResourceRefs: [
+          { id: resourceA.id, kind: 'excel', alias: 'excel-1' },
+          { id: resourceB.id, kind: 'excel', alias: 'excel-2' },
+        ],
         activeExcelResourceId: resourceB.id,
       },
     ]);

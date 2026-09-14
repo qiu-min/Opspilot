@@ -32,6 +32,7 @@ describe('ToolDefinition wrappers', () => {
     const wrapped = wrapToolDefinition(definition, {
       sessionId: 'session-1',
       excelResources: [],
+      excelResourceRefs: [],
       activeExcelResourceId: null,
     });
 
@@ -45,6 +46,7 @@ describe('ToolDefinition wrappers', () => {
     const context: ToolContext = {
       sessionId: 'session-1',
       excelResources: [],
+      excelResourceRefs: [],
       activeExcelResourceId: null,
     };
     const args: JsonObject = { query: 'value' };
@@ -95,6 +97,7 @@ describe('ToolDefinition wrappers', () => {
     const wrapped = wrapToolDefinitions(definitions, {
       sessionId: 'session-1',
       excelResources: [],
+      excelResourceRefs: [],
       activeExcelResourceId: null,
     });
 
@@ -103,9 +106,15 @@ describe('ToolDefinition wrappers', () => {
 
   it('does not expose Excel-dependent tools without an Excel resource', () => {
     const definitions: ToolDefinition[] = [
-      createDefinition('lookup', vi.fn(async () => ({ content: [] }))),
+      createDefinition(
+        'lookup',
+        vi.fn(async () => ({ content: [] })),
+      ),
       {
-        ...createDefinition('get_workbook_info', vi.fn(async () => ({ content: [] }))),
+        ...createDefinition(
+          'get_workbook_info',
+          vi.fn(async () => ({ content: [] })),
+        ),
         requiresExcelResource: true,
       },
     ];
@@ -114,6 +123,7 @@ describe('ToolDefinition wrappers', () => {
       wrapToolDefinitions(definitions, {
         sessionId: 'session-1',
         excelResources: [],
+        excelResourceRefs: [],
         activeExcelResourceId: null,
       }).map((tool) => tool.name),
     ).toEqual(['lookup']);
@@ -121,6 +131,7 @@ describe('ToolDefinition wrappers', () => {
       wrapToolDefinitions(definitions, {
         sessionId: 'session-1',
         excelResources: [{ id: 'resource-1', filePath: 'workbook.xlsx' }],
+        excelResourceRefs: [{ id: 'resource-1', kind: 'excel', alias: 'excel-1' }],
         activeExcelResourceId: 'resource-1',
       }).map((tool) => tool.name),
     ).toEqual(['lookup', 'get_workbook_info']);

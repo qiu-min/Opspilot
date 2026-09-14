@@ -173,6 +173,7 @@ export class ExecuteTurn {
       const tools = wrapToolDefinitions(this.toolDefinitions, {
         sessionId,
         excelResources: excelResourceContext.resources,
+        excelResourceRefs: excelResourceContext.excelResourceRefs,
         activeExcelResourceId: excelResourceContext.activeResourceId,
       });
       agentSession = createAgentSession({
@@ -182,10 +183,7 @@ export class ExecuteTurn {
         model: executionConfig.model,
         thinkingLevel: executionConfig.thinkingLevel,
         tools,
-        systemPrompt: withExcelResourceGuidance(
-          this.systemPrompt,
-          excelResourceContext,
-        ),
+        systemPrompt: withExcelResourceGuidance(this.systemPrompt, excelResourceContext),
         contextManager: this.contextManager,
         compactionService: this.compactionService,
         compactionSettings: this.compactionSettings,

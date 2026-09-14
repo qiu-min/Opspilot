@@ -1,4 +1,4 @@
-import type { Session } from '@opspilot/domain';
+import type { Session, SessionResourceRef } from '@opspilot/domain';
 
 import type { ExcelResource } from '../../tools/excel-resource.js';
 import type { ExcelSourceResourceStore } from './excel-source-resource-store.js';
@@ -6,6 +6,7 @@ import type { ExcelSourceResourceStore } from './excel-source-resource-store.js'
 /** All source locators available to one Turn, with the Session default identified separately. */
 export interface ExcelResourceContext {
   readonly resources: readonly ExcelResource[];
+  readonly excelResourceRefs: readonly SessionResourceRef[];
   readonly activeResourceId: string | null;
   readonly activeResource: ExcelResource | null;
 }
@@ -23,9 +24,7 @@ export async function resolveExcelResourceContext(
   for (const registered of registeredResources) {
     const resource = await sourceResourceStore.get(session.getId(), registered.id);
     if (resource === null)
-      throw new Error(
-        `Excel source locator is registered but not available: ${registered.id}.`,
-      );
+      throw new Error(`Excel source locator is registered but not available: ${registered.id}.`);
     if (resource.id !== registered.id) {
       throw new Error(
         `Excel source locator id does not match the requested resource: ${resource.id} !== ${registered.id}.`,
@@ -37,6 +36,7 @@ export async function resolveExcelResourceContext(
   const activeResourceId = session.getActiveResourceId();
   return {
     resources,
+    excelResourceRefs: registeredResources,
     activeResourceId,
     activeResource: resources.find((resource) => resource.id === activeResourceId) ?? null,
   };

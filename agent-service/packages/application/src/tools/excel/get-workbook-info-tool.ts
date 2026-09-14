@@ -7,11 +7,11 @@ import type { ToolDefinition } from '../tool-definition.js';
 const GET_WORKBOOK_INFO_PARAMETERS: JsonObject = {
   type: 'object',
   properties: {
-    resourceId: {
+    resource: {
       type: 'string',
       minLength: 1,
       description:
-        'ID of the Excel resource to operate on. Use one of the resource IDs available in the current Session.',
+        'Logical alias of the Excel resource to operate on. Use one of the aliases available in the current Session.',
     },
   },
   additionalProperties: false,
@@ -28,8 +28,8 @@ export function createGetWorkbookInfoTool(
     recoveryPolicy: 'retry_safe',
     requiresExcelResource: true,
     async execute(_callId, args, signal, context) {
-      const resourceId = narrowResourceId(args);
-      const excelResource = resolveExcelResource(context, resourceId);
+      const resourceAlias = narrowResourceAlias(args);
+      const excelResource = resolveExcelResource(context, resourceAlias);
       const result = await discoveryConnector.getWorkbookInfo(
         { filePath: excelResource.filePath },
         signal,
@@ -44,14 +44,14 @@ export function createGetWorkbookInfoTool(
 }
 
 /** Narrows the optional resource selector after Agent Runtime validation. */
-function narrowResourceId(args: JsonObject): string | undefined {
-  const resourceId = args.resourceId;
-  if (resourceId === undefined) return undefined;
-  if (typeof resourceId !== 'string') {
-    throw new TypeError('get_workbook_info resourceId must be a string when provided.');
+function narrowResourceAlias(args: JsonObject): string | undefined {
+  const resourceAlias = args.resource;
+  if (resourceAlias === undefined) return undefined;
+  if (typeof resourceAlias !== 'string') {
+    throw new TypeError('get_workbook_info resource must be a string when provided.');
   }
 
-  return resourceId;
+  return resourceAlias;
 }
 
 /** Formats workbook metadata as stable, compact text for the model context. */

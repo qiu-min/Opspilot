@@ -23,6 +23,10 @@ describe('resolveExcelResourceContext', () => {
         { id: 'workbook-a', filePath: 'a.xlsx' },
         { id: 'workbook-b', filePath: 'b.xlsx' },
       ],
+      excelResourceRefs: [
+        { id: 'workbook-a', kind: 'excel', alias: 'excel-1' },
+        { id: 'workbook-b', kind: 'excel', alias: 'excel-2' },
+      ],
       activeResourceId: 'workbook-a',
       activeResource: { id: 'workbook-a', filePath: 'a.xlsx' },
     });

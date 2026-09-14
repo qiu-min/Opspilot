@@ -104,10 +104,45 @@ describe('FileSystemSessionStore', () => {
 
     const restarted = new FileSystemSessionStore(directory);
     expect(restarted.load(session.getId()).getResources()).toEqual([
-      { id: 'workbook-a', kind: 'excel' },
-      { id: 'workbook-b', kind: 'excel' },
+      { id: 'workbook-a', kind: 'excel', alias: 'excel-1' },
+      { id: 'workbook-b', kind: 'excel', alias: 'excel-2' },
     ]);
     expect(restarted.load(session.getId()).getActiveResourceId()).toBe('workbook-b');
+  });
+
+  it('migrates resource metadata without aliases deterministically and persists the aliases', () => {
+    const { directory, store } = createStore();
+    const session = store.create();
+    const sessionDirectory = join(directory, session.getId());
+    writeFileSync(
+      join(sessionDirectory, 'metadata.json'),
+      JSON.stringify({
+        version: 1,
+        id: session.getId(),
+        title: null,
+        createdAt: session.getCreatedAt(),
+        updatedAt: session.getUpdatedAt(),
+        resources: [
+          { id: 'workbook-a', kind: 'excel' },
+          { id: 'workbook-b', kind: 'excel' },
+        ],
+        activeResourceId: 'workbook-b',
+      }),
+    );
+
+    const loaded = store.load(session.getId());
+    expect(loaded.getResources()).toEqual([
+      { id: 'workbook-a', kind: 'excel', alias: 'excel-1' },
+      { id: 'workbook-b', kind: 'excel', alias: 'excel-2' },
+    ]);
+    expect(JSON.parse(readFileSync(join(sessionDirectory, 'metadata.json'), 'utf8'))).toMatchObject(
+      {
+        resources: [
+          { id: 'workbook-a', kind: 'excel', alias: 'excel-1' },
+          { id: 'workbook-b', kind: 'excel', alias: 'excel-2' },
+        ],
+      },
+    );
   });
 
   it('restores an empty resource registry from metadata written before the registry existed', () => {

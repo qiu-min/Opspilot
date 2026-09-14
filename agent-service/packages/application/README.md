@@ -92,8 +92,9 @@ live presentation 相同的 `ToolPresentationResolver` 重新解析，失败时�
 - 向上层 API 提供稳定的应用用例接口
 
 Excel Application Tools 使用当前 Turn 的 `ToolExecutionContext` 携带完整的
-`excelResources` 与 `activeExcelResourceId`。模型可以在工具参数中传入 `resourceId`；Application
-在调用 Capability 前将其解析为对应 `ExcelResource.filePath`。因此 `resourceId`、Session
+`excelResources`、`excelResourceRefs` 与 `activeExcelResourceId`。模型可以在工具参数中传入
+Session-local 的 `resource` 别名；Application 在调用 Capability 前将别名解析为对应的
+`ExcelResource.filePath`。因此别名、内部 resource id、Session
 状态和默认资源选择不会进入 `@opspilot/tool-gateway`，Gateway 仍只接收业务无关的
 `filePath` 等 Capability 参数。durable `TurnExecutionContext` 仍保持现有的单 active
 Excel resource 契约，恢复扩展留待后续变更。
@@ -110,9 +111,10 @@ Excel resource 契约，恢复扩展留待后续变更。
 - `resources/excel/`：定义 Session-scoped Excel resource registry 的 source locator port、Turn
   resource context，以及 Excel working resource、copy-on-write 生命周期及持久化 port；不依赖具体
   filesystem adapter，也不改变 Tool Gateway contract。
-- `Session.registerResource()`：由 `ExecuteTurn` 在收到新 Excel resource 后登记轻量 `id + kind`；
-  后续 Turn 从独立 source locator store 恢复可用 resources，并以 `activeResourceId` 作为默认
-  resource；不接入 Working Resource Manager。
+- `Session.registerResource()`：由 `ExecuteTurn` 在收到新 Excel resource 后登记 `id + kind + alias`；
+  alias 以 `excel-N` 形式在 Session 内稳定分配并持久化。后续 Turn 从独立 source locator store
+  恢复可用 resources，并以内部 `activeResourceId` 作为默认 resource；不接入 Working Resource
+  Manager。
 
 ## Excel working resources
 
