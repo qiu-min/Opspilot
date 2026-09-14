@@ -2,28 +2,26 @@ import { z } from 'zod';
 
 const nonEmptyStringSchema = z.string().trim().min(1);
 const cellReferenceSchema = nonEmptyStringSchema;
-const startCellSchema = cellReferenceSchema.default('A1');
+const rangeSchema = z.string().optional();
 const dataSchema = z.array(z.array(z.unknown()).min(1)).min(1);
 
 export const readRangeInputSchema = z.object({
   filePath: nonEmptyStringSchema,
   sheetName: nonEmptyStringSchema,
-  startCell: startCellSchema,
-  endCell: cellReferenceSchema.optional(),
+  range: rangeSchema,
 });
 
 export const writeDataInputSchema = z.object({
   filePath: nonEmptyStringSchema,
   sheetName: nonEmptyStringSchema.optional(),
   data: dataSchema,
-  startCell: startCellSchema,
+  startCell: cellReferenceSchema.default('A1'),
 });
 
 export const readRangeWithMetadataInputSchema = z.object({
   filePath: nonEmptyStringSchema,
   sheetName: nonEmptyStringSchema,
-  startCell: startCellSchema,
-  endCell: cellReferenceSchema.optional(),
+  range: rangeSchema,
   includeValidation: z.boolean().default(true),
 });
 

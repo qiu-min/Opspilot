@@ -44,8 +44,7 @@ export type ExcelCellValue =
 export interface ReadRangeInput {
   readonly filePath: string;
   readonly sheetName: string;
-  readonly startCell?: string;
-  readonly endCell?: string;
+  readonly range?: string;
 }
 
 export interface ReadRangeResult {
@@ -95,8 +94,7 @@ export interface ExcelMetadataCell {
 export interface ReadRangeWithMetadataInput {
   readonly filePath: string;
   readonly sheetName: string;
-  readonly startCell?: string;
-  readonly endCell?: string;
+  readonly range?: string;
   readonly includeValidation?: boolean;
 }
 

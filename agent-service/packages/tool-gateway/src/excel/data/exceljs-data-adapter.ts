@@ -46,8 +46,8 @@ export class ExcelJsDataAdapter implements ExcelDataConnector {
     return executeExcelOperation('readRange', validated.filePath, signal, async () => {
       const workbook = await openWorkbook(validated.filePath, signal);
       const worksheet = requireWorksheet(workbook, validated.sheetName);
-      const requested = parseRequestedRange(validated.startCell, validated.endCell);
-      const resolved = resolveReadRange(worksheet, requested, 'values', false);
+      const requested = parseRequestedRange(validated.range);
+      const resolved = resolveReadRange(worksheet, requested, 'values');
 
       if (!resolved.hasData) {
         return {
@@ -68,9 +68,7 @@ export class ExcelJsDataAdapter implements ExcelDataConnector {
           rowValues.push(normalizeCellValue(worksheet.getCell(row, column).value));
         }
 
-        if (rowValues.some((value) => value !== null)) {
-          values.push(rowValues);
-        }
+        values.push(rowValues);
       }
 
       return {
@@ -88,7 +86,7 @@ export class ExcelJsDataAdapter implements ExcelDataConnector {
     return executeExcelOperation('writeData', validated.filePath, signal, async () => {
       const workbook = await openWorkbook(validated.filePath, signal);
       const worksheet = validated.sheetName
-        ? (workbook.getWorksheet(validated.sheetName) ?? workbook.addWorksheet(validated.sheetName))
+        ? requireWorksheet(workbook, validated.sheetName)
         : (getActiveWorksheet(workbook) ?? noActiveWorksheet());
       const start = parseSingleCell(validated.startCell);
 
@@ -126,11 +124,11 @@ export class ExcelJsDataAdapter implements ExcelDataConnector {
     return executeExcelOperation('readRangeWithMetadata', validated.filePath, signal, async () => {
       const workbook = await openWorkbook(validated.filePath, signal);
       const worksheet = requireWorksheet(workbook, validated.sheetName);
-      const requested = parseRequestedRange(validated.startCell, validated.endCell);
+      const requested = parseRequestedRange(validated.range);
       const usedRangeMode: UsedRangeMode = validated.includeValidation
         ? 'valuesAndMetadata'
         : 'values';
-      const resolved = resolveReadRange(worksheet, requested, usedRangeMode, true);
+      const resolved = resolveReadRange(worksheet, requested, usedRangeMode);
 
       if (!resolved.hasData) {
         return {
@@ -178,52 +176,14 @@ function noActiveWorksheet(): never {
   );
 }
 
-interface RequestedRange {
-  readonly range: CellRange;
-  readonly isExplicit: boolean;
-}
-
 interface ResolvedReadRange {
   readonly range: CellRange;
   readonly hasData: boolean;
 }
 
-/** Validates and combines the requested start and end cells. */
-function parseRequestedRange(startCell: string, endCell: string | undefined): RequestedRange {
-  const startRange = parseCellRange(startCell);
-  if (endCell === undefined) {
-    return { range: startRange, isExplicit: !isSingleCell(startRange) };
-  }
-
-  if (!isSingleCell(startRange)) {
-    throw new ExcelCapabilityError(
-      ExcelCapabilityErrorCode.INVALID_CELL_REFERENCE,
-      `The start cell must be a single cell when endCell is provided: '${startCell}'`,
-      { startCell, endCell },
-    );
-  }
-
-  const endRange = parseCellRange(endCell);
-  if (!isSingleCell(endRange)) {
-    throw new ExcelCapabilityError(
-      ExcelCapabilityErrorCode.INVALID_CELL_REFERENCE,
-      `The end cell must be a single cell: '${endCell}'`,
-      { endCell },
-    );
-  }
-
-  if (startRange.start.row > endRange.end.row || startRange.start.column > endRange.end.column) {
-    throw new ExcelCapabilityError(
-      ExcelCapabilityErrorCode.INVALID_CELL_REFERENCE,
-      `Range start must not be after its end: '${startCell}:${endCell}'`,
-      { startCell, endCell },
-    );
-  }
-
-  return {
-    range: { start: startRange.start, end: endRange.end },
-    isExplicit: true,
-  };
+/** Parses an explicit range, leaving an omitted range available for used-range resolution. */
+function parseRequestedRange(range: string | undefined): CellRange | undefined {
+  return range === undefined ? undefined : parseCellRange(range);
 }
 
 /** Parses a reference that must identify one cell. */
@@ -240,42 +200,29 @@ function parseSingleCell(reference: string): CellCoordinate {
   return range.start;
 }
 
-/** Resolves the effective read range while preserving explicit-range behavior. */
+const EMPTY_READ_RANGE: CellRange = {
+  start: { row: 1, column: 1 },
+  end: { row: 1, column: 1 },
+};
+
+/** Resolves either the worksheet used range or the exact explicit range. */
 function resolveReadRange(
   worksheet: Worksheet,
-  requested: RequestedRange,
+  requested: CellRange | undefined,
   usedRangeMode: UsedRangeMode,
-  metadataMode: boolean,
 ): ResolvedReadRange {
   const usedRange = findUsedRange(worksheet, usedRangeMode);
-  const rangeForExplicitRequest = requested.isExplicit
-    ? findUsedRange(worksheet, 'valuesAndMetadata')
-    : usedRange;
-
-  if (
-    requested.range.start.row > (rangeForExplicitRequest?.end.row ?? 0) ||
-    requested.range.start.column > (rangeForExplicitRequest?.end.column ?? 0)
-  ) {
-    return { range: requested.range, hasData: false };
-  }
-
-  if (requested.isExplicit) {
-    return { range: requested.range, hasData: Boolean(rangeForExplicitRequest) };
-  }
-
-  if (!usedRange) {
-    return { range: requested.range, hasData: false };
-  }
-
-  const startsAtA1 = requested.range.start.row === 1 && requested.range.start.column === 1;
-  if (metadataMode && !startsAtA1) {
+  if (requested === undefined) {
     return {
-      range: { start: requested.range.start, end: usedRange.end },
-      hasData: true,
+      range: usedRange ?? EMPTY_READ_RANGE,
+      hasData: usedRange !== undefined,
     };
   }
 
-  return { range: usedRange, hasData: true };
+  return {
+    range: requested,
+    hasData: findUsedRange(worksheet, 'valuesAndMetadata') !== undefined,
+  };
 }
 
 /** Converts an ExcelJS cell value into the public Excel value model. */
@@ -517,6 +464,15 @@ interface ValidatedWriteDataInput {
 function parseWriteDataInput(input: WriteDataInput): ValidatedWriteDataInput {
   try {
     const validated = writeDataInputSchema.parse(input);
+    const rowLength = validated.data[0]?.length;
+    if (rowLength === undefined || validated.data.some((row) => row.length !== rowLength)) {
+      throw new ExcelCapabilityError(
+        ExcelCapabilityErrorCode.NON_RECTANGULAR_DATA,
+        'Data must be a non-empty rectangular array',
+        { rowLengths: validated.data.map((row) => row.length) },
+      );
+    }
+
     return {
       filePath: validated.filePath,
       ...(validated.sheetName !== undefined ? { sheetName: validated.sheetName } : {}),

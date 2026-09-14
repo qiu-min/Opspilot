@@ -35,7 +35,6 @@ describe('ExcelJsDataAdapter', () => {
       const result = await adapter.readRange({
         filePath,
         sheetName: 'Data',
-        startCell: 'A1',
       });
 
       expect(result).toEqual({
@@ -60,8 +59,7 @@ describe('ExcelJsDataAdapter', () => {
       const result = await adapter.readRange({
         filePath,
         sheetName: 'Data',
-        startCell: 'B1',
-        endCell: 'C2',
+        range: 'B1:C2',
       });
 
       expect(result.range).toBe('B1:C2');
@@ -71,7 +69,26 @@ describe('ExcelJsDataAdapter', () => {
       ]);
     });
 
-    it('accepts a range in startCell', async () => {
+    it('preserves an empty row inside the worksheet used range', async () => {
+      await createWorkbook(filePath, (workbook) => {
+        const worksheet = workbook.addWorksheet('Data');
+        worksheet.getCell('A1').value = 'Alice';
+        worksheet.getCell('A3').value = 'Bob';
+      });
+
+      const result = await adapter.readRange({
+        filePath,
+        sheetName: 'Data',
+      });
+
+      expect(result).toEqual({
+        sheetName: 'Data',
+        range: 'A1:A3',
+        values: [['Alice'], [null], ['Bob']],
+      });
+    });
+
+    it('reads a single-cell range', async () => {
       await createWorkbook(filePath, (workbook) => {
         const worksheet = workbook.addWorksheet('Data');
         worksheet.getCell('A1').value = 'A';
@@ -81,13 +98,31 @@ describe('ExcelJsDataAdapter', () => {
       const result = await adapter.readRange({
         filePath,
         sheetName: 'Data',
-        startCell: 'A1:B2',
+        range: 'B2',
       });
 
-      expect(result.range).toBe('A1:B2');
+      expect(result.range).toBe('B2:B2');
+      expect(result.values).toEqual([['B']]);
+    });
+
+    it('preserves empty rows and columns in an explicit range', async () => {
+      await createWorkbook(filePath, (workbook) => {
+        const worksheet = workbook.addWorksheet('Data');
+        worksheet.getCell('B2').value = 'Alice';
+        worksheet.getCell('B4').value = 'Bob';
+      });
+
+      const result = await adapter.readRange({
+        filePath,
+        sheetName: 'Data',
+        range: 'B2:D4',
+      });
+
+      expect(result.range).toBe('B2:D4');
       expect(result.values).toEqual([
-        ['A', null],
-        [null, 'B'],
+        ['Alice', null, null],
+        [null, null, null],
+        ['Bob', null, null],
       ]);
     });
 
@@ -100,7 +135,6 @@ describe('ExcelJsDataAdapter', () => {
         adapter.readRange({
           filePath,
           sheetName: 'Missing',
-          startCell: 'A1',
         }),
       ).rejects.toMatchObject({ code: ExcelCapabilityErrorCode.WORKSHEET_NOT_FOUND });
     });
@@ -114,7 +148,7 @@ describe('ExcelJsDataAdapter', () => {
         adapter.readRange({
           filePath,
           sheetName: 'Data',
-          startCell: 'A0',
+          range: 'A0',
         }),
       ).rejects.toMatchObject({ code: ExcelCapabilityErrorCode.INVALID_CELL_REFERENCE });
     });
@@ -127,13 +161,12 @@ describe('ExcelJsDataAdapter', () => {
       const result = await adapter.readRange({
         filePath,
         sheetName: 'Data',
-        startCell: 'A1',
       });
 
       expect(result.values).toEqual([]);
     });
 
-    it('returns an empty result when startCell is outside the used area', async () => {
+    it('keeps the requested shape when the explicit range is outside the used area', async () => {
       await createWorkbook(filePath, (workbook) => {
         const worksheet = workbook.addWorksheet('Data');
         worksheet.getCell('A1').value = 'value';
@@ -142,10 +175,13 @@ describe('ExcelJsDataAdapter', () => {
       const result = await adapter.readRange({
         filePath,
         sheetName: 'Data',
-        startCell: 'Z1',
+        range: 'Z1:AA2',
       });
 
-      expect(result.values).toEqual([]);
+      expect(result.values).toEqual([
+        [null, null],
+        [null, null],
+      ]);
     });
 
     it('uses value-only used range when a remote cell has only validation', async () => {
@@ -154,7 +190,6 @@ describe('ExcelJsDataAdapter', () => {
       const result = await adapter.readRange({
         filePath,
         sheetName: 'Data',
-        startCell: 'A1',
       });
 
       expect(result.range).toBe('A1:F10');
@@ -231,20 +266,22 @@ describe('ExcelJsDataAdapter', () => {
       expect(persistedWorkbook.getWorksheet('Other')?.getCell('A1').value).toBeNull();
     });
 
-    it('creates a worksheet when the requested worksheet does not exist', async () => {
+    it('reports a missing worksheet instead of creating it', async () => {
       await createWorkbook(filePath, (workbook) => {
         workbook.addWorksheet('Data');
       });
 
-      await adapter.writeData({
-        filePath,
-        sheetName: 'Created',
-        startCell: 'B2',
-        data: [['new sheet']],
-      });
+      await expect(
+        adapter.writeData({
+          filePath,
+          sheetName: 'Missing',
+          startCell: 'B2',
+          data: [['new sheet']],
+        }),
+      ).rejects.toMatchObject({ code: ExcelCapabilityErrorCode.WORKSHEET_NOT_FOUND });
 
       const persistedWorkbook = await readWorkbook(filePath);
-      expect(persistedWorkbook.getWorksheet('Created')?.getCell('B2').value).toBe('new sheet');
+      expect(persistedWorkbook.getWorksheet('Missing')).toBeUndefined();
     });
 
     it('reports empty data with the capability error model', async () => {
@@ -260,6 +297,24 @@ describe('ExcelJsDataAdapter', () => {
           data: [],
         }),
       ).rejects.toMatchObject({ code: ExcelCapabilityErrorCode.EMPTY_DATA });
+    });
+
+    it('rejects jagged data with a stable capability error', async () => {
+      await createWorkbook(filePath, (workbook) => {
+        workbook.addWorksheet('Data');
+      });
+
+      await expect(
+        adapter.writeData({
+          filePath,
+          sheetName: 'Data',
+          startCell: 'A1',
+          data: [
+            ['A', 'B'],
+            ['C'],
+          ],
+        }),
+      ).rejects.toMatchObject({ code: ExcelCapabilityErrorCode.NON_RECTANGULAR_DATA });
     });
 
     it('reports an invalid startCell', async () => {
@@ -289,8 +344,7 @@ describe('ExcelJsDataAdapter', () => {
       const result = await adapter.readRangeWithMetadata({
         filePath,
         sheetName: 'Data',
-        startCell: 'A1',
-        endCell: 'C3',
+        range: 'A1:C3',
         includeValidation: false,
       });
 
@@ -328,8 +382,7 @@ describe('ExcelJsDataAdapter', () => {
       const result = await adapter.readRangeWithMetadata({
         filePath,
         sheetName: 'Data',
-        startCell: 'A1',
-        endCell: 'A1',
+        range: 'A1',
         includeValidation: false,
       });
 
@@ -351,8 +404,7 @@ describe('ExcelJsDataAdapter', () => {
       const result = await adapter.readRangeWithMetadata({
         filePath,
         sheetName: 'Data',
-        startCell: 'A1',
-        endCell: 'B2',
+        range: 'A1:B2',
         includeValidation: true,
       });
 
@@ -375,7 +427,6 @@ describe('ExcelJsDataAdapter', () => {
       const withoutValidation = await adapter.readRangeWithMetadata({
         filePath,
         sheetName: 'Data',
-        startCell: 'A1',
         includeValidation: false,
       });
       expect(withoutValidation.range).toBe('A1:F10');
@@ -384,13 +435,12 @@ describe('ExcelJsDataAdapter', () => {
       const withValidation = await adapter.readRangeWithMetadata({
         filePath,
         sheetName: 'Data',
-        startCell: 'Z50000',
         includeValidation: true,
       });
-      expect(withValidation.range).toBe('Z50000:Z50000');
-      expect(withValidation.cells).toHaveLength(1);
-      expect(withValidation.cells[0]).toMatchObject({
-        address: 'Z50000',
+      expect(withValidation.range).toBe('A1:H10');
+      expect(withValidation.cells).toHaveLength(80);
+      expect(withValidation.cells.find((cell) => cell.address === 'H4')).toMatchObject({
+        address: 'H4',
         value: null,
         validation: {
           hasValidation: true,
@@ -401,11 +451,10 @@ describe('ExcelJsDataAdapter', () => {
       const explicitRange = await adapter.readRangeWithMetadata({
         filePath,
         sheetName: 'Data',
-        startCell: 'Z50000',
-        endCell: 'Z50000',
+        range: 'H4',
         includeValidation: false,
       });
-      expect(explicitRange.range).toBe('Z50000:Z50000');
+      expect(explicitRange.range).toBe('H4:H4');
       expect(explicitRange.cells).toHaveLength(1);
       expect(explicitRange.cells[0]?.validation).toBeUndefined();
     });
@@ -426,7 +475,7 @@ async function createValidationRangeWorkbook(filePath: string): Promise<void> {
     const worksheet = workbook.addWorksheet('Data');
     worksheet.getCell('A1').value = 'header';
     worksheet.getCell('F10').value = 'tail';
-    worksheet.getCell('Z50000').dataValidation = {
+    worksheet.getCell('H4').dataValidation = {
       type: 'list',
       formulae: ['"Yes,No"'],
     };
