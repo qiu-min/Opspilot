@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 const nonEmptyStringSchema = z.string().trim().min(1);
 const cellReferenceSchema = nonEmptyStringSchema;
-const rangeSchema = z.string().optional();
+const rangeSchema = nonEmptyStringSchema.optional();
 const dataSchema = z.array(z.array(z.unknown()).min(1)).min(1);
 
 export const readRangeInputSchema = z.object({
