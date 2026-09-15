@@ -35,25 +35,36 @@ Infrastructure 保留 legacy `{sessionId}.jsonl` 读取和 lazy migration 行为
 ## Excel working resource adapter
 
 `FileSystemExcelWorkingResourceStore` 实现 Application 的
-`ExcelWorkingResourceStore` 与 working-resource initialization port。Working copy 使用独立布局：
+`ExcelWorkingResourceStore` 与 mutation file-operator port。Committed workbook 使用独立布局：
 
 ```text
 workspaces/{sessionId}/resources/{sourceResourceId}/
-├── working.xlsx
-└── metadata.json
+├── current.json
+├── revisions/
+│   ├── revision-{revision}-{uuid}.xlsx
+│   └── ...最多保留当前与前一 revision
+└── staging/
+    └── mutation-{uuid}.xlsx
 ```
 
-首次初始化先在同一 `resources/` 父目录下创建 `.creating-{sourceResourceId}-{uuid}/`，将
-`working.xlsx` 与完整 metadata 写入并校验后，通过 directory rename 发布到正式目录；rename
-成功是 commit point。metadata 后续更新使用 UTF-8 JSON 和 temp-file + rename 原子替换。
-读取时校验版本、资源身份、revision，以及 working path 和 workspace root 的关系。首次复制
-使用 exclusive copy，避免覆盖已有 working file。Application manager 负责单进程内同一
-resource 的并发串行化。
+首次 mutation 将 current revision 或 immutable source 复制到 staging。Gateway callback 成功后，
+staging 通过 rename 发布到 `revisions/`，再写入包含 relative `file`、revision 和 bounded opaque
+mutation receipts 的 `current.json.tmp-{uuid}`。同目录 rename 替换 `current.json` 是唯一 commit
+point；此前失败留下的 staging 或 revision candidate 都不算 committed。读取只验证并返回 manifest
+当前引用的普通文件，pointer 指向缺失文件时 fail fast。Manifest path 必须保持在对应 resource
+workspace 内，revision 为 non-negative safe integer，mutationId 非空，receipt 必须是 JSON 值。
 
-初始化失败或 commit 前 abort 时会清理 staging。没有 metadata 的旧 PR1 formal orphan 只有
-在目录为空或只包含一个普通 `working.xlsx` 时才会被视为可安全清理；包含其他内容时拒绝
-自动删除，避免误删未知数据。stale `.creating-*` 目录不会被当作已发布 resource，并会在
-下一次同资源初始化前清理。
+提交成功后只保留 current 与 previous revision；清理在 pointer replacement 后进行，失败不会改变
+提交结果。后续 mutation 会清理安全识别的 staging、未引用 revision 和 pointer temp orphan。Legacy
+`working.xlsx + metadata.json` 会先复制到 versioned revision，再原子发布 current pointer；旧 revision
+为 0 时也按实际文件内容迁移，之后才允许清理旧文件。缺 metadata 的潜在旧 working file 会保留并
+fail fast，不会被静默删除。Application manager 在 `sessionId + sourceResourceId` 上持有覆盖
+prepare、Gateway callback、commit/abort 的单进程锁；不同资源可以并发。读取不等待 mutation callback，
+通过 atomic pointer 保持旧版本可见，直到新 pointer 提交。
+
+`write_data` 的 callId 作为 durable mutationId；同一资源重放时，Infrastructure 返回已存回执，
+Application 不会再次调用 Gateway。回执按最近 32 条有界保存。该协议仅提供单进程语义，不实现
+分布式锁、完整 revision history、Undo/Redo 或新的 TurnEvent/checkpoint phase。
 
 ## Live stream adapter
 

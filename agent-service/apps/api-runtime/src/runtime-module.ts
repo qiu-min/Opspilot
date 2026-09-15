@@ -38,7 +38,7 @@ import type { RuntimeConfig } from './runtime-config.js';
 export function createExcelToolDefinitions(
   workingResourceManager: Pick<
     ExcelWorkingResourceManager,
-    'resolveReadablePath' | 'ensureWritableResource' | 'markModified'
+    'resolveReadablePath' | 'executeMutation'
   >,
 ): readonly ToolDefinition[] {
   const excelDiscoveryConnector = new ExcelJsDiscoveryAdapter();

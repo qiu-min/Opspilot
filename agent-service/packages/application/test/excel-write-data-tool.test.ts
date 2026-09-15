@@ -3,9 +3,9 @@ import type { ExcelDataConnector, WriteDataResult } from '@opspilot/tool-gateway
 
 import {
   createWriteDataTool,
-  type ExcelWorkingResource,
+  type ExcelWorkingMutationContext,
+  type ExcelWorkingMutationRequest,
   type ExcelWorkingResourceManager,
-  type ExcelWorkingResourceRequest,
   type ToolContext,
 } from '../src/index.js';
 
@@ -28,9 +28,9 @@ const writeResult: WriteDataResult = {
 };
 
 describe('write_data Application Tool', () => {
-  it('writes the selected resource working path and advances revision only after success', async () => {
+  it('uses callId as mutationId and writes only to the selected resource staging path', async () => {
     const order: string[] = [];
-    const { manager, ensureWritableResource, markModified } = createManager(order);
+    const { manager, executeMutation } = createManager(order);
     const writeData = vi.fn<ExcelDataConnector['writeData']>(async () => {
       order.push('writeData');
       return writeResult;
@@ -53,17 +53,18 @@ describe('write_data Application Tool', () => {
       multiResourceContext,
     );
 
-    const request: ExcelWorkingResourceRequest = {
+    const request: ExcelWorkingMutationRequest = {
       sessionId: multiResourceContext.sessionId,
       sourceResourceId: resourceA.id,
       sourcePath: resourceA.filePath,
       signal,
+      mutationId: 'write-call',
     };
-    expect(order).toEqual(['ensureWritableResource', 'writeData', 'markModified']);
-    expect(ensureWritableResource).toHaveBeenCalledWith(request);
+    expect(order).toEqual(['executeMutation', 'writeData', 'commit']);
+    expect(executeMutation).toHaveBeenCalledWith(request, expect.any(Function));
     expect(writeData).toHaveBeenCalledWith(
       {
-        filePath: '/workspace/session-1/resource-a/working.xlsx',
+        filePath: '/workspace/session-1/resource-a/staging/mutation.xlsx',
         sheetName: 'Sales',
         startCell: 'C2',
         data: [
@@ -73,8 +74,7 @@ describe('write_data Application Tool', () => {
       },
       signal,
     );
-    expect(markModified).toHaveBeenCalledWith(request);
-    expect(tool.recoveryPolicy).toBe('manual');
+    expect(tool.recoveryPolicy).toBe('retry_safe');
     expect(tool.parameters).toMatchObject({
       type: 'object',
       properties: {
@@ -97,7 +97,7 @@ describe('write_data Application Tool', () => {
     expect(tool.parameters).not.toHaveProperty('filePath');
     expect(tool.parameters).not.toHaveProperty('sourcePath');
     expect(tool.parameters).not.toHaveProperty('workingPath');
-    expect(result.details).toBe(writeResult);
+    expect(result.details).toEqual(writeResult);
     expect(result.content[0]).toEqual({
       type: 'text',
       text: 'sheetName: Sales\nrange: C2:D3\nmessage: Data written to Sales',
@@ -119,16 +119,16 @@ describe('write_data Application Tool', () => {
 
     expect(writeData).toHaveBeenCalledWith(
       {
-        filePath: '/workspace/session-1/resource-a/working.xlsx',
+        filePath: '/workspace/session-1/resource-a/staging/mutation.xlsx',
         data: [['value']],
       },
       undefined,
     );
   });
 
-  it('does not mark the resource modified when Gateway mutation fails', async () => {
+  it('does not return success when Gateway mutation fails', async () => {
     const order: string[] = [];
-    const { manager, markModified } = createManager(order);
+    const { manager } = createManager(order);
     const writeData = vi.fn<ExcelDataConnector['writeData']>(async () => {
       order.push('writeData');
       throw new Error('Excel write failed.');
@@ -136,89 +136,76 @@ describe('write_data Application Tool', () => {
     const tool = createWriteDataTool(createConnector(writeData), manager);
 
     await expect(
-      tool.execute('write-call', { data: [['value']] }, undefined, {
-        ...multiResourceContext,
-        excelResources: [resourceA],
-        excelResourceRefs: [multiResourceContext.excelResourceRefs[0]!],
-        activeExcelResourceId: resourceA.id,
-      }),
+      tool.execute('write-call', { data: [['value']] }, undefined, singleResourceContext()),
     ).rejects.toThrow('Excel write failed.');
 
-    expect(order).toEqual(['ensureWritableResource', 'writeData']);
-    expect(markModified).not.toHaveBeenCalled();
+    expect(order).toEqual(['executeMutation', 'writeData']);
   });
 
-  it('does not mark the resource modified when cancellation arrives during Gateway execution', async () => {
-    const order: string[] = [];
-    const { manager, markModified } = createManager(order);
-    const controller = new AbortController();
-    const abortReason = new Error('Write was cancelled.');
-    const writeData = vi.fn<ExcelDataConnector['writeData']>(async () => {
-      order.push('writeData');
-      controller.abort(abortReason);
-      return writeResult;
-    });
+  it('fails closed when a persisted replay receipt does not match WriteDataResult', async () => {
+    const { manager } = createManager([], { invalidReceipt: true });
+    const writeData = vi.fn<ExcelDataConnector['writeData']>(async () => writeResult);
     const tool = createWriteDataTool(createConnector(writeData), manager);
 
     await expect(
-      tool.execute('write-call', { data: [['value']] }, controller.signal, {
-        ...multiResourceContext,
-        excelResources: [resourceA],
-        excelResourceRefs: [multiResourceContext.excelResourceRefs[0]!],
-        activeExcelResourceId: resourceA.id,
-      }),
-    ).rejects.toBe(abortReason);
-
-    expect(order).toEqual(['ensureWritableResource', 'writeData']);
-    expect(markModified).not.toHaveBeenCalled();
+      tool.execute('write-call', { data: [['value']] }, undefined, singleResourceContext()),
+    ).rejects.toThrow('Persisted write_data receipt is invalid.');
+    expect(writeData).not.toHaveBeenCalled();
   });
 
-  it('rejects empty, jagged, and non-scalar matrices before creating a working copy', async () => {
+  it('rejects empty, jagged, and non-scalar matrices before starting a mutation', async () => {
     const order: string[] = [];
-    const { manager, ensureWritableResource } = createManager(order);
+    const { manager, executeMutation } = createManager(order);
     const writeData = vi.fn<ExcelDataConnector['writeData']>(async () => writeResult);
     const tool = createWriteDataTool(createConnector(writeData), manager);
-    const context: ToolContext = {
-      ...multiResourceContext,
-      excelResources: [resourceA],
-      excelResourceRefs: [multiResourceContext.excelResourceRefs[0]!],
-      activeExcelResourceId: resourceA.id,
-    };
 
     for (const data of [[], [[]], [[1], [2, 3]], [[{ formula: 'A1+1' }]], [[Number.NaN]]]) {
       await expect(
-        tool.execute('invalid-write-call', { data }, undefined, context),
+        tool.execute('invalid-write-call', { data }, undefined, singleResourceContext()),
       ).rejects.toBeInstanceOf(TypeError);
     }
 
-    expect(ensureWritableResource).not.toHaveBeenCalled();
+    expect(executeMutation).not.toHaveBeenCalled();
     expect(writeData).not.toHaveBeenCalled();
     expect(order).toEqual([]);
   });
 });
 
-function createManager(order: string[]): {
-  readonly manager: Pick<ExcelWorkingResourceManager, 'ensureWritableResource' | 'markModified'>;
-  readonly ensureWritableResource: ReturnType<
-    typeof vi.fn<ExcelWorkingResourceManager['ensureWritableResource']>
+function createManager(
+  order: string[],
+  options: { readonly invalidReceipt?: boolean } = {},
+): {
+  readonly manager: Pick<ExcelWorkingResourceManager, 'executeMutation'>;
+  readonly executeMutation: ReturnType<
+    typeof vi.fn<ExcelWorkingResourceManager['executeMutation']>
   >;
-  readonly markModified: ReturnType<typeof vi.fn<ExcelWorkingResourceManager['markModified']>>;
 } {
-  const ensureWritableResource = vi.fn<ExcelWorkingResourceManager['ensureWritableResource']>(
-    async (request) => {
-      order.push('ensureWritableResource');
-      return workingResource(request);
+  const executeMutation = vi.fn<ExcelWorkingResourceManager['executeMutation']>(
+    async (request, mutate) => {
+      order.push('executeMutation');
+      const context: ExcelWorkingMutationContext = {
+        stagingPath: '/workspace/session-1/resource-a/staging/mutation.xlsx',
+        baseRevision: 0,
+        targetRevision: 1,
+      };
+      const receipt = options.invalidReceipt
+        ? { sheetName: 1, range: 'C2:D3', message: 'bad' }
+        : await mutate(context);
+      if (!options.invalidReceipt) order.push('commit');
+      return {
+        resource: {
+          sessionId: request.sessionId,
+          sourceResourceId: request.sourceResourceId,
+          sourcePath: request.sourcePath,
+          workingPath: '/workspace/session-1/resource-a/revisions/revision-1.xlsx',
+          revision: 1,
+        },
+        receipt,
+        replayed: options.invalidReceipt === true,
+      };
     },
   );
-  const markModified = vi.fn<ExcelWorkingResourceManager['markModified']>(async (request) => {
-    order.push('markModified');
-    return { ...workingResource(request), revision: 1 };
-  });
-  return {
-    manager: { ensureWritableResource, markModified },
-    ensureWritableResource,
-    markModified,
-  };
+  return { manager: { executeMutation }, executeMutation };
 }
 
 function createConnector(writeData: ExcelDataConnector['writeData']): ExcelDataConnector {
@@ -233,12 +220,11 @@ function createConnector(writeData: ExcelDataConnector['writeData']): ExcelDataC
   };
 }
 
-function workingResource(request: ExcelWorkingResourceRequest): ExcelWorkingResource {
+function singleResourceContext(): ToolContext {
   return {
-    sessionId: request.sessionId,
-    sourceResourceId: request.sourceResourceId,
-    sourcePath: request.sourcePath,
-    workingPath: `/workspace/${request.sessionId}/${request.sourceResourceId}/working.xlsx`,
-    revision: 0,
+    ...multiResourceContext,
+    excelResources: [resourceA],
+    excelResourceRefs: [multiResourceContext.excelResourceRefs[0]!],
+    activeExcelResourceId: resourceA.id,
   };
 }

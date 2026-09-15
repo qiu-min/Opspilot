@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -24,6 +24,9 @@ import {
   createWriteDataTool,
   ExcelWorkingResourceManager,
   ExecuteTurn,
+  ResumeTurn,
+  Turn,
+  TurnEventRecorder,
   type TurnExecutionEvent,
 } from '@opspilot/application';
 import {
@@ -31,6 +34,7 @@ import {
   FileSystemExcelSourceResourceStore,
   FileSystemSessionStore,
   FileSystemTurnStore,
+  FileSystemTurnExecutionContextStore,
 } from '@opspilot/infrastructure';
 
 const model: Model = {
@@ -265,7 +269,7 @@ describe('Application Excel discovery Turn integration', () => {
 });
 
 describe('Application Excel mutation Turn integration', () => {
-  it('creates one working copy, reuses it for later writes, and reads the modified workbook', async () => {
+  it('creates immutable committed revisions for later writes and reads the current workbook', async () => {
     const { filePath, sessionDirectory } = await createFixture();
     const workspaceRoot = join(dirname(filePath), 'workspaces');
     const firstWrite: ModelToolCall = {
@@ -299,10 +303,7 @@ describe('Application Excel mutation Turn integration', () => {
       assistantMessage('', [profileCall]),
       assistantMessage('The worksheet now includes Region and Status.'),
     ]);
-    const initializeWorkingResource = vi.spyOn(
-      harness.workingResourceStore,
-      'initializeWorkingResource',
-    );
+    const prepareMutation = vi.spyOn(harness.workingResourceStore, 'prepareMutation');
     const writeData = vi.spyOn(harness.dataConnector, 'writeData');
     const getSheetProfile = vi.spyOn(harness.discoveryConnector, 'getSheetProfile');
 
@@ -325,8 +326,8 @@ describe('Application Excel mutation Turn integration', () => {
       'fixture-workbook',
     );
     expect(secondResource?.revision).toBe(2);
-    expect(secondResource?.workingPath).toBe(firstResource?.workingPath);
-    expect(initializeWorkingResource).toHaveBeenCalledTimes(1);
+    expect(secondResource?.workingPath).not.toBe(firstResource?.workingPath);
+    expect(prepareMutation).toHaveBeenCalledTimes(2);
 
     const readTurn = await harness.runner.execute({
       sessionId: firstTurn.sessionId,
@@ -336,11 +337,11 @@ describe('Application Excel mutation Turn integration', () => {
       'The worksheet now includes Region and Status.',
     );
     expect(writeData.mock.calls.map(([input]) => input.filePath)).toEqual([
-      firstResource?.workingPath,
-      firstResource?.workingPath,
+      expect.stringContaining(join('resources', 'fixture-workbook', 'staging')),
+      expect.stringContaining(join('resources', 'fixture-workbook', 'staging')),
     ]);
     expect(getSheetProfile).toHaveBeenCalledWith(
-      { filePath: firstResource?.workingPath, sheetName: 'Sales' },
+      { filePath: secondResource?.workingPath, sheetName: 'Sales' },
       expect.anything(),
     );
     expect(findToolResultByName(readTurn.messages, 'get_sheet_profile').details).toMatchObject({
@@ -352,7 +353,7 @@ describe('Application Excel mutation Turn integration', () => {
     });
 
     const workingWorkbook = new Workbook();
-    await workingWorkbook.xlsx.readFile(firstResource!.workingPath);
+    await workingWorkbook.xlsx.readFile(secondResource!.workingPath);
     expect(workingWorkbook.getWorksheet('Sales')?.getCell('D1').value).toBe('Region');
     expect(workingWorkbook.getWorksheet('Sales')?.getCell('D2').value).toBe('North');
     expect(workingWorkbook.getWorksheet('Sales')?.getCell('E1').value).toBe('Status');
@@ -407,7 +408,9 @@ describe('Application Excel mutation Turn integration', () => {
     expect(workingA).toMatchObject({ revision: 1, sourcePath: filePathA });
     expect(workingB).toBeNull();
     expect(writeData).toHaveBeenCalledWith(
-      expect.objectContaining({ filePath: workingA?.workingPath }),
+      expect.objectContaining({
+        filePath: expect.stringContaining(join('resources', 'workbook-a', 'staging')),
+      }),
       expect.anything(),
     );
 
@@ -444,10 +447,7 @@ describe('Application Excel mutation Turn integration', () => {
       ]),
       assistantMessage('Session B updated.'),
     ]);
-    const initializeWorkingResource = vi.spyOn(
-      harness.workingResourceStore,
-      'initializeWorkingResource',
-    );
+    const prepareMutation = vi.spyOn(harness.workingResourceStore, 'prepareMutation');
 
     const sessionA = await harness.runner.execute({
       message: userMessage('Write for Session A.'),
@@ -464,7 +464,7 @@ describe('Application Excel mutation Turn integration', () => {
     expect(workingA?.revision).toBe(1);
     expect(workingB?.revision).toBe(1);
     expect(workingA?.workingPath).not.toBe(workingB?.workingPath);
-    expect(initializeWorkingResource).toHaveBeenCalledTimes(2);
+    expect(prepareMutation).toHaveBeenCalledTimes(2);
 
     const workbookA = new Workbook();
     const workbookB = new Workbook();
@@ -477,7 +477,7 @@ describe('Application Excel mutation Turn integration', () => {
     expect(source.getWorksheet('Sales')?.getCell('D1').value ?? null).toBeNull();
   });
 
-  it('keeps revision at zero when the Excel Gateway write fails', async () => {
+  it('keeps the source as current when the Excel Gateway write fails', async () => {
     const { filePath, sessionDirectory } = await createFixture();
     const workspaceRoot = join(dirname(filePath), 'workspaces');
     const harness = createExcelTurnHarness(sessionDirectory, workspaceRoot, []);
@@ -490,7 +490,7 @@ describe('Application Excel mutation Turn integration', () => {
       excelResourceRefs: [{ id: 'fixture-workbook', kind: 'excel' as const, alias: 'excel-1' }],
       activeExcelResourceId: 'fixture-workbook',
     };
-    const markModified = vi.spyOn(harness.workingResourceManager, 'markModified');
+    const prepareMutation = vi.spyOn(harness.workingResourceManager, 'executeMutation');
     const writeTool = createWriteDataTool(harness.dataConnector, harness.workingResourceManager);
 
     await expect(
@@ -498,12 +498,132 @@ describe('Application Excel mutation Turn integration', () => {
     ).rejects.toThrow('Excel write failed.');
 
     const working = await harness.workingResourceStore.get(context.sessionId, 'fixture-workbook');
-    expect(working?.revision).toBe(0);
-    expect(markModified).not.toHaveBeenCalled();
-    expect(writeData).toHaveBeenCalledWith(
-      expect.objectContaining({ filePath: working?.workingPath }),
-      undefined,
+    expect(working).toBeNull();
+    expect(prepareMutation).toHaveBeenCalledTimes(1);
+    expect(writeData.mock.calls[0]?.[0].filePath).toContain(
+      join('resources', 'fixture-workbook', 'staging'),
     );
+  });
+
+  it('replays a committed write_data receipt through ResumeTurn without a second Gateway write', async () => {
+    const { filePath, sessionDirectory } = await createFixture();
+    const workspaceRoot = join(dirname(filePath), 'workspaces');
+    const sessionStore = new FileSystemSessionStore(sessionDirectory);
+    const turnStore = new FileSystemTurnStore(sessionDirectory);
+    const executionContextStore = new FileSystemTurnExecutionContextStore(sessionDirectory);
+    const session = sessionStore.create();
+    const modelChange = session.appendModelChange(model.provider, model.id);
+    sessionStore.appendEntry(session.getId(), modelChange);
+    const input = session.appendMessage(userMessage('Write the sales marker.'));
+    sessionStore.appendEntry(session.getId(), input);
+
+    const turn = Turn.create({ sessionId: session.getId(), baseLeafId: modelChange.id });
+    turnStore.create(turn);
+    turn.start();
+    turnStore.save(turn);
+    const recorder = new TurnEventRecorder(turn, turnStore, session);
+    recorder.recordTurnStarted();
+    recorder.recordInputCommitted(input.id, input.id);
+
+    const call: ModelToolCall = {
+      callId: 'retry-write-call',
+      name: 'write_data',
+      arguments: { sheetName: 'Sales', startCell: 'D1', data: [['Recovered once']] },
+    };
+    const assistantWithTool = assistantMessage('', [call]);
+    const assistantEntry = session.appendMessage(assistantWithTool);
+    sessionStore.appendEntry(session.getId(), assistantEntry);
+    recorder.recordModelStarted('model-call-initial');
+    recorder.recordModelCompleted('model-call-initial');
+    recorder.recordAssistantMessageCompleted(assistantWithTool);
+    recorder.recordToolRequested(call.callId, call.name);
+    recorder.recordToolStarted(call.callId, call.name);
+    executionContextStore.save(turn.getId(), {
+      version: 1,
+      excelResource: { id: 'fixture-workbook', filePath },
+    });
+
+    const workingResourceStore = new FileSystemExcelWorkingResourceStore(workspaceRoot);
+    const workingResourceManager = new ExcelWorkingResourceManager({
+      store: workingResourceStore,
+      fileOperator: workingResourceStore,
+    });
+    const dataConnector = new ExcelJsDataAdapter();
+    const writeData = vi.spyOn(dataConnector, 'writeData');
+    const writeTool = createWriteDataTool(dataConnector, workingResourceManager);
+    const toolContext = {
+      sessionId: session.getId(),
+      excelResources: [{ id: 'fixture-workbook', filePath }],
+      excelResourceRefs: [
+        { id: 'fixture-workbook', kind: 'excel' as const, alias: 'excel-1' },
+      ],
+      activeExcelResourceId: 'fixture-workbook',
+    };
+
+    const originalResult = await writeTool.execute(call.callId, call.arguments, undefined, toolContext);
+    expect(originalResult.details).toMatchObject({
+      sheetName: 'Sales',
+      range: 'D1:D1',
+      message: 'Data written to Sales',
+    });
+    expect((await workingResourceStore.get(session.getId(), 'fixture-workbook'))?.revision).toBe(1);
+    expect(turnStore.loadEvents(turn.getId()).some((event) => event.type === 'tool_completed')).toBe(
+      false,
+    );
+
+    const persistedExecutionInput = JSON.parse(
+      await readFile(join(sessionDirectory, 'turns', turn.getId(), 'execution.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    expect(persistedExecutionInput).toEqual({
+      version: 1,
+      excelResource: { id: 'fixture-workbook', filePath },
+    });
+
+    const recoveryGateway = createGateway([assistantMessage('The write is complete.')]);
+    const result = await new ResumeTurn({
+      sessionStore,
+      turnStore,
+      turnExecutionContextStore: executionContextStore,
+      modelGateway: recoveryGateway,
+      toolDefinitions: [writeTool],
+    }).execute(turn.getId());
+
+    const recoveredSession = sessionStore.load(session.getId());
+    const toolResults = recoveredSession
+      .getEntries()
+      .filter((entry) => entry.type === 'message' && entry.message.role === 'tool');
+    const recoveredEvents = turnStore.loadEvents(turn.getId());
+    const recoveredTurn = turnStore.load(turn.getId());
+    expect(result.kind).toBe('resumed');
+    expect(result.plan?.kind).toBe('resume_tools');
+    expect(writeData).toHaveBeenCalledTimes(1);
+    expect(recoveryGateway.streamMock).toHaveBeenCalledTimes(1);
+    expect(toolResults).toHaveLength(1);
+    expect(toolResults[0]).toMatchObject({
+      type: 'message',
+      message: {
+        role: 'tool',
+        callId: call.callId,
+        details: originalResult.details,
+      },
+    });
+    expect(recoveredEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'tool_completed', callId: call.callId, isError: false }),
+      ]),
+    );
+    const latestAssistantEvent = [...recoveredEvents]
+      .reverse()
+      .find((event) => event.type === 'assistant_message_completed');
+    expect(recoveredTurn.getState()).toMatchObject({
+      status: 'completed',
+      attempt: 2,
+      checkpoint: {
+        phase: 'assistant_committed',
+        eventSequence: latestAssistantEvent?.sequence,
+      },
+    });
+    expect((await workingResourceStore.get(session.getId(), 'fixture-workbook'))?.revision).toBe(1);
   });
 });
 

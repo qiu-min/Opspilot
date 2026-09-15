@@ -30,11 +30,3 @@ export class ExcelWorkingResourceSourceMismatchError extends ExcelWorkingResourc
     this.requestedSourcePath = requestedSourcePath;
   }
 }
-
-/** Raised when a modification is reported before a working copy exists. */
-export class ExcelWorkingResourceNotFoundError extends ExcelWorkingResourceError {
-  public constructor(sessionId: string, sourceResourceId: string) {
-    super(`Excel working resource does not exist for ${sessionId}/${sourceResourceId}.`);
-    this.name = 'ExcelWorkingResourceNotFoundError';
-  }
-}

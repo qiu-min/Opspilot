@@ -15,15 +15,23 @@ import { randomUUID } from 'node:crypto';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import type {
+  ExcelWorkingMutationContext,
+  ExcelWorkingMutationReceiptRecord,
+  ExcelWorkingMutationRequest,
   ExcelWorkingResource,
   ExcelWorkingResourceFileOperator,
   ExcelWorkingResourceRequest,
   ExcelWorkingResourceStore,
 } from '@opspilot/application';
 
-/** Current version of the working-resource metadata document. */
-export const CURRENT_EXCEL_WORKING_RESOURCE_METADATA_VERSION = 1 as const;
+/** Current version of the committed working-resource manifest. */
+export const CURRENT_EXCEL_WORKING_RESOURCE_MANIFEST_VERSION = 2 as const;
+/** Maximum number of mutation receipts retained per resource. */
+export const MAX_EXCEL_WORKING_RESOURCE_MUTATION_RECEIPTS = 32 as const;
+
 const resourceIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
+const revisionFilePattern = /^revision-(\d+)-([a-f0-9-]+)\.xlsx$/u;
+const mutationFilePattern = /^mutation-([a-f0-9-]+)\.xlsx$/u;
 
 /** Raised when an Excel working-resource filesystem layout is invalid or unavailable. */
 export class ExcelWorkingResourceStoreError extends Error {
@@ -33,9 +41,26 @@ export class ExcelWorkingResourceStoreError extends Error {
   }
 }
 
-/** JSON representation stored beside one Session/resource working copy. */
-export interface ExcelWorkingResourceMetadataRecord {
-  readonly version: typeof CURRENT_EXCEL_WORKING_RESOURCE_METADATA_VERSION;
+/** Generic JSON receipt recorded for one successful Tool call. */
+export interface ExcelWorkingResourceMutationRecord {
+  readonly mutationId: string;
+  readonly revision: number;
+  readonly receipt: unknown;
+}
+
+/** Durable manifest whose atomic replacement selects the committed workbook revision. */
+export interface ExcelWorkingResourceManifestRecord {
+  readonly version: typeof CURRENT_EXCEL_WORKING_RESOURCE_MANIFEST_VERSION;
+  readonly sessionId: string;
+  readonly sourceResourceId: string;
+  readonly sourcePath: string;
+  readonly revision: number;
+  readonly file: string;
+  readonly committedMutations: readonly ExcelWorkingResourceMutationRecord[];
+}
+
+interface LegacyExcelWorkingResourceMetadataRecord {
+  readonly version: 1;
   readonly sessionId: string;
   readonly sourceResourceId: string;
   readonly sourcePath: string;
@@ -46,18 +71,22 @@ export interface ExcelWorkingResourceMetadataRecord {
 interface WorkingResourcePaths {
   readonly resourcesDirectory: string;
   readonly directory: string;
-  readonly working: string;
-  readonly metadata: string;
+  readonly current: string;
+  readonly revisions: string;
+  readonly staging: string;
+  readonly legacyWorking: string;
+  readonly legacyMetadata: string;
 }
 
 /**
- * Persists Session-scoped Excel working resources below one workspace root.
- * The same adapter atomically initializes a complete working resource for the Application manager.
+ * Persists committed Excel revisions below one workspace root. The current manifest is the
+ * sole commit pointer; staging and candidate files are never returned to readers.
  */
 export class FileSystemExcelWorkingResourceStore
   implements ExcelWorkingResourceStore, ExcelWorkingResourceFileOperator
 {
   private readonly workspaceRoot: string;
+  private readonly migrationLocks = new Map<string, Promise<void>>();
 
   public constructor(workspaceRoot: string) {
     if (typeof workspaceRoot !== 'string' || workspaceRoot.trim().length === 0) {
@@ -66,7 +95,7 @@ export class FileSystemExcelWorkingResourceStore
     this.workspaceRoot = resolve(workspaceRoot);
   }
 
-  /** Loads one resource metadata document, returning null when it has not been published. */
+  /** Loads the current committed revision, lazily migrating a legacy working copy if needed. */
   public async get(
     sessionId: string,
     sourceResourceId: string,
@@ -74,128 +103,200 @@ export class FileSystemExcelWorkingResourceStore
   ): Promise<ExcelWorkingResource | null> {
     const paths = this.getPaths(sessionId, sourceResourceId);
     throwIfAborted(signal);
+    let manifest = await this.readCurrentManifest(paths, sessionId, sourceResourceId);
+    if (manifest === null) {
+      const key = `${sessionId}\u0000${sourceResourceId}`;
+      manifest = await this.withMigrationLock(key, async () => {
+        const afterWaiting = await this.readCurrentManifest(paths, sessionId, sourceResourceId);
+        return (
+          afterWaiting ??
+          (await this.migrateLegacyResource(paths, sessionId, sourceResourceId, signal))
+        );
+      });
+    }
+    if (manifest === null) return null;
 
-    if (!(await existsAsFile(paths.metadata, this.workspaceRoot))) return null;
-    const resource = await this.readMetadata(paths.metadata, sessionId, sourceResourceId);
-    await assertRegularFileInsideWorkspace(paths.working, this.workspaceRoot, 'working copy');
+    const workingPath = await this.validateManifestFile(paths, manifest);
     throwIfAborted(signal);
-    return resource;
+    return resourceFromManifest(manifest, workingPath);
   }
 
-  /**
-   * Builds a complete working resource in a sibling staging directory and publishes
-   * it with one directory rename. The final resource path is never used as a copy target.
-   */
-  public async initializeWorkingResource(
-    input: ExcelWorkingResourceRequest,
+  /** Returns one opaque durable receipt, or null when the callId has never committed here. */
+  public async getMutationReceipt(
+    sessionId: string,
+    sourceResourceId: string,
+    mutationId: string,
+    signal?: AbortSignal,
+  ): Promise<ExcelWorkingMutationReceiptRecord | null> {
+    const paths = this.getPaths(sessionId, sourceResourceId);
+    requireNonEmptyString(mutationId, 'mutationId');
+    throwIfAborted(signal);
+    const manifest = await this.readCurrentManifest(paths, sessionId, sourceResourceId);
+    if (manifest === null) return null;
+    const committed = manifest.committedMutations.find((item) => item.mutationId === mutationId);
+    throwIfAborted(signal);
+    return committed === undefined
+      ? null
+      : { revision: committed.revision, receipt: committed.receipt };
+  }
+
+  /** Copies the committed workbook or immutable source into a private staging file. */
+  public async prepareMutation(
+    input: ExcelWorkingMutationRequest,
+  ): Promise<ExcelWorkingMutationContext> {
+    const paths = this.getPaths(input.sessionId, input.sourceResourceId);
+    requireNonEmptyString(input.sourcePath, 'sourcePath');
+    requireNonEmptyString(input.mutationId, 'mutationId');
+    throwIfAborted(input.signal);
+
+    const existing = await this.get(input.sessionId, input.sourceResourceId, input.signal);
+    if (existing !== null && existing.sourcePath !== input.sourcePath) {
+      throw new ExcelWorkingResourceStoreError(
+        `Excel working resource source mismatch for ${input.sessionId}/${input.sourceResourceId}.`,
+      );
+    }
+    let manifest = await this.readCurrentManifest(paths, input.sessionId, input.sourceResourceId);
+    await ensureDirectoryInsideWorkspace(paths.directory, this.workspaceRoot);
+    if (manifest !== null) await this.reconcileOrphans(paths, manifest);
+    else await this.reconcileOrphans(paths, null);
+
+    const baseRevision = manifest?.revision ?? 0;
+    if (baseRevision === Number.MAX_SAFE_INTEGER) {
+      throw new ExcelWorkingResourceStoreError(
+        `Excel working resource revision cannot advance beyond ${Number.MAX_SAFE_INTEGER}.`,
+      );
+    }
+    const targetRevision = baseRevision + 1;
+    const sourceFilePath =
+      manifest === null ? input.sourcePath : await this.validateManifestFile(paths, manifest);
+    const mutationToken = randomUUID();
+    const stagingPath = join(paths.staging, `mutation-${mutationToken}.xlsx`);
+    await ensureDirectoryInsideWorkspace(paths.staging, this.workspaceRoot);
+    throwIfAborted(input.signal);
+    try {
+      await copyFile(sourceFilePath, stagingPath, fsConstants.COPYFILE_EXCL);
+      throwIfAborted(input.signal);
+      await assertRegularFileInsideResource(
+        stagingPath,
+        paths.directory,
+        this.workspaceRoot,
+        'staged workbook',
+      );
+      return { stagingPath, baseRevision, targetRevision };
+    } catch (error) {
+      try {
+        await removeTemporaryFile(stagingPath);
+      } catch {
+        // An orphan staging file is safe and will be reconciled on a later mutation.
+      }
+      if (error instanceof ExcelWorkingResourceStoreError) throw error;
+      throw new ExcelWorkingResourceStoreError(
+        `Unable to prepare Excel mutation for ${input.sessionId}/${input.sourceResourceId}.`,
+        { cause: error },
+      );
+    }
+  }
+
+  /** Publishes an immutable revision and atomically replaces current.json as the commit point. */
+  public async commitMutation(
+    input: ExcelWorkingMutationRequest,
+    context: ExcelWorkingMutationContext,
+    receipt: unknown,
   ): Promise<ExcelWorkingResource> {
     const paths = this.getPaths(input.sessionId, input.sourceResourceId);
-    const resource: ExcelWorkingResource = {
+    requireNonEmptyString(input.sourcePath, 'sourcePath');
+    requireNonEmptyString(input.mutationId, 'mutationId');
+    assertJsonSerializableReceipt(receipt);
+    const stagingPath = this.validateStagingContext(paths, context);
+    await assertRegularFileInsideResource(
+      stagingPath,
+      paths.directory,
+      this.workspaceRoot,
+      'staged workbook',
+    );
+    const existing = await this.get(input.sessionId, input.sourceResourceId);
+    if (existing !== null && existing.sourcePath !== input.sourcePath) {
+      throw new ExcelWorkingResourceStoreError(
+        `Excel working resource source mismatch for ${input.sessionId}/${input.sourceResourceId}.`,
+      );
+    }
+    const current = await this.readCurrentManifest(paths, input.sessionId, input.sourceResourceId);
+    const currentRevision = current?.revision ?? 0;
+    if (currentRevision !== context.baseRevision) {
+      throw new ExcelWorkingResourceStoreError(
+        `Excel mutation base revision changed: expected ${context.baseRevision}, received ${currentRevision}.`,
+      );
+    }
+    if (current?.committedMutations.some((item) => item.mutationId === input.mutationId)) {
+      throw new ExcelWorkingResourceStoreError(
+        `Mutation ${input.mutationId} is already committed and cannot be committed again.`,
+      );
+    }
+    if (context.targetRevision !== currentRevision + 1) {
+      throw new ExcelWorkingResourceStoreError('Excel mutation target revision is invalid.');
+    }
+
+    await ensureDirectoryInsideWorkspace(paths.revisions, this.workspaceRoot);
+    const candidateName = `revision-${context.targetRevision}-${randomUUID()}.xlsx`;
+    const candidatePath = join(paths.revisions, candidateName);
+    await this.publishRevision(stagingPath, candidatePath);
+    await assertRegularFileInsideResource(
+      candidatePath,
+      paths.directory,
+      this.workspaceRoot,
+      'candidate workbook revision',
+    );
+
+    const nextManifest: ExcelWorkingResourceManifestRecord = {
+      version: CURRENT_EXCEL_WORKING_RESOURCE_MANIFEST_VERSION,
       sessionId: input.sessionId,
       sourceResourceId: input.sourceResourceId,
       sourcePath: input.sourcePath,
-      workingPath: paths.working,
-      revision: 0,
+      revision: context.targetRevision,
+      file: `revisions/${candidateName}`,
+      committedMutations: [
+        ...(current?.committedMutations ?? []),
+        { mutationId: input.mutationId, revision: context.targetRevision, receipt },
+      ].slice(-MAX_EXCEL_WORKING_RESOURCE_MUTATION_RECEIPTS),
     };
-    validateResource(resource, paths.working);
-    throwIfAborted(input.signal);
-
-    await ensureDirectoryInsideWorkspace(paths.resourcesDirectory, this.workspaceRoot);
-    await this.removeSafeLegacyOrphan(paths, input.sourcePath);
-    await this.removeStaleStagingDirectories(paths.resourcesDirectory, input.sourceResourceId);
-    if (await existsAsPath(paths.directory)) {
-      throw new ExcelWorkingResourceStoreError(
-        `Cannot initialize Excel working resource ${input.sessionId}/${input.sourceResourceId}: ` +
-          'the final resource directory already exists.',
-      );
-    }
-
-    const stagingDirectory = join(
-      paths.resourcesDirectory,
-      `.creating-${input.sourceResourceId}-${randomUUID()}`,
-    );
-    const stagedWorkingPath = join(stagingDirectory, 'working.xlsx');
-    const stagedMetadataPath = join(stagingDirectory, 'metadata.json');
-    let published = false;
-
+    const temporaryManifestPath = `${paths.current}.tmp-${randomUUID()}`;
     try {
-      await mkdir(stagingDirectory);
-      await assertDirectoryInsideWorkspace(stagingDirectory, this.workspaceRoot);
-      throwIfAborted(input.signal);
-
-      await copyFile(input.sourcePath, stagedWorkingPath, fsConstants.COPYFILE_EXCL);
-      throwIfAborted(input.signal);
-      await this.writeStagedMetadata(stagedMetadataPath, resource);
-      throwIfAborted(input.signal);
-
-      await assertRegularFileInsideWorkspace(
-        stagedWorkingPath,
-        this.workspaceRoot,
-        'staged working copy',
-      );
-      await assertRegularFileInsideWorkspace(
-        stagedMetadataPath,
-        this.workspaceRoot,
-        'staged metadata',
-      );
-      await this.assertStagedMetadata(stagedMetadataPath, resource);
-      throwIfAborted(input.signal);
-
-      await this.publishStagingDirectory(stagingDirectory, paths.directory, input);
-      published = true;
-      return resource;
-    } catch (error) {
-      if (error instanceof ExcelWorkingResourceStoreError) throw error;
-      throw new ExcelWorkingResourceStoreError(
-        `Unable to initialize Excel working resource ${input.sessionId}/${input.sourceResourceId}.`,
-        { cause: error },
-      );
-    } finally {
-      if (!published) await removeDirectoryIfPresent(stagingDirectory);
-    }
-  }
-
-  /** Atomically saves a validated metadata snapshot and never moves revision backwards. */
-  public async save(resource: ExcelWorkingResource, signal?: AbortSignal): Promise<void> {
-    const paths = this.getPaths(resource.sessionId, resource.sourceResourceId);
-    validateResource(resource, paths.working);
-    throwIfAborted(signal);
-    await assertRegularFileInsideWorkspace(paths.working, this.workspaceRoot, 'working copy');
-    await ensureDirectoryInsideWorkspace(paths.directory, this.workspaceRoot);
-
-    if (await existsAsFile(paths.metadata, this.workspaceRoot)) {
-      const previous = await this.readMetadata(
-        paths.metadata,
-        resource.sessionId,
-        resource.sourceResourceId,
-      );
-      if (previous.revision > resource.revision) {
-        throw new ExcelWorkingResourceStoreError(
-          `Excel working resource revision cannot move backwards for ` +
-            `${resource.sessionId}/${resource.sourceResourceId}: ` +
-            `${previous.revision} -> ${resource.revision}.`,
-        );
-      }
-    }
-
-    const temporaryPath = `${paths.metadata}.tmp-${randomUUID()}`;
-    try {
-      await writeFile(temporaryPath, serializeMetadata(resource), {
+      await writeFile(temporaryManifestPath, serializeManifest(nextManifest), {
         encoding: 'utf8',
         flag: 'wx',
       });
-      throwIfAborted(signal);
-      await rename(temporaryPath, paths.metadata);
+      await this.replaceCurrentPointer(temporaryManifestPath, paths.current);
     } catch (error) {
+      try {
+        await removeTemporaryFile(temporaryManifestPath);
+      } catch {
+        // A pointer temp file is not committed and is safe to clean on the next mutation.
+      }
       if (error instanceof ExcelWorkingResourceStoreError) throw error;
       throw new ExcelWorkingResourceStoreError(
-        `Unable to atomically save Excel working resource metadata for ` +
-          `${resource.sessionId}/${resource.sourceResourceId}.`,
+        `Unable to atomically commit Excel revision ${context.targetRevision}.`,
         { cause: error },
       );
-    } finally {
-      await removeTemporaryFile(temporaryPath);
     }
+
+    // The pointer replacement above is the commit point. Cleanup can never roll it back.
+    try {
+      await this.reconcileOrphans(paths, nextManifest);
+    } catch {
+      // Cleanup failure leaves only bounded orphans and cannot invalidate the committed revision.
+    }
+    const workingPath = await this.validateManifestFile(paths, nextManifest);
+    return resourceFromManifest(nextManifest, workingPath);
+  }
+
+  /** Removes an uncommitted staging file after callback failure or cancellation. */
+  public async abortMutation(
+    input: ExcelWorkingMutationRequest,
+    context: ExcelWorkingMutationContext,
+  ): Promise<void> {
+    const paths = this.getPaths(input.sessionId, input.sourceResourceId);
+    const stagingPath = this.validateStagingContext(paths, context);
+    await removeTemporaryFile(stagingPath);
   }
 
   /** Removes one resource directory without allowing an id to escape workspaceRoot. */
@@ -218,218 +319,445 @@ export class FileSystemExcelWorkingResourceStore
     }
   }
 
-  private async readMetadata(
-    metadataPath: string,
+  /** Atomically renames a prepared candidate revision into the immutable revisions directory. */
+  protected async publishRevision(stagingPath: string, candidatePath: string): Promise<void> {
+    await rename(stagingPath, candidatePath);
+  }
+
+  /** Atomically replaces the durable current pointer with its complete prepared snapshot. */
+  protected async replaceCurrentPointer(temporaryPath: string, currentPath: string): Promise<void> {
+    await rename(temporaryPath, currentPath);
+  }
+
+  private async readCurrentManifest(
+    paths: WorkingResourcePaths,
     sessionId: string,
     sourceResourceId: string,
-  ): Promise<ExcelWorkingResource> {
+  ): Promise<ExcelWorkingResourceManifestRecord | null> {
+    if (!(await existsAsRegularFile(paths.current, this.workspaceRoot, 'current manifest'))) {
+      return null;
+    }
+    const manifest = parseManifest(await readFile(paths.current, 'utf8'));
+    if (manifest.sessionId !== sessionId || manifest.sourceResourceId !== sourceResourceId) {
+      throw new ExcelWorkingResourceStoreError(
+        `Excel working resource manifest identity does not match ${sessionId}/${sourceResourceId}.`,
+      );
+    }
+    return manifest;
+  }
+
+  private async validateManifestFile(
+    paths: WorkingResourcePaths,
+    manifest: ExcelWorkingResourceManifestRecord,
+  ): Promise<string> {
+    const segments = manifest.file.split('/');
+    const revisionPath = resolve(paths.directory, ...segments);
+    if (!isPathWithin(resolve(paths.directory), revisionPath) || revisionPath === resolve(paths.directory)) {
+      throw new ExcelWorkingResourceStoreError('Manifest file escapes its resource workspace.');
+    }
+    await assertRegularFileInsideResource(
+      revisionPath,
+      paths.directory,
+      this.workspaceRoot,
+      'current workbook revision',
+    );
+    return revisionPath;
+  }
+
+  private async migrateLegacyResource(
+    paths: WorkingResourcePaths,
+    sessionId: string,
+    sourceResourceId: string,
+    signal?: AbortSignal,
+  ): Promise<ExcelWorkingResourceManifestRecord | null> {
+    const hasMetadata = await existsAsRegularFile(
+      paths.legacyMetadata,
+      this.workspaceRoot,
+      'legacy metadata',
+    );
+    const hasWorkingFile = await existsAsPath(paths.legacyWorking);
+    if (!hasMetadata && !hasWorkingFile) return null;
+    if (!hasMetadata) {
+      throw new ExcelWorkingResourceStoreError(
+        `Legacy working.xlsx exists without metadata for ${sessionId}/${sourceResourceId}; preserving it for recovery.`,
+      );
+    }
+
+    const legacy = parseLegacyMetadata(await readFile(paths.legacyMetadata, 'utf8'));
+    if (legacy.sessionId !== sessionId || legacy.sourceResourceId !== sourceResourceId) {
+      throw new ExcelWorkingResourceStoreError(
+        `Legacy Excel working resource identity does not match ${sessionId}/${sourceResourceId}.`,
+      );
+    }
+    if (resolve(legacy.workingPath) !== resolve(paths.legacyWorking)) {
+      throw new ExcelWorkingResourceStoreError(
+        'Legacy Excel working resource path does not match its workspace location.',
+      );
+    }
+    await assertRegularFileInsideResource(
+      paths.legacyWorking,
+      paths.directory,
+      this.workspaceRoot,
+      'legacy working copy',
+    );
+    throwIfAborted(signal);
+
+    await ensureDirectoryInsideWorkspace(paths.revisions, this.workspaceRoot);
+    await ensureDirectoryInsideWorkspace(paths.staging, this.workspaceRoot);
+    const migrationToken = randomUUID();
+    const stagedPath = join(paths.staging, `mutation-${migrationToken}.xlsx`);
+    const candidateName = `revision-${legacy.revision}-${migrationToken}.xlsx`;
+    const candidatePath = join(paths.revisions, candidateName);
     try {
-      await assertRegularFileInsideWorkspace(metadataPath, this.workspaceRoot, 'metadata');
-      const content = await readFile(metadataPath, 'utf8');
-      const resource = parseMetadata(content);
-      if (resource.sessionId !== sessionId || resource.sourceResourceId !== sourceResourceId) {
-        throw new ExcelWorkingResourceStoreError(
-          `Excel working resource metadata identity does not match ${sessionId}/${sourceResourceId}.`,
-        );
+      await copyFile(paths.legacyWorking, stagedPath, fsConstants.COPYFILE_EXCL);
+      throwIfAborted(signal);
+      await assertRegularFileInsideResource(
+        stagedPath,
+        paths.directory,
+        this.workspaceRoot,
+        'staged legacy workbook',
+      );
+      await this.publishRevision(stagedPath, candidatePath);
+      await assertRegularFileInsideResource(
+        candidatePath,
+        paths.directory,
+        this.workspaceRoot,
+        'migrated workbook revision',
+      );
+      const manifest: ExcelWorkingResourceManifestRecord = {
+        version: CURRENT_EXCEL_WORKING_RESOURCE_MANIFEST_VERSION,
+        sessionId,
+        sourceResourceId,
+        sourcePath: legacy.sourcePath,
+        revision: legacy.revision,
+        file: `revisions/${candidateName}`,
+        committedMutations: [],
+      };
+      const temporaryManifestPath = `${paths.current}.tmp-${randomUUID()}`;
+      await writeFile(temporaryManifestPath, serializeManifest(manifest), {
+        encoding: 'utf8',
+        flag: 'wx',
+      });
+      // This is the migration commit point; cancellation after here cannot undo the pointer.
+      await this.replaceCurrentPointer(temporaryManifestPath, paths.current);
+      try {
+        await this.reconcileOrphans(paths, manifest);
+      } catch {
+        // The copied committed revision remains authoritative if cleanup fails.
       }
-      const expectedWorkingPath = this.getWorkingPath(sessionId, sourceResourceId);
-      if (resolve(resource.workingPath) !== expectedWorkingPath) {
-        throw new ExcelWorkingResourceStoreError(
-          `Excel working resource metadata workingPath must remain within workspaceRoot and ` +
-            `match the resource identity.`,
-        );
-      }
-      return { ...resource, workingPath: expectedWorkingPath };
+      return manifest;
     } catch (error) {
+      try {
+        await removeTemporaryFile(stagedPath);
+      } catch {
+        // The legacy source remains intact and an orphan stage is safe to remove later.
+      }
       if (error instanceof ExcelWorkingResourceStoreError) throw error;
       throw new ExcelWorkingResourceStoreError(
-        `Unable to read Excel working resource metadata for ${sessionId}/${sourceResourceId}.`,
+        `Unable to migrate legacy Excel working resource ${sessionId}/${sourceResourceId}.`,
         { cause: error },
       );
     }
   }
 
-  private async assertStagedMetadata(
-    metadataPath: string,
-    expectedResource: ExcelWorkingResource,
+  private async reconcileOrphans(
+    paths: WorkingResourcePaths,
+    current: ExcelWorkingResourceManifestRecord | null,
   ): Promise<void> {
-    const stagedResource = parseMetadata(await readFile(metadataPath, 'utf8'));
+    await this.removeDirectoryIfPresentInsideWorkspace(paths.staging, 'staging directory');
+    if (await existsAsPath(paths.revisions)) {
+      await assertDirectoryInsideWorkspace(paths.revisions, this.workspaceRoot);
+      const entries = await readdir(paths.revisions, { withFileTypes: true });
+      const revisions = entries
+        .filter((entry) => entry.isFile() && !entry.isSymbolicLink())
+        .map((entry) => ({ name: entry.name, match: revisionFilePattern.exec(entry.name) }))
+        .filter((entry): entry is { name: string; match: RegExpExecArray } => entry.match !== null)
+        .map((entry) => ({ name: entry.name, revision: Number(entry.match[1]) }));
+      const previous = revisions
+        .filter((entry) => entry.revision < (current?.revision ?? 0))
+        .sort((left, right) => right.revision - left.revision)[0];
+      const retained = new Set(
+        [current?.file.split('/').at(-1), previous?.name].filter(
+          (name): name is string => name !== undefined,
+        ),
+      );
+      for (const entry of entries) {
+        if (!entry.isFile() || entry.isSymbolicLink() || retained.has(entry.name)) continue;
+        if (!revisionFilePattern.test(entry.name)) continue;
+        await assertRegularFileInsideResource(
+          join(paths.revisions, entry.name),
+          paths.directory,
+          this.workspaceRoot,
+          'orphan workbook revision',
+        );
+        await unlink(join(paths.revisions, entry.name));
+      }
+    }
+
+    if (current !== null) {
+      await this.removeLegacyFileIfPresent(paths.legacyWorking, paths.directory, 'legacy working copy');
+      await this.removeLegacyFileIfPresent(paths.legacyMetadata, paths.directory, 'legacy metadata');
+    }
+    if (await existsAsPath(paths.directory)) {
+      const entries = await readdir(paths.directory, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile() || entry.isSymbolicLink() || !/^current\.json\.tmp-[a-f0-9-]+$/u.test(entry.name)) {
+          continue;
+        }
+        await assertRegularFileInsideResource(
+          join(paths.directory, entry.name),
+          paths.directory,
+          this.workspaceRoot,
+          'orphan current manifest temp file',
+        );
+        await unlink(join(paths.directory, entry.name));
+      }
+    }
+  }
+
+  private async removeDirectoryIfPresentInsideWorkspace(
+    directory: string,
+    label: string,
+  ): Promise<void> {
+    if (!(await existsAsPath(directory))) return;
+    await assertDirectoryInsideWorkspace(directory, this.workspaceRoot);
+    try {
+      await rm(directory, { recursive: true, force: true });
+    } catch (error) {
+      throw new ExcelWorkingResourceStoreError(`Unable to remove ${label}: ${directory}.`, {
+        cause: error,
+      });
+    }
+  }
+
+  private async removeLegacyFileIfPresent(
+    filePath: string,
+    resourceDirectory: string,
+    label: string,
+  ): Promise<void> {
+    if (!(await existsAsPath(filePath))) return;
+    await assertRegularFileInsideResource(
+      filePath,
+      resourceDirectory,
+      this.workspaceRoot,
+      label,
+    );
+    await unlink(filePath);
+  }
+
+  private validateStagingContext(
+    paths: WorkingResourcePaths,
+    context: ExcelWorkingMutationContext,
+  ): string {
     if (
-      stagedResource.sessionId !== expectedResource.sessionId ||
-      stagedResource.sourceResourceId !== expectedResource.sourceResourceId ||
-      stagedResource.sourcePath !== expectedResource.sourcePath ||
-      resolve(stagedResource.workingPath) !== expectedResource.workingPath ||
-      stagedResource.revision !== 0
+      !Number.isSafeInteger(context.baseRevision) ||
+      context.baseRevision < 0 ||
+      !Number.isSafeInteger(context.targetRevision) ||
+      context.targetRevision !== context.baseRevision + 1
+    ) {
+      throw new ExcelWorkingResourceStoreError('Excel mutation staging context is invalid.');
+    }
+    const stagingPath = resolve(context.stagingPath);
+    const stagingDirectory = resolve(paths.staging);
+    const fileName = stagingPath.slice(stagingDirectory.length + sep.length);
+    if (
+      !isPathWithin(stagingDirectory, stagingPath) ||
+      !mutationFilePattern.test(fileName) ||
+      fileName.includes(sep)
     ) {
       throw new ExcelWorkingResourceStoreError(
-        'Staged Excel working resource metadata does not match the resource being published.',
+        'Excel mutation staging path must be a generated file inside its staging directory.',
       );
     }
+    return stagingPath;
   }
 
-  /** Writes staged metadata; kept as a filesystem-local seam for failure handling tests. */
-  protected async writeStagedMetadata(
-    metadataPath: string,
-    resource: ExcelWorkingResource,
-  ): Promise<void> {
-    await writeFile(metadataPath, serializeMetadata(resource), {
-      encoding: 'utf8',
-      flag: 'wx',
+  private async withMigrationLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.migrationLocks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolvePromise) => {
+      release = resolvePromise;
     });
-  }
-
-  /** Atomically publishes a complete staging directory without replacing its target. */
-  protected async publishStagingDirectory(
-    stagingDirectory: string,
-    finalDirectory: string,
-    input: ExcelWorkingResourceRequest,
-  ): Promise<void> {
-    if (await existsAsPath(finalDirectory)) {
-      throw new ExcelWorkingResourceStoreError(
-        `Cannot publish Excel working resource ${input.sessionId}/${input.sourceResourceId}: ` +
-          'the final resource directory already exists.',
-      );
+    this.migrationLocks.set(key, current);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.migrationLocks.get(key) === current) this.migrationLocks.delete(key);
     }
-    await rename(stagingDirectory, finalDirectory);
-  }
-
-  private async removeSafeLegacyOrphan(
-    paths: WorkingResourcePaths,
-    sourcePath: string,
-  ): Promise<void> {
-    if (!(await existsAsPath(paths.directory))) return;
-    await assertDirectoryInsideWorkspace(paths.directory, this.workspaceRoot);
-    const entries = await readdir(paths.directory, { withFileTypes: true });
-    const isSafeOrphan =
-      entries.length === 0 ||
-      (entries.length === 1 &&
-        entries[0]?.name === 'working.xlsx' &&
-        entries[0].isFile() &&
-        !entries[0].isSymbolicLink());
-    if (!isSafeOrphan) {
-      throw new ExcelWorkingResourceStoreError(
-        `Cannot initialize ${paths.directory}: an unpublished resource directory contains unexpected files.`,
-      );
-    }
-    if (entries.length === 1) {
-      await assertRegularFileInsideWorkspace(
-        paths.working,
-        this.workspaceRoot,
-        'legacy working copy',
-      );
-      let hasSameContent: boolean;
-      try {
-        hasSameContent = await filesHaveSameContent(paths.working, sourcePath);
-      } catch (error) {
-        throw new ExcelWorkingResourceStoreError(
-          `Unable to compare legacy Excel working copy ${paths.working} with sourcePath.`,
-          { cause: error },
-        );
-      }
-      if (!hasSameContent) {
-        throw new ExcelWorkingResourceStoreError(
-          `Cannot initialize ${paths.directory}: legacy working.xlsx differs from sourcePath ` +
-            'and may contain user changes.',
-        );
-      }
-    }
-    await rm(paths.directory, { recursive: true, force: true });
-  }
-
-  private async removeStaleStagingDirectories(
-    resourcesDirectory: string,
-    sourceResourceId: string,
-  ): Promise<void> {
-    const prefix = `.creating-${sourceResourceId}-`;
-    const entries = await readdir(resourcesDirectory, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.name.startsWith(prefix) || !entry.isDirectory() || entry.isSymbolicLink()) {
-        continue;
-      }
-      await assertDirectoryInsideWorkspace(
-        join(resourcesDirectory, entry.name),
-        this.workspaceRoot,
-      );
-      await rm(join(resourcesDirectory, entry.name), { recursive: true, force: true });
-    }
-  }
-
-  private getWorkingPath(sessionId: string, sourceResourceId: string): string {
-    return this.getPaths(sessionId, sourceResourceId).working;
   }
 
   private getPaths(sessionId: string, sourceResourceId: string): WorkingResourcePaths {
     assertSafeResourceId(sessionId, 'sessionId');
     assertSafeResourceId(sourceResourceId, 'sourceResourceId');
     const resourcesDirectory = join(this.workspaceRoot, sessionId, 'resources');
-    const directory = join(this.workspaceRoot, sessionId, 'resources', sourceResourceId);
+    const directory = join(resourcesDirectory, sourceResourceId);
     return {
       resourcesDirectory,
       directory,
-      working: join(directory, 'working.xlsx'),
-      metadata: join(directory, 'metadata.json'),
+      current: join(directory, 'current.json'),
+      revisions: join(directory, 'revisions'),
+      staging: join(directory, 'staging'),
+      legacyWorking: join(directory, 'working.xlsx'),
+      legacyMetadata: join(directory, 'metadata.json'),
     };
   }
 }
 
-function serializeMetadata(resource: ExcelWorkingResource): string {
-  const record: ExcelWorkingResourceMetadataRecord = {
-    version: CURRENT_EXCEL_WORKING_RESOURCE_METADATA_VERSION,
-    sessionId: resource.sessionId,
-    sourceResourceId: resource.sourceResourceId,
-    sourcePath: resource.sourcePath,
-    workingPath: resource.workingPath,
-    revision: resource.revision,
-  };
-  return `${JSON.stringify(record, null, 2)}\n`;
+/** Serializes the manifest without storing absolute revision paths. */
+function serializeManifest(manifest: ExcelWorkingResourceManifestRecord): string {
+  return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
-function parseMetadata(content: string): ExcelWorkingResource {
-  let value: unknown;
-  try {
-    value = JSON.parse(content) as unknown;
-  } catch (error) {
+/** Parses and validates the current manifest and its bounded generic receipts. */
+function parseManifest(content: string): ExcelWorkingResourceManifestRecord {
+  const value = parseJson(content, 'Excel working resource manifest');
+  if (
+    !isRecord(value) ||
+    value.version !== CURRENT_EXCEL_WORKING_RESOURCE_MANIFEST_VERSION ||
+    !Array.isArray(value.committedMutations)
+  ) {
     throw new ExcelWorkingResourceStoreError(
-      'Excel working resource metadata contains invalid JSON.',
-      {
-        cause: error,
-      },
+      `Excel working resource manifest version must be ${CURRENT_EXCEL_WORKING_RESOURCE_MANIFEST_VERSION}.`,
     );
   }
-  if (!isRecord(value) || value.version !== CURRENT_EXCEL_WORKING_RESOURCE_METADATA_VERSION) {
-    throw new ExcelWorkingResourceStoreError(
-      `Excel working resource metadata version must be ${CURRENT_EXCEL_WORKING_RESOURCE_METADATA_VERSION}.`,
-    );
+  const sessionId = requireNonEmptyString(value.sessionId, 'sessionId');
+  const sourceResourceId = requireNonEmptyString(value.sourceResourceId, 'sourceResourceId');
+  const sourcePath = requireNonEmptyString(value.sourcePath, 'sourcePath');
+  const revision = requireRevision(value.revision);
+  const file = requireNonEmptyString(value.file, 'file');
+  assertSafeResourceId(sessionId, 'sessionId');
+  assertSafeResourceId(sourceResourceId, 'sourceResourceId');
+  validateManifestRelativeFile(file, revision);
+  if (value.committedMutations.length > MAX_EXCEL_WORKING_RESOURCE_MUTATION_RECEIPTS) {
+    throw new ExcelWorkingResourceStoreError('Excel manifest contains too many mutation receipts.');
   }
+  const seenMutationIds = new Set<string>();
+  const committedMutations = value.committedMutations.map((candidate): ExcelWorkingResourceMutationRecord => {
+    if (!isRecord(candidate)) {
+      throw new ExcelWorkingResourceStoreError('Excel mutation receipt record must be an object.');
+    }
+    const mutationId = requireNonEmptyString(candidate.mutationId, 'mutationId');
+    const mutationRevision = requireRevision(candidate.revision);
+    if (mutationRevision > revision || seenMutationIds.has(mutationId)) {
+      throw new ExcelWorkingResourceStoreError('Excel mutation receipt record is inconsistent.');
+    }
+    assertJsonSerializableReceipt(candidate.receipt);
+    seenMutationIds.add(mutationId);
+    return { mutationId, revision: mutationRevision, receipt: candidate.receipt };
+  });
+  return {
+    version: CURRENT_EXCEL_WORKING_RESOURCE_MANIFEST_VERSION,
+    sessionId,
+    sourceResourceId,
+    sourcePath,
+    revision,
+    file,
+    committedMutations,
+  };
+}
 
-  const resource: ExcelWorkingResource = {
+/** Parses the legacy mutable-working-copy metadata without assuming revision zero is unchanged. */
+function parseLegacyMetadata(content: string): LegacyExcelWorkingResourceMetadataRecord {
+  const value = parseJson(content, 'Legacy Excel working resource metadata');
+  if (!isRecord(value) || value.version !== 1) {
+    throw new ExcelWorkingResourceStoreError('Legacy Excel working resource metadata is invalid.');
+  }
+  const record: LegacyExcelWorkingResourceMetadataRecord = {
+    version: 1,
     sessionId: requireNonEmptyString(value.sessionId, 'sessionId'),
     sourceResourceId: requireNonEmptyString(value.sourceResourceId, 'sourceResourceId'),
     sourcePath: requireNonEmptyString(value.sourcePath, 'sourcePath'),
     workingPath: requireNonEmptyString(value.workingPath, 'workingPath'),
     revision: requireRevision(value.revision),
   };
-  assertSafeResourceId(resource.sessionId, 'sessionId');
-  assertSafeResourceId(resource.sourceResourceId, 'sourceResourceId');
-  return resource;
+  assertSafeResourceId(record.sessionId, 'sessionId');
+  assertSafeResourceId(record.sourceResourceId, 'sourceResourceId');
+  return record;
 }
 
-function validateResource(resource: ExcelWorkingResource, expectedWorkingPath: string): void {
-  assertSafeResourceId(resource.sessionId, 'sessionId');
-  assertSafeResourceId(resource.sourceResourceId, 'sourceResourceId');
-  if (resource.sourcePath.trim().length === 0) {
-    throw new ExcelWorkingResourceStoreError('sourcePath is required.');
-  }
-  if (!Number.isSafeInteger(resource.revision) || resource.revision < 0) {
-    throw new ExcelWorkingResourceStoreError('revision must be a non-negative safe integer.');
-  }
-  if (resolve(resource.workingPath) !== expectedWorkingPath) {
+/** Validates that the manifest revision is represented by a safe workspace-relative file. */
+function validateManifestRelativeFile(file: string, revision: number): void {
+  const segments = file.split('/');
+  const match = revisionFilePattern.exec(segments[1] ?? '');
+  if (
+    isAbsolute(file) ||
+    file.includes('\\') ||
+    segments.length !== 2 ||
+    segments[0] !== 'revisions' ||
+    segments.some((segment) => segment === '' || segment === '.' || segment === '..') ||
+    match === null ||
+    Number(match[1]) !== revision
+  ) {
     throw new ExcelWorkingResourceStoreError(
-      'workingPath must match the Session/resource workspace path.',
+      'Excel manifest file must be a safe relative path to its committed revision.',
     );
   }
 }
 
+/** Converts a validated manifest into the Application-facing current resource path. */
+function resourceFromManifest(
+  manifest: ExcelWorkingResourceManifestRecord,
+  workingPath: string,
+): ExcelWorkingResource {
+  return {
+    sessionId: manifest.sessionId,
+    sourceResourceId: manifest.sourceResourceId,
+    sourcePath: manifest.sourcePath,
+    workingPath,
+    revision: manifest.revision,
+  };
+}
+
+/** Parses JSON and wraps syntax errors in a storage-specific error. */
+function parseJson(content: string, label: string): unknown {
+  try {
+    return JSON.parse(content) as unknown;
+  } catch (error) {
+    throw new ExcelWorkingResourceStoreError(`${label} contains invalid JSON.`, { cause: error });
+  }
+}
+
+/** Validates a receipt before writing or replaying it as opaque JSON data. */
+function assertJsonSerializableReceipt(value: unknown): void {
+  const visited = new Set<object>();
+  const visit = (candidate: unknown): void => {
+    if (
+      candidate === null ||
+      typeof candidate === 'string' ||
+      typeof candidate === 'boolean' ||
+      (typeof candidate === 'number' && Number.isFinite(candidate))
+    ) {
+      return;
+    }
+    if (typeof candidate !== 'object' || visited.has(candidate)) {
+      throw new ExcelWorkingResourceStoreError(
+        'Excel mutation receipt must be a JSON-serializable value.',
+      );
+    }
+    visited.add(candidate);
+    if (Array.isArray(candidate)) {
+      for (const item of candidate) visit(item);
+      visited.delete(candidate);
+      return;
+    }
+    const prototype = Object.getPrototypeOf(candidate) as unknown;
+    if (
+      (prototype !== Object.prototype && prototype !== null) ||
+      Object.getOwnPropertySymbols(candidate).length > 0
+    ) {
+      throw new ExcelWorkingResourceStoreError(
+        'Excel mutation receipt must be a JSON-serializable value.',
+      );
+    }
+    for (const item of Object.values(candidate as Record<string, unknown>)) visit(item);
+    visited.delete(candidate);
+  };
+  visit(value);
+}
+
+/** Validates a required non-empty metadata string. */
 function requireNonEmptyString(value: unknown, field: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new ExcelWorkingResourceStoreError(`Excel working resource ${field} must be non-empty.`);
@@ -437,6 +765,7 @@ function requireNonEmptyString(value: unknown, field: string): string {
   return value;
 }
 
+/** Validates a non-negative safe-integer revision. */
 function requireRevision(value: unknown): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
     throw new ExcelWorkingResourceStoreError(
@@ -446,6 +775,7 @@ function requireRevision(value: unknown): number {
   return value;
 }
 
+/** Rejects IDs that could escape their resource workspace directory. */
 function assertSafeResourceId(value: string, field: string): void {
   if (!resourceIdPattern.test(value)) {
     throw new ExcelWorkingResourceStoreError(
@@ -454,6 +784,7 @@ function assertSafeResourceId(value: string, field: string): void {
   }
 }
 
+/** Creates and validates one real directory below the configured workspace root. */
 async function ensureDirectoryInsideWorkspace(
   directory: string,
   workspaceRoot: string,
@@ -469,6 +800,7 @@ async function ensureDirectoryInsideWorkspace(
   }
 }
 
+/** Ensures a directory is a real directory contained in workspaceRoot. */
 async function assertDirectoryInsideWorkspace(
   directory: string,
   workspaceRoot: string,
@@ -503,6 +835,82 @@ async function assertDirectoryInsideWorkspace(
   }
 }
 
+/** Ensures a revision, stage, or metadata file is a regular file within its resource directory. */
+async function assertRegularFileInsideResource(
+  filePath: string,
+  resourceDirectory: string,
+  workspaceRoot: string,
+  label: string,
+): Promise<void> {
+  await assertDirectoryInsideWorkspace(resourceDirectory, workspaceRoot);
+  let stats;
+  try {
+    stats = await lstat(filePath);
+  } catch (error) {
+    if (isFileNotFoundError(error)) {
+      throw new ExcelWorkingResourceStoreError(`${label} does not exist: ${filePath}.`, {
+        cause: error,
+      });
+    }
+    throw new ExcelWorkingResourceStoreError(`Unable to access ${label}: ${filePath}.`, {
+      cause: error,
+    });
+  }
+  if (!stats.isFile() || stats.isSymbolicLink()) {
+    throw new ExcelWorkingResourceStoreError(
+      `${label} must be a regular file inside its resource workspace: ${filePath}.`,
+    );
+  }
+  let realFilePath: string;
+  let realResourcePath: string;
+  let realRoot: string;
+  try {
+    [realFilePath, realResourcePath, realRoot] = await Promise.all([
+      realpath(filePath),
+      realpath(resourceDirectory),
+      realpath(workspaceRoot),
+    ]);
+  } catch (error) {
+    throw new ExcelWorkingResourceStoreError(`Unable to resolve ${label}: ${filePath}.`, {
+      cause: error,
+    });
+  }
+  if (!isPathWithin(realResourcePath, realFilePath) || !isPathWithin(realRoot, realFilePath)) {
+    throw new ExcelWorkingResourceStoreError(
+      `${label} must remain inside its resource workspace: ${filePath}.`,
+    );
+  }
+}
+
+/** Returns whether a path is a safe regular file, without treating invalid paths as missing. */
+async function existsAsRegularFile(
+  filePath: string,
+  workspaceRoot: string,
+  label: string,
+): Promise<boolean> {
+  try {
+    await assertRegularFileInsideWorkspace(filePath, workspaceRoot, label);
+    return true;
+  } catch (error) {
+    if (error instanceof ExcelWorkingResourceStoreError && error.message.includes('does not exist')) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+/** Returns whether lstat can see a path, propagating errors other than ENOENT. */
+async function existsAsPath(filePath: string): Promise<boolean> {
+  try {
+    await lstat(filePath);
+    return true;
+  } catch (error) {
+    if (isFileNotFoundError(error)) return false;
+    throw error;
+  }
+}
+
+/** Ensures a regular file remains inside both its resource directory and workspace root. */
 async function assertRegularFileInsideWorkspace(
   filePath: string,
   workspaceRoot: string,
@@ -526,7 +934,6 @@ async function assertRegularFileInsideWorkspace(
       `${label} must be a regular file inside workspaceRoot: ${filePath}.`,
     );
   }
-
   let realFilePath: string;
   let realRoot: string;
   try {
@@ -537,34 +944,7 @@ async function assertRegularFileInsideWorkspace(
     });
   }
   if (!isPathWithin(realRoot, realFilePath)) {
-    throw new ExcelWorkingResourceStoreError(
-      `${label} must remain inside workspaceRoot: ${filePath}.`,
-    );
-  }
-}
-
-async function existsAsFile(filePath: string, workspaceRoot: string): Promise<boolean> {
-  try {
-    await assertRegularFileInsideWorkspace(filePath, workspaceRoot, 'metadata');
-    return true;
-  } catch (error) {
-    if (
-      error instanceof ExcelWorkingResourceStoreError &&
-      error.message.includes('does not exist')
-    ) {
-      return false;
-    }
-    throw error;
-  }
-}
-
-async function existsAsPath(filePath: string): Promise<boolean> {
-  try {
-    await lstat(filePath);
-    return true;
-  } catch (error) {
-    if (isFileNotFoundError(error)) return false;
-    throw error;
+    throw new ExcelWorkingResourceStoreError(`${label} must remain inside workspaceRoot: ${filePath}.`);
   }
 }
 
@@ -596,36 +976,32 @@ export async function removeDirectoryIfPresent(
   }
 }
 
-async function filesHaveSameContent(firstPath: string, secondPath: string): Promise<boolean> {
-  const [first, second] = await Promise.all([readFile(firstPath), readFile(secondPath)]);
-  return first.equals(second);
-}
-
+/** Checks whether a resolved path is equal to or below a trusted root. */
 function isPathWithin(rootPath: string, candidatePath: string): boolean {
   const candidateRelativePath = relative(rootPath, candidatePath);
   return (
     candidateRelativePath === '' ||
     (!isAbsolute(candidateRelativePath) &&
-      !candidateRelativePath.startsWith(`..${sep}`) &&
       candidateRelativePath !== '..' &&
-      !candidateRelativePath.includes(`..${sep}`) &&
+      !candidateRelativePath.startsWith(`..${sep}`) &&
       !candidateRelativePath.startsWith('..\\') &&
-      !candidateRelativePath.startsWith('..\/') &&
-      !candidateRelativePath.includes('..\\') &&
-      !candidateRelativePath.includes('..\/') &&
+      !candidateRelativePath.startsWith('../') &&
       !candidateRelativePath.includes(':'))
   );
 }
 
+/** Throws the original cancellation reason while preparation remains abortable. */
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (!signal?.aborted) return;
   throw signal.reason ?? new Error('Excel working resource operation was cancelled.');
 }
 
+/** Narrows an unknown parsed value to a JSON object record. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** Identifies Node filesystem ENOENT errors across promise-based operations. */
 function isFileNotFoundError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
 }

@@ -21,19 +21,20 @@ describe('API runtime composition root', () => {
   it('creates the two Excel discovery tools and the write tool', () => {
     const tools = createExcelToolDefinitions({
       resolveReadablePath: async (request) => request.sourcePath,
-      ensureWritableResource: async (request) => ({
-        sessionId: request.sessionId,
-        sourceResourceId: request.sourceResourceId,
-        sourcePath: request.sourcePath,
-        workingPath: `/working/${request.sessionId}/${request.sourceResourceId}.xlsx`,
-        revision: 0,
-      }),
-      markModified: async (request) => ({
-        sessionId: request.sessionId,
-        sourceResourceId: request.sourceResourceId,
-        sourcePath: request.sourcePath,
-        workingPath: `/working/${request.sessionId}/${request.sourceResourceId}.xlsx`,
-        revision: 1,
+      executeMutation: async (request, mutate) => ({
+        resource: {
+          sessionId: request.sessionId,
+          sourceResourceId: request.sourceResourceId,
+          sourcePath: request.sourcePath,
+          workingPath: `/working/${request.sessionId}/${request.sourceResourceId}.xlsx`,
+          revision: 1,
+        },
+        receipt: await mutate({
+          stagingPath: `/staging/${request.sessionId}/${request.sourceResourceId}.xlsx`,
+          baseRevision: 0,
+          targetRevision: 1,
+        }),
+        replayed: false,
       }),
     });
 
@@ -65,7 +66,7 @@ describe('API runtime composition root', () => {
       required: ['sheetName'],
       additionalProperties: false,
     });
-    expect(tools[2]?.recoveryPolicy).toBe('manual');
+    expect(tools[2]?.recoveryPolicy).toBe('retry_safe');
     expect(tools[2]?.parameters).toMatchObject({
       type: 'object',
       properties: {

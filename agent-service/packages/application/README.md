@@ -110,7 +110,7 @@ resource 契约，恢复扩展留待后续变更。
 - `turn/`：Turn execution、recovery、live stream、presentation 与 persistence port。
 - `context/`、`tools/`、`system-prompt/`：保持为独立的应用能力模块。
 - `resources/excel/`：定义 Session-scoped Excel resource registry 的 source locator port、Turn
-  resource context，以及 Excel working resource、copy-on-write 生命周期及持久化 port；不依赖具体
+  resource context，以及 Excel working resource、atomic mutation 生命周期及持久化 port；不依赖具体
   filesystem adapter，也不改变 Tool Gateway contract。Excel read tools 通过注入的 manager 解析有效路径。
 - `Session.registerResource()`：由 `ExecuteTurn` 在收到新 Excel resource 后登记 `id + kind + alias`；
   alias 以 `excel-N` 形式在 Session 内稳定分配并持久化。后续 Turn 从独立 source locator store
@@ -120,28 +120,35 @@ resource 契约，恢复扩展留待后续变更。
 ## Excel working resources
 
 Backend 提供的 Excel source 是 immutable input。Application 的
-`ExcelWorkingResourceManager` 以 `sessionId + sourceResourceId` 为稳定身份：读取时优先返回
-已存在的 `workingPath`，首次 writable 请求通过初始化 port 创建并发布完整副本（`revision = 0`）；
-`markModified()` 才会递增并持久化 revision。sourcePath 变更会被拒绝。staging、metadata
-写入和目录 rename 等 filesystem 细节不出现在 Application。
+`ExcelWorkingResourceManager` 以 `sessionId + sourceResourceId` 为稳定身份；读操作返回 source
+或当前 committed revision。首次成功 mutation 从 source 创建 revision 1。`executeMutation()`
+持有同一 resource 的单进程锁，直到 staging callback、commit 或 abort 完成；它用 Tool `callId`
+作为 mutationId，并在回放时返回 manifest 中的 opaque JSON receipt，不再次调用 callback。
+sourcePath 变更会被拒绝。Staging、revision 文件、manifest 和原子 rename 细节属于 Infrastructure。
 
-Application 的 `write_data` 是当前唯一 Excel mutation Tool。它校验非空矩形 JSON scalar 数据，调用
-`ensureWritableResource()` 后写入返回的 `workingPath`，仅在 Gateway 成功返回后调用
-`markModified()`。其 recovery policy 为 `manual`，避免在无法确认 mutation 是否已写入时自动重放。
+Application 的 `write_data` 校验非空矩形 JSON scalar 数据，并只把 staging path 交给 Tool Gateway。
+只有 Gateway 成功且 current pointer 提交成功后，工具才返回成功；其 recovery policy 为
+`retry_safe`。现有 `TurnRecoveryPlanner` 按 ToolDefinition policy 决定是否重试，`ResumeTurn`
+重放原 ToolCall；Working Resource Manager 根据 callId 回执保证该重放幂等。Turn recovery 不增加
+Excel 特判，`execution.json` 仍只保存恢复所需的最小输入。
 
 Filesystem adapter 位于 `@opspilot/infrastructure`，使用：
 
 ```text
 data/workspaces/{sessionId}/resources/{sourceResourceId}/
-├── working.xlsx
-└── metadata.json
+├── current.json
+├── revisions/
+│   └── revision-{revision}-{uuid}.xlsx
+└── staging/
+    └── mutation-{uuid}.xlsx
 ```
 
-`get_workbook_info` 与 `get_sheet_profile` 会经 manager 读取现有 working copy，否则读取 immutable
-source。`write_data` 直接修改该 working copy，再推进成功 mutation 的 revision。Tool Gateway 的
+`current.json` 保存 workspace-relative revision 文件、revision 与 bounded mutation receipts；current
+pointer 的同目录原子替换是唯一资源 commit point。保留当前与前一 revision；未被 pointer 引用的
+staging/candidate 文件在后续 mutation 时安全清理。旧 `working.xlsx + metadata.json` 会在首次读取或
+mutation 时保守迁移，revision 0 的实际文件内容也会复制到 versioned revision。Tool Gateway 的
 aggregate 与 filter capabilities 目前仍没有 Application wrapper，也不会自行选择 source 或 working
-path。临时 workbook、atomic replace、mutation idempotency 与 crash recovery 留给后续 Atomic Commit
-Protocol。
+path。
 
 其中 `turn/presentation/` 提供 live stream 与历史 Turn presentation 共用的工具展示解析能力；`turn/ports/` 与 `session/ports/` 只定义 Application persistence port，不包含 infrastructure 实现。
 

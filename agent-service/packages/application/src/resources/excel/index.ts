@@ -1,11 +1,14 @@
 export type {
+  ExcelWorkingMutationContext,
+  ExcelWorkingMutationReceiptRecord,
+  ExcelWorkingMutationRequest,
+  ExcelWorkingMutationResult,
   ExcelWorkingResource,
   ExcelWorkingResourceRequest,
 } from './excel-working-resource.js';
 export type { ExcelWorkingResourceFileOperator } from './excel-working-resource-file-operator.js';
 export {
   ExcelWorkingResourceError,
-  ExcelWorkingResourceNotFoundError,
   ExcelWorkingResourceSourceMismatchError,
 } from './excel-working-resource-errors.js';
 export {

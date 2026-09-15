@@ -1,11 +1,11 @@
-import { mkdtemp, readdir, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
   ExcelWorkingResourceManager,
   ExcelWorkingResourceSourceMismatchError,
-  type ExcelWorkingResource,
+  type ExcelWorkingMutationRequest,
   type ExcelWorkingResourceRequest,
 } from '@opspilot/application';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -13,11 +13,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   ExcelWorkingResourceStoreError,
   FileSystemExcelWorkingResourceStore,
+  MAX_EXCEL_WORKING_RESOURCE_MUTATION_RECEIPTS,
 } from '../src/index.js';
-import {
-  removeDirectoryIfPresent,
-  removeTemporaryFile,
-} from '../src/workspaces/filesystem-excel-working-resource-store.js';
 
 const directories: string[] = [];
 
@@ -28,280 +25,360 @@ describe('FileSystemExcelWorkingResourceStore', () => {
     );
   });
 
-  it('persists a first copy, keeps the source immutable, and does not recopy later', async () => {
-    const { manager, sourcePath, workspaceRoot } = await createManager();
-    const request = resourceRequest('session-a', 'file-1', sourcePath);
+  it('keeps the source immutable and resolves only a committed revision after the first write', async () => {
+    const fixture = await createFixture();
+    const request = resourceRequest('session-a', 'file-1', fixture.sourcePath);
 
-    await expect(manager.resolveReadablePath(request)).resolves.toBe(sourcePath);
-    const created = await manager.ensureWritableResource(request);
-    await writeFile(created.workingPath, 'working copy changed', 'utf8');
-    const reused = await manager.ensureWritableResource(request);
+    await expect(fixture.manager.resolveReadablePath(request)).resolves.toBe(fixture.sourcePath);
+    const first = await writeMutation(fixture.manager, request, 'call-1', 'revision one');
+    const manifestPath = resourcePath(fixture.workspaceRoot, 'session-a', 'file-1', 'current.json');
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<string, unknown>;
 
-    expect(created.revision).toBe(0);
-    expect(reused).toEqual(created);
-    await expect(readFile(sourcePath, 'utf8')).resolves.toBe('source workbook');
-    await expect(readFile(created.workingPath, 'utf8')).resolves.toBe('working copy changed');
-    await expect(manager.resolveReadablePath(request)).resolves.toBe(created.workingPath);
-
-    const metadata = JSON.parse(
-      await readFile(
-        join(workspaceRoot, 'session-a', 'resources', 'file-1', 'metadata.json'),
-        'utf8',
-      ),
-    ) as Record<string, unknown>;
-    expect(metadata).toMatchObject({
-      version: 1,
+    expect(first.resource.revision).toBe(1);
+    expect(first.resource.workingPath).toContain(join('revisions', 'revision-1-'));
+    expect(manifest).toMatchObject({
+      version: 2,
       sessionId: 'session-a',
       sourceResourceId: 'file-1',
-      sourcePath,
-      workingPath: created.workingPath,
-      revision: 0,
+      sourcePath: fixture.sourcePath,
+      revision: 1,
+      file: expect.stringMatching(/^revisions\/revision-1-[a-f0-9-]+\.xlsx$/u),
+      committedMutations: [
+        { mutationId: 'call-1', revision: 1, receipt: { value: 'revision one' } },
+      ],
     });
+    expect(await fixture.manager.resolveReadablePath(request)).toBe(first.resource.workingPath);
+    await expect(readFile(first.resource.workingPath, 'utf8')).resolves.toBe('revision one');
+    await expect(readFile(fixture.sourcePath, 'utf8')).resolves.toBe('source workbook');
   });
 
-  it('isolates different Sessions and resources', async () => {
-    const { manager, sourcePath } = await createManager();
-    const sessionAResource = await manager.ensureWritableResource(
-      resourceRequest('session-a', 'file-1', sourcePath),
-    );
-    const sessionBResource = await manager.ensureWritableResource(
-      resourceRequest('session-b', 'file-1', sourcePath),
-    );
-    const sessionAOtherResource = await manager.ensureWritableResource(
-      resourceRequest('session-a', 'file-2', sourcePath),
-    );
-
-    await writeFile(sessionAResource.workingPath, 'A changed', 'utf8');
-
-    expect(sessionAResource.workingPath).not.toBe(sessionBResource.workingPath);
-    expect(sessionAResource.workingPath).not.toBe(sessionAOtherResource.workingPath);
-    await expect(readFile(sessionBResource.workingPath, 'utf8')).resolves.toBe('source workbook');
-    await expect(readFile(sessionAOtherResource.workingPath, 'utf8')).resolves.toBe(
-      'source workbook',
-    );
-  });
-
-  it('recovers metadata and revision after a store is recreated', async () => {
-    const { manager, sourcePath, workspaceRoot } = await createManager();
-    const request = resourceRequest('session-a', 'file-1', sourcePath);
-    await manager.ensureWritableResource(request);
-    await manager.markModified(request);
-    await manager.markModified(request);
-
-    const restartedStore = new FileSystemExcelWorkingResourceStore(workspaceRoot);
-    const recovered = await restartedStore.get('session-a', 'file-1');
-
-    expect(recovered).toMatchObject({
-      sessionId: 'session-a',
-      sourceResourceId: 'file-1',
-      sourcePath,
-      workingPath: join(workspaceRoot, 'session-a', 'resources', 'file-1', 'working.xlsx'),
-      revision: 2,
-    });
-  });
-
-  it('rejects source identity changes and unsafe workspace paths', async () => {
-    const { manager, sourcePath, workspaceRoot } = await createManager();
-    await manager.ensureWritableResource(resourceRequest('session-a', 'file-1', sourcePath));
+  it('does not publish callback failures or leave a staging workbook', async () => {
+    const fixture = await createFixture();
+    const request = resourceRequest('session-a', 'file-1', fixture.sourcePath);
+    await writeMutation(fixture.manager, request, 'call-1', 'revision one');
+    const oldPath = await fixture.manager.resolveReadablePath(request);
 
     await expect(
-      manager.ensureWritableResource(
-        resourceRequest('session-a', 'file-1', join(workspaceRoot, 'different.xlsx')),
+      fixture.manager.executeMutation(
+        mutationRequest(request, 'call-fail'),
+        async ({ stagingPath }) => {
+          await writeFile(stagingPath, 'partially written staging');
+          throw new Error('Gateway failed after changing staging.');
+        },
       ),
-    ).rejects.toBeInstanceOf(ExcelWorkingResourceSourceMismatchError);
+    ).rejects.toThrow('Gateway failed after changing staging.');
+
+    expect(await fixture.manager.resolveReadablePath(request)).toBe(oldPath);
+    expect((await fixture.store.get('session-a', 'file-1'))?.revision).toBe(1);
+    await expect(readFile(oldPath, 'utf8')).resolves.toBe('revision one');
+    await expect(readdir(resourcePath(fixture.workspaceRoot, 'session-a', 'file-1', 'staging')))
+      .resolves.toEqual([]);
   });
 
-  it('serializes concurrent first creation to one working file and metadata', async () => {
-    const { manager, sourcePath, workspaceRoot } = await createManager();
-    const request = resourceRequest('session-a', 'file-1', sourcePath);
-    const resources = await Promise.all([
-      manager.ensureWritableResource(request),
-      manager.ensureWritableResource(request),
-      manager.ensureWritableResource(request),
-    ]);
+  it('keeps the old pointer when candidate revision publication fails', async () => {
+    const fixture = await createFixture(PublishFailureStore);
+    const request = resourceRequest('session-a', 'file-1', fixture.sourcePath);
+    await writeMutation(fixture.manager, request, 'call-1', 'revision one');
+    const oldPath = await fixture.manager.resolveReadablePath(request);
+    fixture.store.failPublication = true;
 
-    expect(new Set(resources.map((resource) => resource.workingPath))).toHaveLength(1);
-    expect(new Set(resources.map((resource) => resource.revision))).toEqual(new Set([0]));
-    await expect(
-      readFile(join(workspaceRoot, 'session-a', 'resources', 'file-1', 'working.xlsx'), 'utf8'),
-    ).resolves.toBe('source workbook');
-  });
-
-  it('cleans stale staging and the known legacy initial-copy orphan before retrying', async () => {
-    const { manager, sourcePath, workspaceRoot } = await createManager();
-    const resourcesDirectory = join(workspaceRoot, 'session-a', 'resources');
-    const legacyDirectory = join(resourcesDirectory, 'file-1');
-    const staleDirectory = join(resourcesDirectory, '.creating-file-1-stale');
-    await mkdir(legacyDirectory, { recursive: true });
-    await writeFile(join(legacyDirectory, 'working.xlsx'), await readFile(sourcePath));
-    await mkdir(staleDirectory, { recursive: true });
-    await writeFile(join(staleDirectory, 'working.xlsx'), 'stale unpublished copy', 'utf8');
-
-    const resource = await manager.ensureWritableResource(
-      resourceRequest('session-a', 'file-1', sourcePath),
+    await expect(writeMutation(fixture.manager, request, 'call-2', 'revision two')).rejects.toThrow(
+      'candidate publish failure',
     );
-    const entries = await readdir(resourcesDirectory);
 
-    expect(entries).toEqual(['file-1']);
-    await expect(readFile(resource.workingPath, 'utf8')).resolves.toBe('source workbook');
-    await expect(readFile(join(legacyDirectory, 'metadata.json'), 'utf8')).resolves.toContain(
-      '"revision": 0',
+    expect(await fixture.manager.resolveReadablePath(request)).toBe(oldPath);
+    expect((await fixture.store.get('session-a', 'file-1'))?.revision).toBe(1);
+    await expect(readFile(oldPath, 'utf8')).resolves.toBe('revision one');
+  });
+
+  it('treats a published candidate as orphan until current.json is atomically replaced', async () => {
+    const fixture = await createFixture(PointerFailureStore);
+    const request = resourceRequest('session-a', 'file-1', fixture.sourcePath);
+    await writeMutation(fixture.manager, request, 'call-1', 'revision one');
+    const oldPath = await fixture.manager.resolveReadablePath(request);
+    fixture.store.failPointerReplacement = true;
+
+    await expect(writeMutation(fixture.manager, request, 'call-2', 'revision two')).rejects.toThrow(
+      'Unable to atomically commit Excel revision 2.',
     );
+
+    expect(await fixture.manager.resolveReadablePath(request)).toBe(oldPath);
+    expect((await fixture.store.get('session-a', 'file-1'))?.revision).toBe(1);
+    const revisionsPath = resourcePath(fixture.workspaceRoot, 'session-a', 'file-1', 'revisions');
+    const orphanName = (await readdir(revisionsPath)).find((name) => name.startsWith('revision-2-'));
+    expect(orphanName).toBeDefined();
+
+    await writeMutation(fixture.manager, request, 'call-3', 'revision three');
+    expect(await readdir(revisionsPath)).not.toContain(orphanName);
+    expect((await fixture.store.get('session-a', 'file-1'))?.revision).toBe(2);
   });
 
-  it('refuses to delete a legacy orphan whose contents differ from the source', async () => {
-    const { manager, sourcePath, workspaceRoot } = await createManager();
-    const resourcesDirectory = join(workspaceRoot, 'session-a', 'resources');
-    const legacyDirectory = join(resourcesDirectory, 'file-1');
-    const workingPath = join(legacyDirectory, 'working.xlsx');
-    await mkdir(legacyDirectory, { recursive: true });
-    await writeFile(workingPath, 'user changes', 'utf8');
-
-    await expect(
-      manager.ensureWritableResource(resourceRequest('session-a', 'file-1', sourcePath)),
-    ).rejects.toThrow(/legacy working\.xlsx differs from sourcePath/);
-    await expect(readFile(workingPath, 'utf8')).resolves.toBe('user changes');
-    await expect(readdir(resourcesDirectory)).resolves.toEqual(['file-1']);
-  });
-
-  it('removes staging after an abort following a successful copy and allows retry', async () => {
-    const { sourcePath, workspaceRoot } = await createManager();
-    const store = new FileSystemExcelWorkingResourceStore(workspaceRoot);
-    const controller = new AbortController();
-    let signalReads = 0;
-    const abortingRequest = {
-      sessionId: 'session-a',
-      sourceResourceId: 'file-1',
-      sourcePath,
-      get signal(): AbortSignal {
-        signalReads += 1;
-        if (signalReads === 3) controller.abort();
-        return controller.signal;
+  it('replays the same mutationId without calling the writer or advancing revision', async () => {
+    const fixture = await createFixture();
+    const request = resourceRequest('session-a', 'file-1', fixture.sourcePath);
+    let callbackCount = 0;
+    const first = await fixture.manager.executeMutation(
+      mutationRequest(request, 'call-1'),
+      async ({ stagingPath }) => {
+        callbackCount += 1;
+        await writeFile(stagingPath, 'revision one');
+        return { sheetName: 'Sales', range: 'D1:D2', message: 'Data written to Sales' };
       },
-    };
-
-    await expect(store.initializeWorkingResource(abortingRequest)).rejects.toThrow();
-    const resourcesDirectory = join(workspaceRoot, 'session-a', 'resources');
-    const entries = await readdir(resourcesDirectory);
-    expect(entries).toEqual([]);
-
-    const manager = new ExcelWorkingResourceManager({ store, fileOperator: store });
-    await expect(
-      manager.ensureWritableResource(resourceRequest('session-a', 'file-1', sourcePath)),
-    ).resolves.toMatchObject({ revision: 0 });
-  });
-
-  it('cleans staging when metadata creation fails and allows a later initialization', async () => {
-    const { sourcePath, workspaceRoot } = await createManager();
-    const request = resourceRequest('session-a', 'file-1', sourcePath);
-    const failingStore = new MetadataWriteFailureStore(workspaceRoot);
-
-    await expect(failingStore.initializeWorkingResource(request)).rejects.toThrow(
-      'Unable to initialize Excel working resource',
     );
-    await expect(readdir(join(workspaceRoot, 'session-a', 'resources'))).resolves.toEqual([]);
-
-    const store = new FileSystemExcelWorkingResourceStore(workspaceRoot);
-    const manager = new ExcelWorkingResourceManager({ store, fileOperator: store });
-    await expect(manager.ensureWritableResource(request)).resolves.toMatchObject({ revision: 0 });
-  });
-
-  it('cleans staging when publication fails after metadata is ready', async () => {
-    const { sourcePath, workspaceRoot } = await createManager();
-    const request = resourceRequest('session-a', 'file-1', sourcePath);
-    const failingStore = new PublishFailureStore(workspaceRoot);
-
-    await expect(failingStore.initializeWorkingResource(request)).rejects.toThrow(
-      'Unable to initialize Excel working resource',
+    const replay = await fixture.manager.executeMutation(
+      mutationRequest(request, 'call-1'),
+      async () => {
+        callbackCount += 1;
+        return { sheetName: 'Wrong', range: 'A1', message: 'must not happen' };
+      },
     );
-    await expect(readdir(join(workspaceRoot, 'session-a', 'resources'))).resolves.toEqual([]);
 
-    const store = new FileSystemExcelWorkingResourceStore(workspaceRoot);
-    const manager = new ExcelWorkingResourceManager({ store, fileOperator: store });
-    await expect(manager.ensureWritableResource(request)).resolves.toMatchObject({ revision: 0 });
+    expect(callbackCount).toBe(1);
+    expect(first).toMatchObject({ resource: { revision: 1 }, replayed: false });
+    expect(replay).toEqual({ ...first, replayed: true });
+    expect(await fixture.store.getMutationReceipt('session-a', 'file-1', 'call-1')).toEqual({
+      revision: 1,
+      receipt: { sheetName: 'Sales', range: 'D1:D2', message: 'Data written to Sales' },
+    });
   });
 
-  it('returns null for missing metadata and rejects metadata path tampering', async () => {
-    const { manager, sourcePath, workspaceRoot } = await createManager();
-    const store = new FileSystemExcelWorkingResourceStore(workspaceRoot);
-    await expect(store.get('session-a', 'file-1')).resolves.toBeNull();
-    const resource = await manager.ensureWritableResource(
-      resourceRequest('session-a', 'file-1', sourcePath),
-    );
-    const metadataPath = join(workspaceRoot, 'session-a', 'resources', 'file-1', 'metadata.json');
-    const metadata = JSON.parse(await readFile(metadataPath, 'utf8')) as Record<string, unknown>;
-    metadata.workingPath = join(workspaceRoot, '..', 'outside.xlsx');
-    await writeFile(metadataPath, `${JSON.stringify(metadata)}\n`, 'utf8');
+  it('commits different callIds as consecutive revisions and retains a bounded file window', async () => {
+    const fixture = await createFixture();
+    const request = resourceRequest('session-a', 'file-1', fixture.sourcePath);
+    let lastResult;
 
-    await expect(store.get('session-a', 'file-1')).rejects.toThrow(ExcelWorkingResourceStoreError);
-    expect(resource.workingPath).toContain(join('session-a', 'resources', 'file-1'));
-    await expect(store.get('../outside', 'file-1')).rejects.toThrow(/cannot escape workspaceRoot/);
-  });
-
-  it('ignores ENOENT but propagates other errors from cleanup helpers', async () => {
-    const cleanupHelpers = [removeTemporaryFile, removeDirectoryIfPresent];
-    for (const cleanup of cleanupHelpers) {
-      await expect(
-        cleanup('missing', async () => {
-          throw filesystemError('ENOENT');
-        }),
-      ).resolves.toBeUndefined();
-
-      const error = filesystemError('EACCES');
-      await expect(
-        cleanup('blocked', async () => {
-          throw error;
-        }),
-      ).rejects.toBe(error);
+    for (let revision = 0; revision <= MAX_EXCEL_WORKING_RESOURCE_MUTATION_RECEIPTS; revision += 1) {
+      lastResult = await writeMutation(
+        fixture.manager,
+        request,
+        `call-${revision}`,
+        `revision ${revision}`,
+      );
     }
+
+    expect(lastResult?.resource.revision).toBe(MAX_EXCEL_WORKING_RESOURCE_MUTATION_RECEIPTS + 1);
+    const revisions = await readdir(resourcePath(fixture.workspaceRoot, 'session-a', 'file-1', 'revisions'));
+    expect(revisions.filter((name) => name.endsWith('.xlsx'))).toHaveLength(2);
+    const manifest = JSON.parse(
+      await readFile(resourcePath(fixture.workspaceRoot, 'session-a', 'file-1', 'current.json'), 'utf8'),
+    ) as { readonly committedMutations: readonly unknown[] };
+    expect(manifest.committedMutations).toHaveLength(MAX_EXCEL_WORKING_RESOURCE_MUTATION_RECEIPTS);
+    expect(await fixture.store.getMutationReceipt('session-a', 'file-1', 'call-0')).toBeNull();
+    expect(
+      await fixture.store.getMutationReceipt(
+        'session-a',
+        'file-1',
+        `call-${MAX_EXCEL_WORKING_RESOURCE_MUTATION_RECEIPTS}`,
+      ),
+    ).not.toBeNull();
+  });
+
+  it('serves the old committed path while a new mutation is still staging', async () => {
+    const fixture = await createFixture();
+    const request = resourceRequest('session-a', 'file-1', fixture.sourcePath);
+    await writeMutation(fixture.manager, request, 'call-1', 'revision one');
+    const oldPath = await fixture.manager.resolveReadablePath(request);
+    const stagingStarted = deferred();
+    const releaseStaging = deferred();
+
+    const pending = fixture.manager.executeMutation(
+      mutationRequest(request, 'call-2'),
+      async ({ stagingPath }) => {
+        await writeFile(stagingPath, 'revision two');
+        stagingStarted.resolve();
+        await releaseStaging.promise;
+        return { value: 'revision two' };
+      },
+    );
+    await stagingStarted.promise;
+    expect(await fixture.manager.resolveReadablePath(request)).toBe(oldPath);
+    await expect(readFile(oldPath, 'utf8')).resolves.toBe('revision one');
+    releaseStaging.resolve();
+    await pending;
+    expect(await fixture.manager.resolveReadablePath(request)).not.toBe(oldPath);
+  });
+
+  it('serializes same-resource mutations through callback and pointer commit', async () => {
+    const fixture = await createFixture();
+    const request = resourceRequest('session-a', 'file-1', fixture.sourcePath);
+    const firstStarted = deferred();
+    const releaseFirst = deferred();
+    let secondStarted = false;
+    const first = fixture.manager.executeMutation(
+      mutationRequest(request, 'call-1'),
+      async ({ stagingPath }) => {
+        await writeFile(stagingPath, 'revision one');
+        firstStarted.resolve();
+        await releaseFirst.promise;
+        return { value: 'one' };
+      },
+    );
+    await firstStarted.promise;
+    const second = fixture.manager.executeMutation(
+      mutationRequest(request, 'call-2'),
+      async ({ stagingPath, baseRevision }) => {
+        secondStarted = true;
+        expect(baseRevision).toBe(1);
+        await writeFile(stagingPath, 'revision two');
+        return { value: 'two' };
+      },
+    );
+    await Promise.resolve();
+    expect(secondStarted).toBe(false);
+    releaseFirst.resolve();
+    const results = await Promise.all([first, second]);
+    expect(results.map((result) => result.resource.revision)).toEqual([1, 2]);
+  });
+
+  it('lazily migrates legacy working.xlsx conservatively, including revision zero edits', async () => {
+    const fixture = await createFixture();
+    const request = resourceRequest('session-a', 'file-1', fixture.sourcePath);
+    const directory = resourcePath(fixture.workspaceRoot, 'session-a', 'file-1');
+    const legacyWorking = join(directory, 'working.xlsx');
+    await mkdir(directory, { recursive: true });
+    await writeFile(legacyWorking, 'legacy user changes', 'utf8');
+    await writeFile(
+      join(directory, 'metadata.json'),
+      JSON.stringify({
+        version: 1,
+        sessionId: request.sessionId,
+        sourceResourceId: request.sourceResourceId,
+        sourcePath: request.sourcePath,
+        workingPath: legacyWorking,
+        revision: 0,
+      }),
+      'utf8',
+    );
+
+    const migratedPath = await fixture.manager.resolveReadablePath(request);
+    const migrated = await fixture.store.get('session-a', 'file-1');
+    expect(migrated).toMatchObject({ revision: 0, sourcePath: fixture.sourcePath, workingPath: migratedPath });
+    await expect(readFile(migratedPath, 'utf8')).resolves.toBe('legacy user changes');
+    expect(migratedPath).toContain(join('revisions', 'revision-0-'));
+
+    const next = await writeMutation(fixture.manager, request, 'call-after-legacy', 'revision one');
+    expect(next.resource.revision).toBe(1);
+    await expect(readFile(fixture.sourcePath, 'utf8')).resolves.toBe('source workbook');
+  });
+
+  it('fails fast if current.json references a missing or unsafe revision file', async () => {
+    const fixture = await createFixture();
+    const request = resourceRequest('session-a', 'file-1', fixture.sourcePath);
+    const first = await writeMutation(fixture.manager, request, 'call-1', 'revision one');
+    const currentPath = resourcePath(fixture.workspaceRoot, 'session-a', 'file-1', 'current.json');
+    const manifest = JSON.parse(await readFile(currentPath, 'utf8')) as Record<string, unknown>;
+
+    await rm(first.resource.workingPath);
+    await expect(fixture.manager.resolveReadablePath(request)).rejects.toThrow(/does not exist/);
+    manifest.file = '../outside.xlsx';
+    await writeFile(currentPath, JSON.stringify(manifest), 'utf8');
+    await expect(fixture.manager.resolveReadablePath(request)).rejects.toThrow(ExcelWorkingResourceStoreError);
+  });
+
+  it('rejects a changed source identity', async () => {
+    const fixture = await createFixture();
+    const request = resourceRequest('session-a', 'file-1', fixture.sourcePath);
+    await writeMutation(fixture.manager, request, 'call-1', 'revision one');
+
+    await expect(
+      fixture.manager.resolveReadablePath({ ...request, sourcePath: join(fixture.root, 'other.xlsx') }),
+    ).rejects.toBeInstanceOf(ExcelWorkingResourceSourceMismatchError);
   });
 });
 
-async function createManager(): Promise<{
-  readonly manager: ExcelWorkingResourceManager;
+class PublishFailureStore extends FileSystemExcelWorkingResourceStore {
+  public failPublication = false;
+
+  protected override async publishRevision(stagingPath: string, candidatePath: string): Promise<void> {
+    if (this.failPublication) {
+      this.failPublication = false;
+      throw new Error('candidate publish failure');
+    }
+    await super.publishRevision(stagingPath, candidatePath);
+  }
+}
+
+class PointerFailureStore extends FileSystemExcelWorkingResourceStore {
+  public failPointerReplacement = false;
+
+  protected override async replaceCurrentPointer(
+    temporaryPath: string,
+    currentPath: string,
+  ): Promise<void> {
+    if (this.failPointerReplacement) {
+      this.failPointerReplacement = false;
+      throw new Error('pointer replacement failure');
+    }
+    await super.replaceCurrentPointer(temporaryPath, currentPath);
+  }
+}
+
+async function createFixture<TStore extends FileSystemExcelWorkingResourceStore>(
+  StoreType: new (workspaceRoot: string) => TStore = FileSystemExcelWorkingResourceStore as new (
+    workspaceRoot: string,
+  ) => TStore,
+): Promise<{
+  readonly root: string;
   readonly sourcePath: string;
   readonly workspaceRoot: string;
+  readonly store: TStore;
+  readonly manager: ExcelWorkingResourceManager;
 }> {
   const root = await mkdtemp(join(tmpdir(), 'opspilot-excel-working-resource-'));
   directories.push(root);
   const sourcePath = join(root, 'source.xlsx');
   const workspaceRoot = join(root, 'workspaces');
   await writeFile(sourcePath, 'source workbook', 'utf8');
-  const store = new FileSystemExcelWorkingResourceStore(workspaceRoot);
+  const store = new StoreType(workspaceRoot);
   return {
-    manager: new ExcelWorkingResourceManager({ store, fileOperator: store }),
+    root,
     sourcePath,
     workspaceRoot,
+    store,
+    manager: new ExcelWorkingResourceManager({ store, fileOperator: store }),
   };
+}
+
+async function writeMutation(
+  manager: ExcelWorkingResourceManager,
+  request: ExcelWorkingResourceRequest,
+  mutationId: string,
+  content: string,
+) {
+  return await manager.executeMutation(mutationRequest(request, mutationId), async ({ stagingPath }) => {
+    await writeFile(stagingPath, content, 'utf8');
+    return { value: content };
+  });
 }
 
 function resourceRequest(
   sessionId: string,
   sourceResourceId: string,
   sourcePath: string,
-): { readonly sessionId: string; readonly sourceResourceId: string; readonly sourcePath: string } {
+): ExcelWorkingResourceRequest {
   return { sessionId, sourceResourceId, sourcePath };
 }
 
-function filesystemError(code: string): NodeJS.ErrnoException {
-  return Object.assign(new Error(code), { code });
+function mutationRequest(
+  request: ExcelWorkingResourceRequest,
+  mutationId: string,
+): ExcelWorkingMutationRequest {
+  return { ...request, mutationId };
 }
 
-class MetadataWriteFailureStore extends FileSystemExcelWorkingResourceStore {
-  protected override async writeStagedMetadata(
-    _metadataPath: string,
-    _resource: ExcelWorkingResource,
-  ): Promise<void> {
-    throw new Error('metadata write failure');
-  }
+function resourcePath(
+  workspaceRoot: string,
+  sessionId: string,
+  sourceResourceId: string,
+  ...segments: string[]
+): string {
+  return join(workspaceRoot, sessionId, 'resources', sourceResourceId, ...segments);
 }
 
-class PublishFailureStore extends FileSystemExcelWorkingResourceStore {
-  protected override async publishStagingDirectory(
-    _stagingDirectory: string,
-    _finalDirectory: string,
-    _input: ExcelWorkingResourceRequest,
-  ): Promise<void> {
-    throw new Error('publish failure');
-  }
+function deferred(): { readonly promise: Promise<void>; resolve(): void } {
+  let resolvePromise!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: resolvePromise };
 }

@@ -34,10 +34,7 @@ const WRITE_DATA_PARAMETERS: JsonObject = {
 };
 
 type JsonNativeExcelScalar = string | number | boolean | null;
-type ExcelWorkingResourceMutationManager = Pick<
-  ExcelWorkingResourceManager,
-  'ensureWritableResource' | 'markModified'
->;
+type ExcelWorkingResourceMutationManager = Pick<ExcelWorkingResourceManager, 'executeMutation'>;
 
 interface WriteDataToolArguments {
   readonly resource?: string;
@@ -46,7 +43,7 @@ interface WriteDataToolArguments {
   readonly data: readonly (readonly JsonNativeExcelScalar[])[];
 }
 
-/** Creates the Application Tool that writes tabular data to a Session-owned working copy. */
+/** Creates the Application Tool that atomically writes tabular data to a Session-owned workbook. */
 export function createWriteDataTool(
   dataConnector: ExcelDataConnector,
   workingResourceManager: ExcelWorkingResourceMutationManager,
@@ -55,25 +52,26 @@ export function createWriteDataTool(
     name: 'write_data',
     description: 'Write structured tabular data into the selected Excel worksheet.',
     parameters: WRITE_DATA_PARAMETERS,
-    recoveryPolicy: 'manual',
+    recoveryPolicy: 'retry_safe',
     requiresExcelResource: true,
-    async execute(_callId, args, signal, context) {
+    async execute(callId, args, signal, context) {
       const { resource, sheetName, startCell, data } = narrowWriteDataArguments(args);
       const excelResource = resolveExcelResource(context, resource);
       const request = createExcelWorkingResourceRequest(context, excelResource, signal);
-      const workingResource = await workingResourceManager.ensureWritableResource(request);
-      const result = await dataConnector.writeData(
-        {
-          filePath: workingResource.workingPath,
-          data,
-          ...(sheetName === undefined ? {} : { sheetName }),
-          ...(startCell === undefined ? {} : { startCell }),
-        },
-        signal,
+      const mutation = await workingResourceManager.executeMutation(
+        { ...request, mutationId: callId },
+        async ({ stagingPath }) =>
+          await dataConnector.writeData(
+            {
+              filePath: stagingPath,
+              data,
+              ...(sheetName === undefined ? {} : { sheetName }),
+              ...(startCell === undefined ? {} : { startCell }),
+            },
+            signal,
+          ),
       );
-
-      //throwIfAborted(signal);
-      await workingResourceManager.markModified(request);
+      const result = narrowWriteDataReceipt(mutation.receipt);
 
       return {
         content: [{ type: 'text', text: formatWriteDataResult(result) }],
@@ -149,11 +147,25 @@ function isJsonNativeExcelScalar(value: unknown): value is JsonNativeExcelScalar
   );
 }
 
-/** Prevents revision advancement when the call was cancelled during Gateway execution. */
-function throwIfAborted(signal: AbortSignal | undefined): void {
-  if (signal?.aborted) {
-    throw signal.reason ?? new Error('write_data was aborted.');
+/** Narrows the durable opaque receipt back to the current write_data result contract. */
+function narrowWriteDataReceipt(value: unknown): WriteDataResult {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    !('sheetName' in value) ||
+    !('range' in value) ||
+    !('message' in value) ||
+    typeof value.sheetName !== 'string' ||
+    typeof value.range !== 'string' ||
+    typeof value.message !== 'string'
+  ) {
+    throw new TypeError('Persisted write_data receipt is invalid.');
   }
+  return {
+    sheetName: value.sheetName,
+    range: value.range,
+    message: value.message,
+  };
 }
 
 /** Formats the successful Gateway result without including internal resource paths. */

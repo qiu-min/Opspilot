@@ -14,3 +14,28 @@ export interface ExcelWorkingResourceRequest {
   readonly sourcePath: string;
   readonly signal?: AbortSignal;
 }
+
+/** Identifies one retryable mutation by the Agent Runtime Tool call that owns it. */
+export interface ExcelWorkingMutationRequest extends ExcelWorkingResourceRequest {
+  readonly mutationId: string;
+}
+
+/** Filesystem-independent details needed while a caller mutates a private staged workbook. */
+export interface ExcelWorkingMutationContext {
+  readonly stagingPath: string;
+  readonly baseRevision: number;
+  readonly targetRevision: number;
+}
+
+/** Durable result for one committed or replayed mutation. */
+export interface ExcelWorkingMutationResult {
+  readonly resource: ExcelWorkingResource;
+  readonly receipt: unknown;
+  readonly replayed: boolean;
+}
+
+/** Persisted receipt metadata returned by the resource store when a callId was committed. */
+export interface ExcelWorkingMutationReceiptRecord {
+  readonly revision: number;
+  readonly receipt: unknown;
+}

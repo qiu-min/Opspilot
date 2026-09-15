@@ -1,8 +1,10 @@
 export {
-  CURRENT_EXCEL_WORKING_RESOURCE_METADATA_VERSION,
+  CURRENT_EXCEL_WORKING_RESOURCE_MANIFEST_VERSION,
+  MAX_EXCEL_WORKING_RESOURCE_MUTATION_RECEIPTS,
   ExcelWorkingResourceStoreError,
   FileSystemExcelWorkingResourceStore,
-  type ExcelWorkingResourceMetadataRecord,
+  type ExcelWorkingResourceManifestRecord,
+  type ExcelWorkingResourceMutationRecord,
 } from './filesystem-excel-working-resource-store.js';
 export {
   CURRENT_EXCEL_SOURCE_RESOURCE_VERSION,
