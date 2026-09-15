@@ -109,6 +109,34 @@ describe('buildOpsPilotSystemPrompt', () => {
     expect(prompt).toContain('Do not retrieve an entire large worksheet');
   });
 
+  it('guides targeted range reads only when read_range is available', () => {
+    const prompt = buildOpsPilotSystemPrompt({
+      tools: [fakeTool('aggregate_data'), fakeTool('filter_data'), fakeTool('read_range')],
+    });
+    const withoutReadRange = buildOpsPilotSystemPrompt({
+      tools: [fakeTool('aggregate_data'), fakeTool('filter_data')],
+    });
+
+    expect(prompt).toContain(
+      'Use read_range only for a specific small range when exact cell values are needed.',
+    );
+    expect(prompt).toContain(
+      'Prefer aggregate_data or filter_data for large worksheet analysis, then use read_range for targeted details.',
+    );
+    expect(prompt).toContain(
+      'After filter_data identifies matching row ranges, use read_range on a small relevant range when exact row values are needed.',
+    );
+    expect(withoutReadRange).not.toContain('read_range');
+
+    const aggregateOnlyPrompt = buildOpsPilotSystemPrompt({
+      tools: [fakeTool('aggregate_data'), fakeTool('read_range')],
+    });
+    expect(aggregateOnlyPrompt).toContain(
+      'Prefer aggregate_data for large worksheet analysis, then use read_range for targeted details.',
+    );
+    expect(aggregateOnlyPrompt).not.toContain('filter_data');
+  });
+
   it('mentions only registered workbook discovery tools', () => {
     const profilePrompt = buildOpsPilotSystemPrompt({ tools: [fakeTool('get_sheet_profile')] });
     const workbookPrompt = buildOpsPilotSystemPrompt({ tools: [fakeTool('get_workbook_info')] });

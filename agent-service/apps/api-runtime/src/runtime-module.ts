@@ -4,6 +4,7 @@ import {
   createGetWorkbookInfoTool,
   createAggregateDataTool,
   createFilterDataTool,
+  createReadRangeTool,
   createWriteDataTool,
   buildOpsPilotSystemPrompt,
   createExcelToolPresentationResolver,
@@ -58,6 +59,7 @@ export function createExcelToolDefinitions(
     createGetSheetProfileTool(excelDiscoveryConnector, workingResourceManager),
     createAggregateDataTool(excelAggregateConnector, workingResourceManager),
     createFilterDataTool(excelFilterConnector, workingResourceManager),
+    createReadRangeTool(excelDataConnector, workingResourceManager),
     createWriteDataTool(excelDataConnector, workingResourceManager),
   ];
 }

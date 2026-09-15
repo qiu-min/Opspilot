@@ -18,7 +18,7 @@ const testProviderId = 'test-provider';
 const testModelId = 'test-model';
 
 describe('API runtime composition root', () => {
-  it('creates the Excel discovery, analysis, and write tools in workflow order', () => {
+  it('creates the Excel discovery, analysis, detail-read, and write tools in workflow order', () => {
     const tools = createExcelToolDefinitions({
       resolveReadablePath: async (request) => request.sourcePath,
       executeMutation: async (request, mutate) => ({
@@ -43,9 +43,10 @@ describe('API runtime composition root', () => {
       'get_sheet_profile',
       'aggregate_data',
       'filter_data',
+      'read_range',
       'write_data',
     ]);
-    expect(tools).toHaveLength(5);
+    expect(tools).toHaveLength(6);
     expect(tools[0]?.parameters).toEqual({
       type: 'object',
       properties: {
@@ -86,6 +87,17 @@ describe('API runtime composition root', () => {
     });
     expect(tools[4]?.recoveryPolicy).toBe('retry_safe');
     expect(tools[4]?.parameters).toMatchObject({
+      type: 'object',
+      properties: {
+        resource: expect.any(Object),
+        sheetName: expect.any(Object),
+        range: expect.any(Object),
+      },
+      required: ['sheetName', 'range'],
+      additionalProperties: false,
+    });
+    expect(tools[5]?.recoveryPolicy).toBe('retry_safe');
+    expect(tools[5]?.parameters).toMatchObject({
       type: 'object',
       properties: {
         resource: expect.any(Object),

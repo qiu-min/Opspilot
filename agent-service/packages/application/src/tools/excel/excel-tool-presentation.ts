@@ -45,6 +45,17 @@ function resolveExcelToolPresentation(
         detail: `Conditions: ${Array.isArray(conditions) ? conditions.length : 0}`,
       };
     }
+    case 'read_range': {
+      const sheetName = readNonEmptyString(context.arguments.sheetName);
+      const range = readNonEmptyString(context.arguments.range);
+      return {
+        title: 'Read Excel range',
+        ...(sheetName === undefined
+          ? {}
+          : { subject: range === undefined ? sheetName : `${sheetName} · ${range}` }),
+        ...(sheetName === undefined && range !== undefined ? { detail: range } : {}),
+      };
+    }
     case 'write_data': {
       const sheetName = readNonEmptyString(context.arguments.sheetName);
       const startCell = readNonEmptyString(context.arguments.startCell);

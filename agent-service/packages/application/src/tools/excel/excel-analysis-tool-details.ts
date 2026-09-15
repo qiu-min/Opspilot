@@ -5,6 +5,21 @@ import type {
   FilterRowRange,
 } from '@opspilot/tool-gateway';
 
+/** JSON-friendly Excel cell value stored by the bounded read_range Application Tool. */
+export type ReadRangeToolCellValue = string | number | boolean | null;
+
+/** Bounded, rectangular range output returned by read_range and persisted in the Session. */
+export interface ReadRangeToolDetails {
+  readonly sheetName: string;
+  readonly range: string;
+  readonly rowCount: number;
+  readonly columnCount: number;
+  readonly cellCount: number;
+  readonly values: readonly (readonly ReadRangeToolCellValue[])[];
+  /** Cells whose details or model-visible string representation was truncated. */
+  readonly truncatedCellValueCount: number;
+}
+
 /** Bounded aggregate output returned by the Application Tool and persisted in the Session. */
 export interface AggregateDataToolDetails {
   readonly sheetName: string;

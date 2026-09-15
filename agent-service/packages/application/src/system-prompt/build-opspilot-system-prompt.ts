@@ -16,6 +16,10 @@ const WORKBOOK_GROUNDING_GUIDELINE =
   'When workbook-specific facts are required, inspect the workbook before answering.';
 const WRITE_DATA_GUIDELINE =
   'Use write_data to write structured tabular data into the selected Excel resource.';
+const READ_RANGE_GUIDELINE =
+  'Use read_range only for a specific small range when exact cell values are needed.';
+const FILTERED_RANGE_DETAIL_GUIDELINE =
+  'After filter_data identifies matching row ranges, use read_range on a small relevant range when exact row values are needed.';
 const LARGE_WORKSHEET_ANALYSIS_GUIDELINE =
   'Do not retrieve an entire large worksheet just to calculate totals, averages, counts, min/max, grouping, or filtering.';
 
@@ -68,10 +72,24 @@ export function buildOpsPilotSystemPrompt(options: BuildOpsPilotSystemPromptOpti
   const hasAggregateData = toolNames.has('aggregate_data');
   const hasFilterData = toolNames.has('filter_data');
   if (hasAggregateData) {
-    addGuideline('For calculations over many rows, prefer aggregate_data instead of reading raw rows.');
+    addGuideline(
+      'For calculations over many rows, prefer aggregate_data instead of reading raw rows.',
+    );
   }
   if (hasFilterData) addGuideline('Use filter_data to locate rows matching structured conditions.');
   if (hasAggregateData || hasFilterData) addGuideline(LARGE_WORKSHEET_ANALYSIS_GUIDELINE);
+  const hasReadRange = toolNames.has('read_range');
+  if (hasReadRange) addGuideline(READ_RANGE_GUIDELINE);
+  if (hasReadRange && (hasAggregateData || hasFilterData)) {
+    const largeDataTools = [
+      ...(hasAggregateData ? ['aggregate_data'] : []),
+      ...(hasFilterData ? ['filter_data'] : []),
+    ];
+    addGuideline(
+      `Prefer ${largeDataTools.join(' or ')} for large worksheet analysis, then use read_range for targeted details.`,
+    );
+  }
+  if (hasReadRange && hasFilterData) addGuideline(FILTERED_RANGE_DETAIL_GUIDELINE);
 
   for (const guideline of options.additionalGuidelines ?? []) {
     addGuideline(guideline);

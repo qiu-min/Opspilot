@@ -28,6 +28,7 @@ import {
   createGetWorkbookInfoTool,
   createAggregateDataTool,
   createFilterDataTool,
+  createReadRangeTool,
   createWriteDataTool,
   ExcelWorkingResourceManager,
   ExecuteTurn,
@@ -70,7 +71,7 @@ afterEach(async () => {
 });
 
 describe('Application Excel discovery Turn integration', () => {
-  it('runs profile, aggregate, and filter against the committed revision without another mutation', async () => {
+  it('runs profile, aggregate, filter, and range reads against the committed revision', async () => {
     const { filePath, sessionDirectory } = await createSalesFixture();
     const sourceBefore = await readFile(filePath);
     const writeCall: ModelToolCall = {
@@ -102,6 +103,11 @@ describe('Application Excel discovery Turn integration', () => {
         conditions: [{ column: 'Sales', operator: 'greaterThan', value: 100 }],
       },
     };
+    const readRangeCall: ModelToolCall = {
+      callId: 'read-analysis-details',
+      name: 'read_range',
+      arguments: { resource: 'excel-1', sheetName: 'Sales', range: 'A1:D2' },
+    };
     const harness = createExcelTurnHarness(
       sessionDirectory,
       join(dirname(filePath), 'workspaces'),
@@ -111,6 +117,7 @@ describe('Application Excel discovery Turn integration', () => {
         assistantMessage('', [profileCall]),
         assistantMessage('', [aggregateCall]),
         assistantMessage('', [filterCall]),
+        assistantMessage('', [readRangeCall]),
         assistantMessage('North totals 400 and South totals 250; two rows exceed 100.'),
       ],
       true,
@@ -119,6 +126,7 @@ describe('Application Excel discovery Turn integration', () => {
     const getSheetProfile = vi.spyOn(harness.discoveryConnector, 'getSheetProfile');
     const aggregateData = vi.spyOn(harness.aggregateConnector, 'aggregateData');
     const filterData = vi.spyOn(harness.filterConnector, 'filterData');
+    const readRange = vi.spyOn(harness.dataConnector, 'readRange');
 
     const prepared = await harness.runner.execute({
       message: userMessage('Prepare an analysis working copy.'),
@@ -159,8 +167,17 @@ describe('Application Excel discovery Turn integration', () => {
       }),
       expect.any(AbortSignal),
     );
+    expect(readRange).toHaveBeenCalledWith(
+      {
+        filePath: committed!.workingPath,
+        sheetName: 'Sales',
+        range: 'A1:D2',
+      },
+      expect.any(AbortSignal),
+    );
     expect(aggregateData.mock.calls[0]?.[0].filePath).toBe(committed!.workingPath);
     expect(filterData.mock.calls[0]?.[0].filePath).toBe(committed!.workingPath);
+    expect(readRange.mock.calls[0]?.[0].filePath).toBe(committed!.workingPath);
     expect(executeMutation).toHaveBeenCalledTimes(mutationCountAfterWrite);
     expect(await harness.workingResourceStore.get(prepared.sessionId, 'fixture-workbook')).toEqual(
       committed,
@@ -192,10 +209,23 @@ describe('Application Excel discovery Turn integration', () => {
       truncated: false,
       matchedRanges: [{ startRow: 3, endRow: 4 }],
     });
-    expect(persistedToolResults.map((message) => message.name).slice(-3)).toEqual([
+    expect(findToolResultByName(persistedToolResults, 'read_range').details).toMatchObject({
+      sheetName: 'Sales',
+      range: 'A1:D2',
+      rowCount: 2,
+      columnCount: 4,
+      cellCount: 8,
+      values: [
+        ['Region', 'Product', 'Sales', 'Note'],
+        ['North', 'A', 100, 'Working copy'],
+      ],
+      truncatedCellValueCount: 0,
+    });
+    expect(persistedToolResults.map((message) => message.name).slice(-4)).toEqual([
       'get_sheet_profile',
       'aggregate_data',
       'filter_data',
+      'read_range',
     ]);
     expect(analyzed.messages.some((message) => message.role === 'tool')).toBe(true);
     expect(new FileSystemTurnStore(sessionDirectory).load(analyzed.turnId).getState().status).toBe(
@@ -978,6 +1008,7 @@ function createExcelTurnHarness(
         ? [
             createAggregateDataTool(aggregateConnector, workingResourceManager),
             createFilterDataTool(filterConnector, workingResourceManager),
+            createReadRangeTool(dataConnector, workingResourceManager),
           ]
         : []),
       createWriteDataTool(dataConnector, workingResourceManager),

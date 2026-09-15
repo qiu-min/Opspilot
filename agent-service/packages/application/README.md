@@ -109,6 +109,12 @@ source）。聚合结果最多向模型和 Session ToolResult 暴露前 100 行�
 `matchedRowCount`、完整 range 数 `totalRangeCount`、实际返回数 `returnedRangeCount` 和
 `truncated`。两者均使用 `retry_safe`，且不会创建新 revision；Tool Gateway 的结果仍保持完整语义。
 
+`read_range` 仅接受必填的显式 A1 cell/range，并在调用 Tool Gateway 前限制请求最多 500 个单元格；它通过
+`resolveReadablePath()` 读取当前 Session 可见的 source 或 committed Working Resource。Gateway 返回值必须为
+矩形且不超过请求上限，否则读取失败，不会截断矩阵。Application details 将复杂 Excel 值投影为 JSON-safe
+字符串，并将单个字符串表示限制为 2,000 个字符；details 和模型可见文本都会报告被截断的单元格数。该工具
+使用 `retry_safe`，不会创建 revision，适合在分析或筛选后读取少量精确单元格。
+
 当前范围暂不包含动态切换模型或 thinking level、复杂重试、扩展系统和 Session 切换等 Coding Agent 能力。
 
 ## 模块布局

@@ -35,6 +35,12 @@ describe('Excel tool presentation resolver', () => {
       detail: 'Conditions: 2',
     });
     expect(
+      resolve({ name: 'read_range', arguments: { sheetName: 'Sales', range: 'A20:D30' } }),
+    ).toEqual({
+      title: 'Read Excel range',
+      subject: 'Sales · A20:D30',
+    });
+    expect(
       resolve({ name: 'write_data', arguments: { sheetName: 'Sheet1', startCell: 'B2' } }),
     ).toEqual({
       title: 'Write Excel data',
@@ -62,6 +68,15 @@ describe('Excel tool presentation resolver', () => {
       title: 'Write Excel data',
       subject: 'Sheet1',
       detail: 'Starting at B2',
+    });
+    expect(
+      resolve({
+        name: 'read_range',
+        arguments: { sheetName: 'Sales', range: 'A1:B5', filePath: 'C:/secret.xlsx' },
+      }),
+    ).toEqual({
+      title: 'Read Excel range',
+      subject: 'Sales · A1:B5',
     });
     expect(resolve({ name: 'unknown_tool', arguments: {} })).toBeUndefined();
   });
