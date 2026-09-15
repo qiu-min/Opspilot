@@ -15,6 +15,7 @@ import {
   type ModelExcelPredicate,
 } from './excel-query-arguments.js';
 import type { ToolDefinition } from '../tool-definition.js';
+import type { FilterDataToolDetails } from './excel-analysis-tool-details.js';
 
 const MAX_MODEL_VISIBLE_FILTER_RANGES = 100;
 
@@ -72,7 +73,7 @@ interface FilterDataToolArguments {
 export function createFilterDataTool(
   filterConnector: ExcelFilterConnector,
   workingResourceManager: ExcelWorkingResourcePathResolver,
-): ToolDefinition<FilterDataResult> {
+): ToolDefinition<FilterDataToolDetails> {
   return {
     name: 'filter_data',
     description: 'Find Excel rows matching structured conditions and return their row ranges.',
@@ -95,11 +96,11 @@ export function createFilterDataTool(
         },
         signal,
       );
-      const boundedResult = boundFilterResult(result);
+      const details = toFilterDataToolDetails(result);
 
       return {
-        content: [{ type: 'text', text: formatFilterResult(result) }],
-        details: boundedResult,
+        content: [{ type: 'text', text: formatFilterResult(details) }],
+        details,
       };
     },
   };
@@ -121,29 +122,35 @@ function narrowArguments(args: JsonObject): FilterDataToolArguments {
   };
 }
 
-/** Keeps persisted details within the same range limit used for model-visible content. */
-function boundFilterResult(result: FilterDataResult): FilterDataResult {
-  if (result.matchedRanges.length <= MAX_MODEL_VISIBLE_FILTER_RANGES) return result;
+/** Projects the complete Gateway result into bounded Application Tool details. */
+function toFilterDataToolDetails(result: FilterDataResult): FilterDataToolDetails {
+  const matchedRanges = result.matchedRanges.slice(0, MAX_MODEL_VISIBLE_FILTER_RANGES);
   return {
-    ...result,
-    matchedRanges: result.matchedRanges.slice(0, MAX_MODEL_VISIBLE_FILTER_RANGES),
+    sheetName: result.sheetName,
+    sourceRowCount: result.sourceRowCount,
+    matchedRowCount: result.matchedRowCount,
+    matchedRanges,
+    totalRangeCount: result.matchedRanges.length,
+    returnedRangeCount: matchedRanges.length,
+    truncated: matchedRanges.length < result.matchedRanges.length,
   };
 }
 
 /** Formats row counts and a bounded range list without worksheet cell contents. */
-function formatFilterResult(result: FilterDataResult): string {
+function formatFilterResult(result: FilterDataToolDetails): string {
   const lines = [
     `sheetName: ${result.sheetName}`,
     `sourceRowCount: ${result.sourceRowCount}`,
     `matchedRowCount: ${result.matchedRowCount}`,
+    `totalRangeCount: ${result.totalRangeCount}`,
+    `returnedRangeCount: ${result.returnedRangeCount}`,
     'matchedRanges:',
     ...result.matchedRanges
-      .slice(0, MAX_MODEL_VISIBLE_FILTER_RANGES)
       .map((range) => `${range.startRow}-${range.endRow}`),
   ];
-  if (result.matchedRanges.length > MAX_MODEL_VISIBLE_FILTER_RANGES) {
+  if (result.truncated) {
     lines.push(
-      `Showing first ${MAX_MODEL_VISIBLE_FILTER_RANGES} of ${result.matchedRanges.length} matched ranges.`,
+      `Showing first ${result.returnedRangeCount} of ${result.totalRangeCount} matched ranges.`,
     );
   }
   return lines.join('\n');

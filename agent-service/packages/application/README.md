@@ -104,7 +104,10 @@ resource 契约，恢复扩展留待后续变更。
 `aggregate_data` 与 `filter_data` 是只读 Application Tools，沿用相同的资源 alias 解析和
 `resolveReadablePath()` 路径选择，因此始终分析当前 Session 的 committed Working Resource（或尚未修改时的
 source）。聚合结果最多向模型和 Session ToolResult 暴露前 100 行；筛选结果只返回行号范围，最多暴露前
-100 个范围。两者均使用 `retry_safe`，且不会创建新 revision。
+100 个范围。Application details 使用独立的 bounded contract：aggregate 同时记录完整
+`resultRowCount`、实际 `returnedRowCount` 和 `truncated`；filter 分别记录匹配行数
+`matchedRowCount`、完整 range 数 `totalRangeCount`、实际返回数 `returnedRangeCount` 和
+`truncated`。两者均使用 `retry_safe`，且不会创建新 revision；Tool Gateway 的结果仍保持完整语义。
 
 当前范围暂不包含动态切换模型或 thinking level、复杂重试、扩展系统和 Session 切换等 Coding Agent 能力。
 

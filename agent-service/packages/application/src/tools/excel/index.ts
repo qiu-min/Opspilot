@@ -3,6 +3,10 @@ export { createGetWorkbookInfoTool } from './get-workbook-info-tool.js';
 export { createWriteDataTool } from './write-data-tool.js';
 export { createAggregateDataTool } from './aggregate-data-tool.js';
 export { createFilterDataTool } from './filter-data-tool.js';
+export type {
+  AggregateDataToolDetails,
+  FilterDataToolDetails,
+} from './excel-analysis-tool-details.js';
 export { createExcelToolPresentationResolver } from './excel-tool-presentation.js';
 export { requireExcelResource } from './require-excel-resource.js';
 export { resolveExcelResource } from './require-excel-resource.js';

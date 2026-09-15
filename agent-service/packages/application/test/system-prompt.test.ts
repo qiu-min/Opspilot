@@ -84,14 +84,39 @@ describe('buildOpsPilotSystemPrompt', () => {
       tools: [fakeTool('aggregate_data'), fakeTool('filter_data')],
     });
 
-    expect(prompt).toContain(
-      'Use get_workbook_info and get_sheet_profile to inspect workbook structure.',
-    );
+    expect(prompt).not.toContain('get_workbook_info');
+    expect(prompt).not.toContain('get_sheet_profile');
     expect(prompt).toContain(
       'For calculations over many rows, prefer aggregate_data instead of reading raw rows.',
     );
     expect(prompt).toContain('Use filter_data to locate rows matching structured conditions.');
     expect(prompt).toContain('Do not retrieve an entire large worksheet');
+  });
+
+  it('mentions only aggregate_data when only aggregate_data is available', () => {
+    const prompt = buildOpsPilotSystemPrompt({ tools: [fakeTool('aggregate_data')] });
+
+    expect(prompt).toContain('prefer aggregate_data');
+    expect(prompt).not.toContain('Use filter_data');
+    expect(prompt).toContain('Do not retrieve an entire large worksheet');
+  });
+
+  it('mentions only filter_data when only filter_data is available', () => {
+    const prompt = buildOpsPilotSystemPrompt({ tools: [fakeTool('filter_data')] });
+
+    expect(prompt).toContain('Use filter_data');
+    expect(prompt).not.toContain('prefer aggregate_data');
+    expect(prompt).toContain('Do not retrieve an entire large worksheet');
+  });
+
+  it('mentions only registered workbook discovery tools', () => {
+    const profilePrompt = buildOpsPilotSystemPrompt({ tools: [fakeTool('get_sheet_profile')] });
+    const workbookPrompt = buildOpsPilotSystemPrompt({ tools: [fakeTool('get_workbook_info')] });
+
+    expect(profilePrompt).toContain('Use get_sheet_profile');
+    expect(profilePrompt).not.toContain('get_workbook_info');
+    expect(workbookPrompt).toContain('Use get_workbook_info');
+    expect(workbookPrompt).not.toContain('get_sheet_profile');
   });
 
   it('does not promise workbook inspection without a discovery capability', () => {

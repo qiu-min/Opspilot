@@ -178,6 +178,8 @@ describe('Application Excel discovery Turn integration', () => {
     });
     expect(findToolResultByName(persistedToolResults, 'aggregate_data').details).toMatchObject({
       resultRowCount: 2,
+      returnedRowCount: 2,
+      truncated: false,
       rows: [
         ['North', 400],
         ['South', 250],
@@ -185,6 +187,9 @@ describe('Application Excel discovery Turn integration', () => {
     });
     expect(findToolResultByName(persistedToolResults, 'filter_data').details).toMatchObject({
       matchedRowCount: 2,
+      totalRangeCount: 1,
+      returnedRangeCount: 1,
+      truncated: false,
       matchedRanges: [{ startRow: 3, endRow: 4 }],
     });
     expect(persistedToolResults.map((message) => message.name).slice(-3)).toEqual([

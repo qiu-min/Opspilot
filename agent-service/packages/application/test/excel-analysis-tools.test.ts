@@ -109,10 +109,17 @@ describe('aggregate_data Application Tool', () => {
       signal,
     );
     expect(tool.recoveryPolicy).toBe('retry_safe');
-    expect(result.details).toEqual(aggregateResult);
+    expect(result.details).toEqual({
+      ...aggregateResult,
+      returnedRowCount: 1,
+      truncated: false,
+    });
     expect(result.content[0]?.type === 'text' && result.content[0].text).toContain('North | 400');
     expect(result.content[0]?.type === 'text' && result.content[0].text).toContain(
       'resultRowCount: 1',
+    );
+    expect(result.content[0]?.type === 'text' && result.content[0].text).toContain(
+      'returnedRowCount: 1',
     );
   });
 
@@ -139,7 +146,11 @@ describe('aggregate_data Application Tool', () => {
     expect(text).toContain('Region-100 | 100');
     expect(text).not.toContain('Region-101');
     expect(text).toContain('Showing first 100 of 101 aggregate rows.');
-    expect(result.details).toMatchObject({ resultRowCount: 101, rows: expect.any(Array) });
+    expect(result.details).toMatchObject({
+      resultRowCount: 101,
+      returnedRowCount: 100,
+      truncated: true,
+    });
     expect(result.details?.rows).toHaveLength(100);
   });
 
@@ -256,9 +267,17 @@ describe('filter_data Application Tool', () => {
       },
       signal,
     );
-    expect(result.details).toEqual(filterResult);
+    expect(result.details).toEqual({
+      ...filterResult,
+      totalRangeCount: 2,
+      returnedRangeCount: 2,
+      truncated: false,
+    });
     expect(result.content[0]?.type === 'text' && result.content[0].text).toContain(
       'matchedRowCount: 2',
+    );
+    expect(result.content[0]?.type === 'text' && result.content[0].text).toContain(
+      'totalRangeCount: 2\nreturnedRangeCount: 2',
     );
     expect(result.content[0]?.type === 'text' && result.content[0].text).toContain('2-2\n4-4');
     expect(JSON.stringify(result.details)).not.toContain('Region');
@@ -358,8 +377,40 @@ describe('filter_data Application Tool', () => {
     expect(text).toContain('200-200');
     expect(text).not.toContain('202-202');
     expect(text).toContain('Showing first 100 of 150 matched ranges.');
-    expect(result.details?.matchedRowCount).toBe(150);
+    expect(result.details).toMatchObject({
+      matchedRowCount: 150,
+      totalRangeCount: 150,
+      returnedRangeCount: 100,
+      truncated: true,
+    });
     expect(result.details?.matchedRanges).toHaveLength(100);
+  });
+
+  it('keeps matched row and range counts distinct for a contiguous match', async () => {
+    const resultData: FilterDataResult = {
+      ...filterResult,
+      matchedRowCount: 1000,
+      matchedRanges: [{ startRow: 2, endRow: 1001 }],
+    };
+    const tool = createFilterDataTool(
+      { filterData: async () => resultData },
+      createWorkingResourceManager(),
+    );
+
+    const result = await tool.execute(
+      'contiguous-filter-call',
+      { sheetName: 'Sales', conditions: [{ column: 'Region', operator: 'isNotEmpty' }] },
+      undefined,
+      singleResourceContext(),
+    );
+
+    expect(result.details).toMatchObject({
+      matchedRowCount: 1000,
+      totalRangeCount: 1,
+      returnedRangeCount: 1,
+      truncated: false,
+      matchedRanges: [{ startRow: 2, endRow: 1001 }],
+    });
   });
 });
 

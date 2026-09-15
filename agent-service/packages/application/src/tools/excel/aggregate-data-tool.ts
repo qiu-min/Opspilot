@@ -19,6 +19,7 @@ import {
   type ModelExcelPredicate,
 } from './excel-query-arguments.js';
 import type { ToolDefinition } from '../tool-definition.js';
+import type { AggregateDataToolDetails } from './excel-analysis-tool-details.js';
 
 const MAX_MODEL_VISIBLE_AGGREGATE_ROWS = 100;
 
@@ -102,7 +103,7 @@ interface AggregateDataToolArguments {
 export function createAggregateDataTool(
   aggregateConnector: ExcelAggregateConnector,
   workingResourceManager: ExcelWorkingResourcePathResolver,
-): ToolDefinition<AggregateDataResult> {
+): ToolDefinition<AggregateDataToolDetails> {
   return {
     name: 'aggregate_data',
     description: 'Group and calculate metrics over Excel worksheet data.',
@@ -126,11 +127,11 @@ export function createAggregateDataTool(
         },
         signal,
       );
-      const boundedResult = boundAggregateResult(result);
+      const details = toAggregateDataToolDetails(result);
 
       return {
-        content: [{ type: 'text', text: formatAggregateResult(result) }],
-        details: boundedResult,
+        content: [{ type: 'text', text: formatAggregateResult(details) }],
+        details,
       };
     },
   };
@@ -206,29 +207,38 @@ function isAggregateOperation(value: unknown): value is AggregateMetric['operati
   );
 }
 
-/** Keeps persisted details within the same row limit used for model-visible content. */
-function boundAggregateResult(result: AggregateDataResult): AggregateDataResult {
-  if (result.rows.length <= MAX_MODEL_VISIBLE_AGGREGATE_ROWS) return result;
-  return { ...result, rows: result.rows.slice(0, MAX_MODEL_VISIBLE_AGGREGATE_ROWS) };
+/** Projects the complete Gateway result into bounded Application Tool details. */
+function toAggregateDataToolDetails(result: AggregateDataResult): AggregateDataToolDetails {
+  const rows = result.rows.slice(0, MAX_MODEL_VISIBLE_AGGREGATE_ROWS);
+  return {
+    sheetName: result.sheetName,
+    columns: result.columns,
+    rows,
+    sourceRowCount: result.sourceRowCount,
+    resultRowCount: result.resultRowCount,
+    returnedRowCount: rows.length,
+    truncated: rows.length < result.resultRowCount,
+  };
 }
 
 /** Formats stable, bounded worksheet aggregation text for the model. */
-function formatAggregateResult(result: AggregateDataResult): string {
+function formatAggregateResult(result: AggregateDataToolDetails): string {
   const lines = [
     `sheetName: ${result.sheetName}`,
     `sourceRowCount: ${result.sourceRowCount}`,
     `resultRowCount: ${result.resultRowCount}`,
+    `returnedRowCount: ${result.returnedRowCount}`,
     'columns:',
     result.columns.map((column) => formatCellValue(column.name)).join(' | '),
     'rows:',
   ];
 
-  for (const row of result.rows.slice(0, MAX_MODEL_VISIBLE_AGGREGATE_ROWS)) {
+  for (const row of result.rows) {
     lines.push(row.map(formatCellValue).join(' | '));
   }
-  if (result.resultRowCount > MAX_MODEL_VISIBLE_AGGREGATE_ROWS) {
+  if (result.truncated) {
     lines.push(
-      `Showing first ${MAX_MODEL_VISIBLE_AGGREGATE_ROWS} of ${result.resultRowCount} aggregate rows.`,
+      `Showing first ${result.returnedRowCount} of ${result.resultRowCount} aggregate rows.`,
       'Refine groupBy / where to narrow the result.',
     );
   }

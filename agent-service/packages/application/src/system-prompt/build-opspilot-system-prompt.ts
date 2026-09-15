@@ -1,8 +1,6 @@
 import type { ToolDefinition } from '../tools/tool-definition.js';
 import type { ExcelResourceContext } from '../resources/excel/excel-resource-context.js';
 
-const WORKBOOK_DISCOVERY_TOOL_NAMES = new Set(['get_workbook_info', 'get_sheet_profile']);
-
 const BASE_GUIDELINES = [
   "Respond in the user's language unless they ask otherwise.",
   "Be concise and focus on the user's actual task.",
@@ -18,12 +16,8 @@ const WORKBOOK_GROUNDING_GUIDELINE =
   'When workbook-specific facts are required, inspect the workbook before answering.';
 const WRITE_DATA_GUIDELINE =
   'Use write_data to write structured tabular data into the selected Excel resource.';
-const EXCEL_ANALYSIS_GUIDELINES = [
-  'Use get_workbook_info and get_sheet_profile to inspect workbook structure.',
-  'For calculations over many rows, prefer aggregate_data instead of reading raw rows.',
-  'Use filter_data to locate rows matching structured conditions.',
-  'Do not retrieve an entire large worksheet just to calculate totals, averages, counts, min/max, grouping, or filtering.',
-] as const;
+const LARGE_WORKSHEET_ANALYSIS_GUIDELINE =
+  'Do not retrieve an entire large worksheet just to calculate totals, averages, counts, min/max, grouping, or filtering.';
 
 const RESPONSE_STYLE_GUIDELINES = [
   'Use clear, concise, and professional language.',
@@ -58,13 +52,26 @@ export function buildOpsPilotSystemPrompt(options: BuildOpsPilotSystemPromptOpti
     addGuideline(guideline);
   }
 
-  if ([...WORKBOOK_DISCOVERY_TOOL_NAMES].some((toolName) => toolNames.has(toolName))) {
+  const hasWorkbookInfo = toolNames.has('get_workbook_info');
+  const hasSheetProfile = toolNames.has('get_sheet_profile');
+  if (hasWorkbookInfo || hasSheetProfile) {
     addGuideline(WORKBOOK_GROUNDING_GUIDELINE);
+    if (hasWorkbookInfo && hasSheetProfile) {
+      addGuideline('Use get_workbook_info and get_sheet_profile to inspect workbook structure.');
+    } else if (hasWorkbookInfo) {
+      addGuideline('Use get_workbook_info to inspect workbook structure.');
+    } else {
+      addGuideline('Use get_sheet_profile to inspect worksheet structure.');
+    }
   }
   if (toolNames.has('write_data')) addGuideline(WRITE_DATA_GUIDELINE);
-  if (toolNames.has('aggregate_data') || toolNames.has('filter_data')) {
-    for (const guideline of EXCEL_ANALYSIS_GUIDELINES) addGuideline(guideline);
+  const hasAggregateData = toolNames.has('aggregate_data');
+  const hasFilterData = toolNames.has('filter_data');
+  if (hasAggregateData) {
+    addGuideline('For calculations over many rows, prefer aggregate_data instead of reading raw rows.');
   }
+  if (hasFilterData) addGuideline('Use filter_data to locate rows matching structured conditions.');
+  if (hasAggregateData || hasFilterData) addGuideline(LARGE_WORKSHEET_ANALYSIS_GUIDELINE);
 
   for (const guideline of options.additionalGuidelines ?? []) {
     addGuideline(guideline);
