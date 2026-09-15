@@ -72,7 +72,7 @@ export function createWriteDataTool(
         signal,
       );
 
-      throwIfAborted(signal);
+      //throwIfAborted(signal);
       await workingResourceManager.markModified(request);
 
       return {
