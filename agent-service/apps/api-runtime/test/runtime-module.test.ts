@@ -11,23 +11,38 @@ import { Test, type TestingModule } from '@nestjs/testing';
 
 import { loadRuntimeConfig, type RuntimeConfig } from '../src/runtime-config.js';
 import { FileSystemExcelResourcePathResolver } from '../src/files/excel-resource-path-resolver.js';
-import {
-  createApiRuntimeModule,
-  createExcelDiscoveryToolDefinitions,
-} from '../src/runtime-module.js';
+import { createApiRuntimeModule, createExcelToolDefinitions } from '../src/runtime-module.js';
 
 const testApiKeyEnvironmentVariable = 'OPSPILOT_RUNTIME_TEST_API_KEY';
 const testProviderId = 'test-provider';
 const testModelId = 'test-model';
 
 describe('API runtime composition root', () => {
-  it('creates exactly the two Excel discovery tools', () => {
-    const tools = createExcelDiscoveryToolDefinitions({
+  it('creates the two Excel discovery tools and the write tool', () => {
+    const tools = createExcelToolDefinitions({
       resolveReadablePath: async (request) => request.sourcePath,
+      ensureWritableResource: async (request) => ({
+        sessionId: request.sessionId,
+        sourceResourceId: request.sourceResourceId,
+        sourcePath: request.sourcePath,
+        workingPath: `/working/${request.sessionId}/${request.sourceResourceId}.xlsx`,
+        revision: 0,
+      }),
+      markModified: async (request) => ({
+        sessionId: request.sessionId,
+        sourceResourceId: request.sourceResourceId,
+        sourcePath: request.sourcePath,
+        workingPath: `/working/${request.sessionId}/${request.sourceResourceId}.xlsx`,
+        revision: 1,
+      }),
     });
 
-    expect(tools.map((tool) => tool.name)).toEqual(['get_workbook_info', 'get_sheet_profile']);
-    expect(tools).toHaveLength(2);
+    expect(tools.map((tool) => tool.name)).toEqual([
+      'get_workbook_info',
+      'get_sheet_profile',
+      'write_data',
+    ]);
+    expect(tools).toHaveLength(3);
     expect(tools[0]?.parameters).toEqual({
       type: 'object',
       properties: {
@@ -48,6 +63,26 @@ describe('API runtime composition root', () => {
         sampleSize: expect.any(Object),
       },
       required: ['sheetName'],
+      additionalProperties: false,
+    });
+    expect(tools[2]?.recoveryPolicy).toBe('manual');
+    expect(tools[2]?.parameters).toMatchObject({
+      type: 'object',
+      properties: {
+        resource: expect.any(Object),
+        sheetName: expect.any(Object),
+        startCell: expect.any(Object),
+        data: expect.objectContaining({
+          type: 'array',
+          minItems: 1,
+          items: expect.objectContaining({
+            type: 'array',
+            minItems: 1,
+            items: expect.any(Object),
+          }),
+        }),
+      },
+      required: ['data'],
       additionalProperties: false,
     });
   });

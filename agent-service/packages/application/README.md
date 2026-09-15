@@ -95,9 +95,10 @@ Excel Application Tools 使用当前 Turn 的 `ToolExecutionContext` 携带完�
 `excelResources`、`excelResourceRefs` 与 `activeExcelResourceId`。模型可以在工具参数中传入
 Session-local 的 `resource` 别名；Application 先将别名解析为 `ExcelResource`，再通过
 `ExcelWorkingResourceManager.resolveReadablePath()` 按当前 Session 与 resource id 选择 source 或
-working path。Gateway 只收到最终的 `filePath` 等 Capability 参数，不接触别名、内部 resource id
-或 working resource 状态。durable `TurnExecutionContext` 仍保持现有的单 active Excel resource
-契约，恢复扩展留待后续变更。
+working path。`write_data` 复用相同 alias 选择与 request helper，确保 working copy 后只将
+`workingPath` 交给 Gateway；Gateway 只收到最终的 `filePath` 等 Capability 参数，不接触别名、内部
+resource id 或 working resource 状态。durable `TurnExecutionContext` 仍保持现有的单 active Excel
+resource 契约，恢复扩展留待后续变更。
 
 当前范围暂不包含动态切换模型或 thinking level、复杂重试、扩展系统和 Session 切换等 Coding Agent 能力。
 
@@ -124,6 +125,10 @@ Backend 提供的 Excel source 是 immutable input。Application 的
 `markModified()` 才会递增并持久化 revision。sourcePath 变更会被拒绝。staging、metadata
 写入和目录 rename 等 filesystem 细节不出现在 Application。
 
+Application 的 `write_data` 是当前唯一 Excel mutation Tool。它校验非空矩形 JSON scalar 数据，调用
+`ensureWritableResource()` 后写入返回的 `workingPath`，仅在 Gateway 成功返回后调用
+`markModified()`。其 recovery policy 为 `manual`，避免在无法确认 mutation 是否已写入时自动重放。
+
 Filesystem adapter 位于 `@opspilot/infrastructure`，使用：
 
 ```text
@@ -133,8 +138,10 @@ data/workspaces/{sessionId}/resources/{sourceResourceId}/
 ```
 
 `get_workbook_info` 与 `get_sheet_profile` 会经 manager 读取现有 working copy，否则读取 immutable
-source。Application 当前没有 Excel mutation tool wrapper；Tool Gateway 的写入、aggregate 与 filter
-capabilities 不在此处包装，也不会自行选择 source 或 working path。
+source。`write_data` 直接修改该 working copy，再推进成功 mutation 的 revision。Tool Gateway 的
+aggregate 与 filter capabilities 目前仍没有 Application wrapper，也不会自行选择 source 或 working
+path。临时 workbook、atomic replace、mutation idempotency 与 crash recovery 留给后续 Atomic Commit
+Protocol。
 
 其中 `turn/presentation/` 提供 live stream 与历史 Turn presentation 共用的工具展示解析能力；`turn/ports/` 与 `session/ports/` 只定义 Application persistence port，不包含 infrastructure 实现。
 

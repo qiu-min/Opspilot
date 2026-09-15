@@ -69,6 +69,16 @@ describe('buildOpsPilotSystemPrompt', () => {
     );
   });
 
+  it('explains when the write_data capability is available', () => {
+    const prompt = buildOpsPilotSystemPrompt({ tools: [fakeTool('write_data')] });
+
+    expect(prompt).toContain(
+      'Use write_data to write structured tabular data into the selected Excel resource.',
+    );
+    expect(prompt).not.toContain('workingPath');
+    expect(prompt).not.toContain('sourcePath');
+  });
+
   it('does not promise workbook inspection without a discovery capability', () => {
     const prompt = buildOpsPilotSystemPrompt({ tools: [] });
 

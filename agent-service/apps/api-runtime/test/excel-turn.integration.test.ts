@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import type { AgentMessage } from '@opspilot/agent-runtime';
 import {
@@ -14,13 +14,14 @@ import {
   type Options,
   type ToolResultMessage,
 } from '@opspilot/model-gateway';
-import { ExcelJsDiscoveryAdapter } from '@opspilot/tool-gateway';
+import { ExcelJsDataAdapter, ExcelJsDiscoveryAdapter } from '@opspilot/tool-gateway';
 import { Workbook } from 'exceljs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createGetSheetProfileTool,
   createGetWorkbookInfoTool,
+  createWriteDataTool,
   ExcelWorkingResourceManager,
   ExecuteTurn,
   type TurnExecutionEvent,
@@ -263,6 +264,249 @@ describe('Application Excel discovery Turn integration', () => {
   });
 });
 
+describe('Application Excel mutation Turn integration', () => {
+  it('creates one working copy, reuses it for later writes, and reads the modified workbook', async () => {
+    const { filePath, sessionDirectory } = await createFixture();
+    const workspaceRoot = join(dirname(filePath), 'workspaces');
+    const firstWrite: ModelToolCall = {
+      callId: 'write-region',
+      name: 'write_data',
+      arguments: {
+        sheetName: 'Sales',
+        startCell: 'D1',
+        data: [['Region'], ['North']],
+      },
+    };
+    const secondWrite: ModelToolCall = {
+      callId: 'write-status',
+      name: 'write_data',
+      arguments: {
+        sheetName: 'Sales',
+        startCell: 'E1',
+        data: [['Status'], ['Ready']],
+      },
+    };
+    const profileCall: ModelToolCall = {
+      callId: 'profile-after-write',
+      name: 'get_sheet_profile',
+      arguments: { sheetName: 'Sales' },
+    };
+    const harness = createExcelTurnHarness(sessionDirectory, workspaceRoot, [
+      assistantMessage('', [firstWrite]),
+      assistantMessage('Region data written.'),
+      assistantMessage('', [secondWrite]),
+      assistantMessage('Status data written.'),
+      assistantMessage('', [profileCall]),
+      assistantMessage('The worksheet now includes Region and Status.'),
+    ]);
+    const initializeWorkingResource = vi.spyOn(
+      harness.workingResourceStore,
+      'initializeWorkingResource',
+    );
+    const writeData = vi.spyOn(harness.dataConnector, 'writeData');
+    const getSheetProfile = vi.spyOn(harness.discoveryConnector, 'getSheetProfile');
+
+    const firstTurn = await harness.runner.execute({
+      message: userMessage('Add the Region column.'),
+      excelResource: { id: 'fixture-workbook', filePath },
+    });
+    const firstResource = await harness.workingResourceStore.get(
+      firstTurn.sessionId,
+      'fixture-workbook',
+    );
+    expect(firstResource?.revision).toBe(1);
+
+    const secondTurn = await harness.runner.execute({
+      sessionId: firstTurn.sessionId,
+      message: userMessage('Add the Status column.'),
+    });
+    const secondResource = await harness.workingResourceStore.get(
+      firstTurn.sessionId,
+      'fixture-workbook',
+    );
+    expect(secondResource?.revision).toBe(2);
+    expect(secondResource?.workingPath).toBe(firstResource?.workingPath);
+    expect(initializeWorkingResource).toHaveBeenCalledTimes(1);
+
+    const readTurn = await harness.runner.execute({
+      sessionId: firstTurn.sessionId,
+      message: userMessage('Profile the updated worksheet.'),
+    });
+    expect(lastAssistantText(readTurn.messages)).toBe(
+      'The worksheet now includes Region and Status.',
+    );
+    expect(writeData.mock.calls.map(([input]) => input.filePath)).toEqual([
+      firstResource?.workingPath,
+      firstResource?.workingPath,
+    ]);
+    expect(getSheetProfile).toHaveBeenCalledWith(
+      { filePath: firstResource?.workingPath, sheetName: 'Sales' },
+      expect.anything(),
+    );
+    expect(findToolResultByName(readTurn.messages, 'get_sheet_profile').details).toMatchObject({
+      sheetName: 'Sales',
+      columns: expect.arrayContaining([
+        expect.objectContaining({ letter: 'D', header: 'Region' }),
+        expect.objectContaining({ letter: 'E', header: 'Status' }),
+      ]),
+    });
+
+    const workingWorkbook = new Workbook();
+    await workingWorkbook.xlsx.readFile(firstResource!.workingPath);
+    expect(workingWorkbook.getWorksheet('Sales')?.getCell('D1').value).toBe('Region');
+    expect(workingWorkbook.getWorksheet('Sales')?.getCell('D2').value).toBe('North');
+    expect(workingWorkbook.getWorksheet('Sales')?.getCell('E1').value).toBe('Status');
+    expect(workingWorkbook.getWorksheet('Sales')?.getCell('E2').value).toBe('Ready');
+
+    const sourceWorkbook = new Workbook();
+    await sourceWorkbook.xlsx.readFile(filePath);
+    expect(sourceWorkbook.getWorksheet('Sales')?.getCell('D1').value ?? null).toBeNull();
+    expect(sourceWorkbook.getWorksheet('Sales')?.getCell('E1').value ?? null).toBeNull();
+    expect(secondTurn.sessionId).toBe(firstTurn.sessionId);
+  });
+
+  it('routes an explicit alias to its own working copy when another resource is active', async () => {
+    const { filePath: filePathA, sessionDirectory } = await createFixture();
+    const filePathB = join(dirname(filePathA), 'second-fixture.xlsx');
+    await writeWorkbookFixture(filePathB);
+    const workspaceRoot = join(dirname(filePathA), 'workspaces');
+    const writeCall: ModelToolCall = {
+      callId: 'write-only-a',
+      name: 'write_data',
+      arguments: {
+        resource: 'excel-1',
+        sheetName: 'Sales',
+        startCell: 'D1',
+        data: [['Only A']],
+      },
+    };
+    const harness = createExcelTurnHarness(sessionDirectory, workspaceRoot, [
+      assistantMessage('Workbook A attached.'),
+      assistantMessage('Workbook B attached.'),
+      assistantMessage('', [writeCall]),
+      assistantMessage('Workbook A updated.'),
+    ]);
+    const writeData = vi.spyOn(harness.dataConnector, 'writeData');
+
+    const firstTurn = await harness.runner.execute({
+      message: userMessage('Attach workbook A.'),
+      excelResource: { id: 'workbook-a', filePath: filePathA },
+    });
+    await harness.runner.execute({
+      sessionId: firstTurn.sessionId,
+      message: userMessage('Attach workbook B.'),
+      excelResource: { id: 'workbook-b', filePath: filePathB },
+    });
+    await harness.runner.execute({
+      sessionId: firstTurn.sessionId,
+      message: userMessage('Write to workbook A.'),
+    });
+
+    const workingA = await harness.workingResourceStore.get(firstTurn.sessionId, 'workbook-a');
+    const workingB = await harness.workingResourceStore.get(firstTurn.sessionId, 'workbook-b');
+    expect(workingA).toMatchObject({ revision: 1, sourcePath: filePathA });
+    expect(workingB).toBeNull();
+    expect(writeData).toHaveBeenCalledWith(
+      expect.objectContaining({ filePath: workingA?.workingPath }),
+      expect.anything(),
+    );
+
+    const sourceA = new Workbook();
+    const sourceB = new Workbook();
+    await sourceA.xlsx.readFile(filePathA);
+    await sourceB.xlsx.readFile(filePathB);
+    expect(sourceA.getWorksheet('Sales')?.getCell('D1').value ?? null).toBeNull();
+    expect(sourceB.getWorksheet('Sales')?.getCell('D1').value ?? null).toBeNull();
+
+    const workingWorkbook = new Workbook();
+    await workingWorkbook.xlsx.readFile(workingA!.workingPath);
+    expect(workingWorkbook.getWorksheet('Sales')?.getCell('D1').value).toBe('Only A');
+  });
+
+  it('keeps working copies independent when separate Sessions write the same source resource', async () => {
+    const { filePath, sessionDirectory } = await createFixture();
+    const workspaceRoot = join(dirname(filePath), 'workspaces');
+    const harness = createExcelTurnHarness(sessionDirectory, workspaceRoot, [
+      assistantMessage('', [
+        {
+          callId: 'write-session-a',
+          name: 'write_data',
+          arguments: { sheetName: 'Sales', startCell: 'D1', data: [['Session A']] },
+        },
+      ]),
+      assistantMessage('Session A updated.'),
+      assistantMessage('', [
+        {
+          callId: 'write-session-b',
+          name: 'write_data',
+          arguments: { sheetName: 'Sales', startCell: 'D1', data: [['Session B']] },
+        },
+      ]),
+      assistantMessage('Session B updated.'),
+    ]);
+    const initializeWorkingResource = vi.spyOn(
+      harness.workingResourceStore,
+      'initializeWorkingResource',
+    );
+
+    const sessionA = await harness.runner.execute({
+      message: userMessage('Write for Session A.'),
+      excelResource: { id: 'shared-resource', filePath },
+    });
+    const sessionB = await harness.runner.execute({
+      message: userMessage('Write for Session B.'),
+      excelResource: { id: 'shared-resource', filePath },
+    });
+    const workingA = await harness.workingResourceStore.get(sessionA.sessionId, 'shared-resource');
+    const workingB = await harness.workingResourceStore.get(sessionB.sessionId, 'shared-resource');
+
+    expect(sessionA.sessionId).not.toBe(sessionB.sessionId);
+    expect(workingA?.revision).toBe(1);
+    expect(workingB?.revision).toBe(1);
+    expect(workingA?.workingPath).not.toBe(workingB?.workingPath);
+    expect(initializeWorkingResource).toHaveBeenCalledTimes(2);
+
+    const workbookA = new Workbook();
+    const workbookB = new Workbook();
+    const source = new Workbook();
+    await workbookA.xlsx.readFile(workingA!.workingPath);
+    await workbookB.xlsx.readFile(workingB!.workingPath);
+    await source.xlsx.readFile(filePath);
+    expect(workbookA.getWorksheet('Sales')?.getCell('D1').value).toBe('Session A');
+    expect(workbookB.getWorksheet('Sales')?.getCell('D1').value).toBe('Session B');
+    expect(source.getWorksheet('Sales')?.getCell('D1').value ?? null).toBeNull();
+  });
+
+  it('keeps revision at zero when the Excel Gateway write fails', async () => {
+    const { filePath, sessionDirectory } = await createFixture();
+    const workspaceRoot = join(dirname(filePath), 'workspaces');
+    const harness = createExcelTurnHarness(sessionDirectory, workspaceRoot, []);
+    const writeData = vi
+      .spyOn(harness.dataConnector, 'writeData')
+      .mockRejectedValue(new Error('Excel write failed.'));
+    const context = {
+      sessionId: 'session-write-failure',
+      excelResources: [{ id: 'fixture-workbook', filePath }],
+      excelResourceRefs: [{ id: 'fixture-workbook', kind: 'excel' as const, alias: 'excel-1' }],
+      activeExcelResourceId: 'fixture-workbook',
+    };
+    const markModified = vi.spyOn(harness.workingResourceManager, 'markModified');
+    const writeTool = createWriteDataTool(harness.dataConnector, harness.workingResourceManager);
+
+    await expect(
+      writeTool.execute('failed-write', { data: [['value']] }, undefined, context),
+    ).rejects.toThrow('Excel write failed.');
+
+    const working = await harness.workingResourceStore.get(context.sessionId, 'fixture-workbook');
+    expect(working?.revision).toBe(0);
+    expect(markModified).not.toHaveBeenCalled();
+    expect(writeData).toHaveBeenCalledWith(
+      expect.objectContaining({ filePath: working?.workingPath }),
+      undefined,
+    );
+  });
+});
+
 function createGateway(responses: readonly AssistantMessage[]): FakeGateway {
   let responseIndex = 0;
   const requestedContexts: Context[] = [];
@@ -325,6 +569,20 @@ function findToolResult(messages: readonly AgentMessage[]): ToolResultMessage {
   return toolResult;
 }
 
+function findToolResultByName(
+  messages: readonly AgentMessage[],
+  toolName: string,
+): ToolResultMessage {
+  const toolResult = [...messages]
+    .reverse()
+    .find(
+      (message): message is ToolResultMessage =>
+        message.role === 'tool' && message.name === toolName,
+    );
+  if (toolResult === undefined) throw new Error(`Expected a ${toolName} ToolResultMessage.`);
+  return toolResult;
+}
+
 function lastAssistantText(messages: readonly AgentMessage[]): string {
   const assistant = [...messages].reverse().find((message) => message.role === 'assistant');
   if (assistant === undefined || assistant.role !== 'assistant') {
@@ -351,6 +609,14 @@ async function createFixture(): Promise<{
   directories.push(directory);
 
   const filePath = join(directory, 'fixture.xlsx');
+  await writeWorkbookFixture(filePath);
+
+  const sessionDirectory = join(directory, 'sessions');
+  await mkdir(sessionDirectory);
+  return { filePath, sessionDirectory };
+}
+
+async function writeWorkbookFixture(filePath: string): Promise<void> {
   const workbook = new Workbook();
   const sales = workbook.addWorksheet('Sales');
   sales.addRows([
@@ -361,10 +627,42 @@ async function createFixture(): Promise<{
   const config = workbook.addWorksheet('Config');
   config.addRows([['Environment', 'Test']]);
   await workbook.xlsx.writeFile(filePath);
+}
 
-  const sessionDirectory = join(directory, 'sessions');
-  await mkdir(sessionDirectory);
-  return { filePath, sessionDirectory };
+function createExcelTurnHarness(
+  sessionDirectory: string,
+  workspaceRoot: string,
+  responses: readonly AssistantMessage[],
+) {
+  const gateway = createGateway(responses);
+  const workingResourceStore = new FileSystemExcelWorkingResourceStore(workspaceRoot);
+  const workingResourceManager = new ExcelWorkingResourceManager({
+    store: workingResourceStore,
+    fileOperator: workingResourceStore,
+  });
+  const dataConnector = new ExcelJsDataAdapter();
+  const discoveryConnector = new ExcelJsDiscoveryAdapter();
+  const runner = new ExecuteTurn({
+    sessionStore: new FileSystemSessionStore(sessionDirectory),
+    excelSourceResourceStore: new FileSystemExcelSourceResourceStore(workspaceRoot),
+    turnStore: new FileSystemTurnStore(sessionDirectory),
+    modelGateway: gateway,
+    defaultModel: model,
+    toolDefinitions: [
+      createGetWorkbookInfoTool(discoveryConnector, workingResourceManager),
+      createGetSheetProfileTool(discoveryConnector, workingResourceManager),
+      createWriteDataTool(dataConnector, workingResourceManager),
+    ],
+  });
+
+  return {
+    runner,
+    gateway,
+    workingResourceStore,
+    workingResourceManager,
+    dataConnector,
+    discoveryConnector,
+  };
 }
 
 function createWorkingResourceManager(workspaceRoot: string): ExcelWorkingResourceManager {

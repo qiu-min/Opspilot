@@ -16,6 +16,8 @@ const BASE_GUIDELINES = [
 
 const WORKBOOK_GROUNDING_GUIDELINE =
   'When workbook-specific facts are required, inspect the workbook before answering.';
+const WRITE_DATA_GUIDELINE =
+  'Use write_data to write structured tabular data into the selected Excel resource.';
 
 const RESPONSE_STYLE_GUIDELINES = [
   'Use clear, concise, and professional language.',
@@ -53,6 +55,7 @@ export function buildOpsPilotSystemPrompt(options: BuildOpsPilotSystemPromptOpti
   if ([...WORKBOOK_DISCOVERY_TOOL_NAMES].some((toolName) => toolNames.has(toolName))) {
     addGuideline(WORKBOOK_GROUNDING_GUIDELINE);
   }
+  if (toolNames.has('write_data')) addGuideline(WRITE_DATA_GUIDELINE);
 
   for (const guideline of options.additionalGuidelines ?? []) {
     addGuideline(guideline);

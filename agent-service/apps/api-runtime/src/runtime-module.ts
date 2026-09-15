@@ -2,6 +2,7 @@ import { DynamicModule } from '@nestjs/common';
 import {
   createGetSheetProfileTool,
   createGetWorkbookInfoTool,
+  createWriteDataTool,
   buildOpsPilotSystemPrompt,
   createExcelToolPresentationResolver,
   GetActiveTurn,
@@ -26,22 +27,27 @@ import {
   InMemoryTurnStreamHub,
 } from '@opspilot/infrastructure';
 import { createModelGateway, loadModelGatewayConfig } from '@opspilot/model-gateway';
-import { ExcelJsDiscoveryAdapter } from '@opspilot/tool-gateway';
+import { ExcelJsDataAdapter, ExcelJsDiscoveryAdapter } from '@opspilot/tool-gateway';
 import { OpenTelemetryAgentTracer } from '@opspilot/observability';
 
 import { ApiModule, EXCEL_RESOURCE_PATH_RESOLVER } from '@opspilot/api';
 import { FileSystemExcelResourcePathResolver } from './files/excel-resource-path-resolver.js';
 import type { RuntimeConfig } from './runtime-config.js';
 
-/** Builds the only Excel tools exposed by this runtime composition root. */
-export function createExcelDiscoveryToolDefinitions(
-  workingResourceManager: Pick<ExcelWorkingResourceManager, 'resolveReadablePath'>,
+/** Builds the Excel tools exposed by this runtime composition root. */
+export function createExcelToolDefinitions(
+  workingResourceManager: Pick<
+    ExcelWorkingResourceManager,
+    'resolveReadablePath' | 'ensureWritableResource' | 'markModified'
+  >,
 ): readonly ToolDefinition[] {
   const excelDiscoveryConnector = new ExcelJsDiscoveryAdapter();
+  const excelDataConnector = new ExcelJsDataAdapter();
 
   return [
     createGetWorkbookInfoTool(excelDiscoveryConnector, workingResourceManager),
     createGetSheetProfileTool(excelDiscoveryConnector, workingResourceManager),
+    createWriteDataTool(excelDataConnector, workingResourceManager),
   ];
 }
 
@@ -64,7 +70,7 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     store: excelWorkingResourceStore,
     fileOperator: excelWorkingResourceStore,
   });
-  const toolDefinitions = createExcelDiscoveryToolDefinitions(excelWorkingResourceManager);
+  const toolDefinitions = createExcelToolDefinitions(excelWorkingResourceManager);
   const systemPrompt = buildOpsPilotSystemPrompt({
     tools: toolDefinitions,
   });

@@ -22,6 +22,15 @@ function resolveExcelToolPresentation(
         ? { title: 'Inspect Worksheet' }
         : { title: 'Inspect Worksheet', subject: sheetName };
     }
+    case 'write_data': {
+      const sheetName = readNonEmptyString(context.arguments.sheetName);
+      const startCell = readNonEmptyString(context.arguments.startCell);
+      return {
+        title: 'Write Excel data',
+        ...(sheetName === undefined ? {} : { subject: sheetName }),
+        ...(startCell === undefined ? {} : { detail: `Starting at ${startCell}` }),
+      };
+    }
     default:
       return undefined;
   }
