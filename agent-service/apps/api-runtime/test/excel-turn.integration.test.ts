@@ -14,13 +14,20 @@ import {
   type Options,
   type ToolResultMessage,
 } from '@opspilot/model-gateway';
-import { ExcelJsDataAdapter, ExcelJsDiscoveryAdapter } from '@opspilot/tool-gateway';
+import {
+  ExcelJsAggregateAdapter,
+  ExcelJsDataAdapter,
+  ExcelJsDiscoveryAdapter,
+  ExcelJsFilterAdapter,
+} from '@opspilot/tool-gateway';
 import { Workbook } from 'exceljs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createGetSheetProfileTool,
   createGetWorkbookInfoTool,
+  createAggregateDataTool,
+  createFilterDataTool,
   createWriteDataTool,
   ExcelWorkingResourceManager,
   ExecuteTurn,
@@ -63,6 +70,134 @@ afterEach(async () => {
 });
 
 describe('Application Excel discovery Turn integration', () => {
+  it('runs profile, aggregate, and filter against the committed revision without another mutation', async () => {
+    const { filePath, sessionDirectory } = await createSalesFixture();
+    const sourceBefore = await readFile(filePath);
+    const writeCall: ModelToolCall = {
+      callId: 'prepare-working-revision',
+      name: 'write_data',
+      arguments: { sheetName: 'Sales', startCell: 'D1', data: [['Note'], ['Working copy']] },
+    };
+    const profileCall: ModelToolCall = {
+      callId: 'profile-analysis',
+      name: 'get_sheet_profile',
+      arguments: { resource: 'excel-1', sheetName: 'Sales' },
+    };
+    const aggregateCall: ModelToolCall = {
+      callId: 'aggregate-analysis',
+      name: 'aggregate_data',
+      arguments: {
+        resource: 'excel-1',
+        sheetName: 'Sales',
+        groupBy: ['Region'],
+        metrics: [{ column: 'Sales', operation: 'sum', alias: 'totalSales' }],
+      },
+    };
+    const filterCall: ModelToolCall = {
+      callId: 'filter-analysis',
+      name: 'filter_data',
+      arguments: {
+        resource: 'excel-1',
+        sheetName: 'Sales',
+        conditions: [{ column: 'Sales', operator: 'greaterThan', value: 100 }],
+      },
+    };
+    const harness = createExcelTurnHarness(
+      sessionDirectory,
+      join(dirname(filePath), 'workspaces'),
+      [
+        assistantMessage('', [writeCall]),
+        assistantMessage('The working copy is ready.'),
+        assistantMessage('', [profileCall]),
+        assistantMessage('', [aggregateCall]),
+        assistantMessage('', [filterCall]),
+        assistantMessage('North totals 400 and South totals 250; two rows exceed 100.'),
+      ],
+      true,
+    );
+    const executeMutation = vi.spyOn(harness.workingResourceManager, 'executeMutation');
+    const getSheetProfile = vi.spyOn(harness.discoveryConnector, 'getSheetProfile');
+    const aggregateData = vi.spyOn(harness.aggregateConnector, 'aggregateData');
+    const filterData = vi.spyOn(harness.filterConnector, 'filterData');
+
+    const prepared = await harness.runner.execute({
+      message: userMessage('Prepare an analysis working copy.'),
+      excelResource: { id: 'fixture-workbook', filePath },
+    });
+    const committed = await harness.workingResourceStore.get(
+      prepared.sessionId,
+      'fixture-workbook',
+    );
+    expect(committed).toMatchObject({ revision: 1, sourcePath: filePath });
+    const mutationCountAfterWrite = executeMutation.mock.calls.length;
+
+    const analyzed = await harness.runner.execute({
+      sessionId: prepared.sessionId,
+      message: userMessage('Analyze the Sales sheet by region and find rows over 100.'),
+    });
+
+    expect(lastAssistantText(analyzed.messages)).toBe(
+      'North totals 400 and South totals 250; two rows exceed 100.',
+    );
+    expect(getSheetProfile).toHaveBeenCalledWith(
+      { filePath: committed!.workingPath, sheetName: 'Sales' },
+      expect.any(AbortSignal),
+    );
+    expect(aggregateData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filePath: committed!.workingPath,
+        sheetName: 'Sales',
+        groupBy: ['Region'],
+      }),
+      expect.any(AbortSignal),
+    );
+    expect(filterData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filePath: committed!.workingPath,
+        sheetName: 'Sales',
+        conditions: [{ column: 'Sales', operator: 'greaterThan', value: 100 }],
+      }),
+      expect.any(AbortSignal),
+    );
+    expect(aggregateData.mock.calls[0]?.[0].filePath).toBe(committed!.workingPath);
+    expect(filterData.mock.calls[0]?.[0].filePath).toBe(committed!.workingPath);
+    expect(executeMutation).toHaveBeenCalledTimes(mutationCountAfterWrite);
+    expect(await harness.workingResourceStore.get(prepared.sessionId, 'fixture-workbook')).toEqual(
+      committed,
+    );
+    expect(await readFile(filePath)).toEqual(sourceBefore);
+
+    const persistedToolResults = new FileSystemSessionStore(sessionDirectory)
+      .load(prepared.sessionId)
+      .getEntries()
+      .flatMap((entry) =>
+        entry.type === 'message' && entry.message.role === 'tool' ? [entry.message] : [],
+      );
+    expect(findToolResultByName(persistedToolResults, 'get_sheet_profile').details).toMatchObject({
+      sheetName: 'Sales',
+    });
+    expect(findToolResultByName(persistedToolResults, 'aggregate_data').details).toMatchObject({
+      resultRowCount: 2,
+      rows: [
+        ['North', 400],
+        ['South', 250],
+      ],
+    });
+    expect(findToolResultByName(persistedToolResults, 'filter_data').details).toMatchObject({
+      matchedRowCount: 2,
+      matchedRanges: [{ startRow: 3, endRow: 4 }],
+    });
+    expect(persistedToolResults.map((message) => message.name).slice(-3)).toEqual([
+      'get_sheet_profile',
+      'aggregate_data',
+      'filter_data',
+    ]);
+    expect(analyzed.messages.some((message) => message.role === 'tool')).toBe(true);
+    expect(new FileSystemTurnStore(sessionDirectory).load(analyzed.turnId).getState().status).toBe(
+      'completed',
+    );
+  });
+
   it('executes get_workbook_info through Agent Runtime and persists the real ExcelJS result', async () => {
     const { filePath, sessionDirectory } = await createFixture();
     const gateway = createGateway([
@@ -405,8 +540,9 @@ describe('Application Excel mutation Turn integration', () => {
     ]);
     expect(mutationIds[0]).not.toBe(mutationIds[1]);
     expect(writeData).toHaveBeenCalledTimes(2);
-    expect((await harness.workingResourceStore.get(first.sessionId, 'fixture-workbook'))?.revision)
-      .toBe(2);
+    expect(
+      (await harness.workingResourceStore.get(first.sessionId, 'fixture-workbook'))?.revision,
+    ).toBe(2);
 
     const current = await harness.workingResourceStore.get(first.sessionId, 'fixture-workbook');
     const workbook = new Workbook();
@@ -606,22 +742,25 @@ describe('Application Excel mutation Turn integration', () => {
       turnId: turn.getId(),
       sessionId: session.getId(),
       excelResources: [{ id: 'fixture-workbook', filePath }],
-      excelResourceRefs: [
-        { id: 'fixture-workbook', kind: 'excel' as const, alias: 'excel-1' },
-      ],
+      excelResourceRefs: [{ id: 'fixture-workbook', kind: 'excel' as const, alias: 'excel-1' }],
       activeExcelResourceId: 'fixture-workbook',
     };
 
-    const originalResult = await writeTool.execute(call.callId, call.arguments, undefined, toolContext);
+    const originalResult = await writeTool.execute(
+      call.callId,
+      call.arguments,
+      undefined,
+      toolContext,
+    );
     expect(originalResult.details).toMatchObject({
       sheetName: 'Sales',
       range: 'D1:D1',
       message: 'Data written to Sales',
     });
     expect((await workingResourceStore.get(session.getId(), 'fixture-workbook'))?.revision).toBe(1);
-    expect(turnStore.loadEvents(turn.getId()).some((event) => event.type === 'tool_completed')).toBe(
-      false,
-    );
+    expect(
+      turnStore.loadEvents(turn.getId()).some((event) => event.type === 'tool_completed'),
+    ).toBe(false);
 
     const persistedExecutionInput = JSON.parse(
       await readFile(join(sessionDirectory, 'turns', turn.getId(), 'execution.json'), 'utf8'),
@@ -809,6 +948,7 @@ function createExcelTurnHarness(
   sessionDirectory: string,
   workspaceRoot: string,
   responses: readonly AssistantMessage[],
+  includeAnalysisTools = false,
 ) {
   const gateway = createGateway(responses);
   const workingResourceStore = new FileSystemExcelWorkingResourceStore(workspaceRoot);
@@ -818,6 +958,8 @@ function createExcelTurnHarness(
   });
   const dataConnector = new ExcelJsDataAdapter();
   const discoveryConnector = new ExcelJsDiscoveryAdapter();
+  const aggregateConnector = new ExcelJsAggregateAdapter();
+  const filterConnector = new ExcelJsFilterAdapter();
   const runner = new ExecuteTurn({
     sessionStore: new FileSystemSessionStore(sessionDirectory),
     excelSourceResourceStore: new FileSystemExcelSourceResourceStore(workspaceRoot),
@@ -827,6 +969,12 @@ function createExcelTurnHarness(
     toolDefinitions: [
       createGetWorkbookInfoTool(discoveryConnector, workingResourceManager),
       createGetSheetProfileTool(discoveryConnector, workingResourceManager),
+      ...(includeAnalysisTools
+        ? [
+            createAggregateDataTool(aggregateConnector, workingResourceManager),
+            createFilterDataTool(filterConnector, workingResourceManager),
+          ]
+        : []),
       createWriteDataTool(dataConnector, workingResourceManager),
     ],
   });
@@ -838,7 +986,30 @@ function createExcelTurnHarness(
     workingResourceManager,
     dataConnector,
     discoveryConnector,
+    aggregateConnector,
+    filterConnector,
   };
+}
+
+async function createSalesFixture(): Promise<{
+  readonly filePath: string;
+  readonly sessionDirectory: string;
+}> {
+  const directory = await mkdtemp(join(tmpdir(), 'opspilot-application-excel-analysis-e2e-'));
+  directories.push(directory);
+  const filePath = join(directory, 'sales.xlsx');
+  const workbook = new Workbook();
+  const sales = workbook.addWorksheet('Sales');
+  sales.addRows([
+    ['Region', 'Product', 'Sales'],
+    ['North', 'A', 100],
+    ['South', 'B', 250],
+    ['North', 'C', 300],
+  ]);
+  await workbook.xlsx.writeFile(filePath);
+  const sessionDirectory = join(directory, 'sessions');
+  await mkdir(sessionDirectory);
+  return { filePath, sessionDirectory };
 }
 
 function createWorkingResourceManager(workspaceRoot: string): ExcelWorkingResourceManager {

@@ -101,6 +101,11 @@ working path。`write_data` 复用相同 alias 选择与 request helper，确保
 resource id 或 working resource 状态。durable `TurnExecutionContext` 仍保持现有的单 active Excel
 resource 契约，恢复扩展留待后续变更。
 
+`aggregate_data` 与 `filter_data` 是只读 Application Tools，沿用相同的资源 alias 解析和
+`resolveReadablePath()` 路径选择，因此始终分析当前 Session 的 committed Working Resource（或尚未修改时的
+source）。聚合结果最多向模型和 Session ToolResult 暴露前 100 行；筛选结果只返回行号范围，最多暴露前
+100 个范围。两者均使用 `retry_safe`，且不会创建新 revision。
+
 当前范围暂不包含动态切换模型或 thinking level、复杂重试、扩展系统和 Session 切换等 Coding Agent 能力。
 
 ## 模块布局
@@ -153,8 +158,8 @@ data/workspaces/{sessionId}/resources/{sourceResourceId}/
 pointer 的同目录原子替换是唯一资源 commit point。保留当前与前一 revision；未被 pointer 引用的
 staging/candidate 文件在后续 mutation 时安全清理。旧 `working.xlsx + metadata.json` 会在首次读取或
 mutation 时保守迁移，revision 0 的实际文件内容也会复制到 versioned revision。Tool Gateway 的
-aggregate 与 filter capabilities 目前仍没有 Application wrapper，也不会自行选择 source 或 working
-path。
+aggregate 与 filter capabilities 由 Application wrapper 复用，Tool Gateway 本身仍只接收最终可读
+`filePath`，不会自行选择 source 或 working path。
 
 其中 `turn/presentation/` 提供 live stream 与历史 Turn presentation 共用的工具展示解析能力；`turn/ports/` 与 `session/ports/` 只定义 Application persistence port，不包含 infrastructure 实现。
 

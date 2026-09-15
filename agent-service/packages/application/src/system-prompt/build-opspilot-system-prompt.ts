@@ -18,6 +18,12 @@ const WORKBOOK_GROUNDING_GUIDELINE =
   'When workbook-specific facts are required, inspect the workbook before answering.';
 const WRITE_DATA_GUIDELINE =
   'Use write_data to write structured tabular data into the selected Excel resource.';
+const EXCEL_ANALYSIS_GUIDELINES = [
+  'Use get_workbook_info and get_sheet_profile to inspect workbook structure.',
+  'For calculations over many rows, prefer aggregate_data instead of reading raw rows.',
+  'Use filter_data to locate rows matching structured conditions.',
+  'Do not retrieve an entire large worksheet just to calculate totals, averages, counts, min/max, grouping, or filtering.',
+] as const;
 
 const RESPONSE_STYLE_GUIDELINES = [
   'Use clear, concise, and professional language.',
@@ -56,6 +62,9 @@ export function buildOpsPilotSystemPrompt(options: BuildOpsPilotSystemPromptOpti
     addGuideline(WORKBOOK_GROUNDING_GUIDELINE);
   }
   if (toolNames.has('write_data')) addGuideline(WRITE_DATA_GUIDELINE);
+  if (toolNames.has('aggregate_data') || toolNames.has('filter_data')) {
+    for (const guideline of EXCEL_ANALYSIS_GUIDELINES) addGuideline(guideline);
+  }
 
   for (const guideline of options.additionalGuidelines ?? []) {
     addGuideline(guideline);

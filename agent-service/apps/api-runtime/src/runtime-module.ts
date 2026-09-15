@@ -2,6 +2,8 @@ import { DynamicModule } from '@nestjs/common';
 import {
   createGetSheetProfileTool,
   createGetWorkbookInfoTool,
+  createAggregateDataTool,
+  createFilterDataTool,
   createWriteDataTool,
   buildOpsPilotSystemPrompt,
   createExcelToolPresentationResolver,
@@ -27,7 +29,12 @@ import {
   InMemoryTurnStreamHub,
 } from '@opspilot/infrastructure';
 import { createModelGateway, loadModelGatewayConfig } from '@opspilot/model-gateway';
-import { ExcelJsDataAdapter, ExcelJsDiscoveryAdapter } from '@opspilot/tool-gateway';
+import {
+  ExcelJsAggregateAdapter,
+  ExcelJsDataAdapter,
+  ExcelJsDiscoveryAdapter,
+  ExcelJsFilterAdapter,
+} from '@opspilot/tool-gateway';
 import { OpenTelemetryAgentTracer } from '@opspilot/observability';
 
 import { ApiModule, EXCEL_RESOURCE_PATH_RESOLVER } from '@opspilot/api';
@@ -43,10 +50,14 @@ export function createExcelToolDefinitions(
 ): readonly ToolDefinition[] {
   const excelDiscoveryConnector = new ExcelJsDiscoveryAdapter();
   const excelDataConnector = new ExcelJsDataAdapter();
+  const excelAggregateConnector = new ExcelJsAggregateAdapter();
+  const excelFilterConnector = new ExcelJsFilterAdapter();
 
   return [
     createGetWorkbookInfoTool(excelDiscoveryConnector, workingResourceManager),
     createGetSheetProfileTool(excelDiscoveryConnector, workingResourceManager),
+    createAggregateDataTool(excelAggregateConnector, workingResourceManager),
+    createFilterDataTool(excelFilterConnector, workingResourceManager),
     createWriteDataTool(excelDataConnector, workingResourceManager),
   ];
 }

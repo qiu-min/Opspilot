@@ -14,6 +14,27 @@ describe('Excel tool presentation resolver', () => {
       subject: 'Sheet1',
     });
     expect(
+      resolve({
+        name: 'aggregate_data',
+        arguments: {
+          sheetName: 'Sales',
+          groupBy: ['Region'],
+          metrics: [{ column: 'Sales', operation: 'sum' }],
+        },
+      }),
+    ).toEqual({
+      title: 'Aggregate Excel data',
+      subject: 'Sales',
+      detail: 'Group by Region · Metrics: sum',
+    });
+    expect(
+      resolve({ name: 'filter_data', arguments: { sheetName: 'Sales', conditions: [{}, {}] } }),
+    ).toEqual({
+      title: 'Filter Excel data',
+      subject: 'Sales',
+      detail: 'Conditions: 2',
+    });
+    expect(
       resolve({ name: 'write_data', arguments: { sheetName: 'Sheet1', startCell: 'B2' } }),
     ).toEqual({
       title: 'Write Excel data',

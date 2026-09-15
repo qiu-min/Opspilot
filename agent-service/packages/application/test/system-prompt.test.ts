@@ -79,6 +79,21 @@ describe('buildOpsPilotSystemPrompt', () => {
     expect(prompt).not.toContain('sourcePath');
   });
 
+  it('prefers aggregate and filter tools for large worksheet analysis', () => {
+    const prompt = buildOpsPilotSystemPrompt({
+      tools: [fakeTool('aggregate_data'), fakeTool('filter_data')],
+    });
+
+    expect(prompt).toContain(
+      'Use get_workbook_info and get_sheet_profile to inspect workbook structure.',
+    );
+    expect(prompt).toContain(
+      'For calculations over many rows, prefer aggregate_data instead of reading raw rows.',
+    );
+    expect(prompt).toContain('Use filter_data to locate rows matching structured conditions.');
+    expect(prompt).toContain('Do not retrieve an entire large worksheet');
+  });
+
   it('does not promise workbook inspection without a discovery capability', () => {
     const prompt = buildOpsPilotSystemPrompt({ tools: [] });
 
