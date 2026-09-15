@@ -2,6 +2,10 @@ import type { ExcelDiscoveryConnector, GetSheetProfileResult } from '@opspilot/t
 import type { JsonObject } from '@opspilot/model-gateway';
 
 import { resolveExcelResource } from './require-excel-resource.js';
+import {
+  createExcelWorkingResourceRequest,
+  type ExcelWorkingResourcePathResolver,
+} from './excel-working-resource-request.js';
 import type { ToolDefinition } from '../tool-definition.js';
 
 const GET_SHEET_PROFILE_PARAMETERS: JsonObject = {
@@ -29,6 +33,7 @@ interface GetSheetProfileToolArguments {
 /** Creates the Application Tool that profiles one worksheet in the current Excel resource. */
 export function createGetSheetProfileTool(
   discoveryConnector: ExcelDiscoveryConnector,
+  workingResourceManager: ExcelWorkingResourcePathResolver,
 ): ToolDefinition<GetSheetProfileResult> {
   return {
     name: 'get_sheet_profile',
@@ -39,8 +44,11 @@ export function createGetSheetProfileTool(
     async execute(_callId, args, signal, context) {
       const { sheetName, sampleSize, resource } = narrowArguments(args);
       const excelResource = resolveExcelResource(context, resource);
+      const filePath = await workingResourceManager.resolveReadablePath(
+        createExcelWorkingResourceRequest(context, excelResource, signal),
+      );
       const input = {
-        filePath: excelResource.filePath,
+        filePath,
         sheetName,
         ...(sampleSize === undefined ? {} : { sampleSize }),
       };

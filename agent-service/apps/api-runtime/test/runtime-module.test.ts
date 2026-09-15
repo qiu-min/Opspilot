@@ -22,7 +22,9 @@ const testModelId = 'test-model';
 
 describe('API runtime composition root', () => {
   it('creates exactly the two Excel discovery tools', () => {
-    const tools = createExcelDiscoveryToolDefinitions();
+    const tools = createExcelDiscoveryToolDefinitions({
+      resolveReadablePath: async (request) => request.sourcePath,
+    });
 
     expect(tools.map((tool) => tool.name)).toEqual(['get_workbook_info', 'get_sheet_profile']);
     expect(tools).toHaveLength(2);

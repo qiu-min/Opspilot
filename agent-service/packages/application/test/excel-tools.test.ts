@@ -12,6 +12,7 @@ import {
   requireExcelResource,
   resolveExcelResource,
   type ToolContext,
+  type ExcelWorkingResourceRequest,
 } from '../src/index.js';
 
 const excelResource = { id: 'resource-1', filePath: 'C:/workbooks/report.xlsx' };
@@ -139,11 +140,12 @@ describe('Excel discovery Application Tools', () => {
   it('exposes workbook metadata without filePath and preserves connector result', async () => {
     const signal = new AbortController().signal;
     const getWorkbookInfo = vi.fn(async () => workbookInfo);
+    const workingResourceManager = createWorkingResourceManager();
     const connector: ExcelDiscoveryConnector = {
       getWorkbookInfo,
       getSheetProfile: vi.fn(),
     };
-    const tool = createGetWorkbookInfoTool(connector);
+    const tool = createGetWorkbookInfoTool(connector, workingResourceManager);
 
     expect(tool.parameters).toEqual({
       type: 'object',
@@ -162,6 +164,12 @@ describe('Excel discovery Application Tools', () => {
     const result = await tool.execute('call-1', {}, signal, context);
 
     expect(getWorkbookInfo).toHaveBeenCalledWith({ filePath: excelResource.filePath }, signal);
+    expect(workingResourceManager.resolveReadablePath).toHaveBeenCalledWith({
+      sessionId: context.sessionId,
+      sourceResourceId: excelResource.id,
+      sourcePath: excelResource.filePath,
+      signal,
+    });
     expect(result.content[0]).toMatchObject({ type: 'text' });
     expect(result.content[0]?.type === 'text' && result.content[0].text).toContain('sheetCount: 2');
     expect(result.content[0]?.type === 'text' && result.content[0].text).toContain('name: Summary');
@@ -179,11 +187,12 @@ describe('Excel discovery Application Tools', () => {
   it('combines sheet arguments with the resource filePath and preserves profile result', async () => {
     const signal = new AbortController().signal;
     const getSheetProfile = vi.fn(async () => sheetProfile);
+    const workingResourceManager = createWorkingResourceManager();
     const connector: ExcelDiscoveryConnector = {
       getWorkbookInfo: vi.fn(),
       getSheetProfile,
     };
-    const tool = createGetSheetProfileTool(connector);
+    const tool = createGetSheetProfileTool(connector, workingResourceManager);
 
     expect(tool.parameters).toEqual({
       type: 'object',
@@ -237,19 +246,50 @@ describe('Excel discovery Application Tools', () => {
 
   it('passes the explicitly selected resource filePath to the workbook capability', async () => {
     const getWorkbookInfo = vi.fn(async () => workbookInfo);
+    const workingPath = '/workspace/session-1/resources/resource-a/working.xlsx';
+    const workingResourceManager = createWorkingResourceManager((request) =>
+      request.sourceResourceId === resourceA.id ? workingPath : request.sourcePath,
+    );
     const connector: ExcelDiscoveryConnector = {
       getWorkbookInfo,
       getSheetProfile: vi.fn(),
     };
 
-    await createGetWorkbookInfoTool(connector).execute(
+    await createGetWorkbookInfoTool(connector, workingResourceManager).execute(
       'call-resource-alias',
       { resource: 'excel-1' },
       undefined,
       multiResourceContext,
     );
 
-    expect(getWorkbookInfo).toHaveBeenCalledWith({ filePath: resourceA.filePath }, undefined);
+    expect(workingResourceManager.resolveReadablePath).toHaveBeenCalledWith({
+      sessionId: multiResourceContext.sessionId,
+      sourceResourceId: resourceA.id,
+      sourcePath: resourceA.filePath,
+    });
+    expect(getWorkbookInfo).toHaveBeenCalledWith({ filePath: workingPath }, undefined);
+  });
+
+  it('routes get_sheet_profile to an existing working copy', async () => {
+    const workingPath = '/workspace/session-1/resources/resource-1/working.xlsx';
+    const getSheetProfile = vi.fn(async () => sheetProfile);
+    const workingResourceManager = createWorkingResourceManager(() => workingPath);
+    const connector: ExcelDiscoveryConnector = {
+      getWorkbookInfo: vi.fn(),
+      getSheetProfile,
+    };
+
+    await createGetSheetProfileTool(connector, workingResourceManager).execute(
+      'call-working-profile',
+      { sheetName: 'Data' },
+      undefined,
+      context,
+    );
+
+    expect(getSheetProfile).toHaveBeenCalledWith(
+      { filePath: workingPath, sheetName: 'Data' },
+      undefined,
+    );
   });
 
   it('omits sampleSize when the model does not provide it', async () => {
@@ -259,7 +299,7 @@ describe('Excel discovery Application Tools', () => {
       getSheetProfile,
     };
 
-    await createGetSheetProfileTool(connector).execute(
+    await createGetSheetProfileTool(connector, createWorkingResourceManager()).execute(
       'call-3',
       { sheetName: 'Data' },
       undefined,
@@ -279,15 +319,21 @@ describe('Excel discovery Application Tools', () => {
     const getWorkbookInfo = vi.fn(async () => workbookInfo);
     const getSheetProfile = vi.fn(async () => sheetProfile);
     const connector: ExcelDiscoveryConnector = { getWorkbookInfo, getSheetProfile };
+    const workingResourceManager = createWorkingResourceManager();
 
     await expect(
-      createGetWorkbookInfoTool(connector).execute('call-4', {}, undefined, contextWithoutResource),
+      createGetWorkbookInfoTool(connector, workingResourceManager).execute(
+        'call-4',
+        {},
+        undefined,
+        contextWithoutResource,
+      ),
     ).rejects.toMatchObject({
       code: 'EXCEL_RESOURCE_REQUIRED',
       message: expect.stringContaining('No Excel workbook is attached'),
     });
     await expect(
-      createGetSheetProfileTool(connector).execute(
+      createGetSheetProfileTool(connector, workingResourceManager).execute(
         'call-5',
         { sheetName: 'Data' },
         undefined,
@@ -300,5 +346,16 @@ describe('Excel discovery Application Tools', () => {
 
     expect(getWorkbookInfo).not.toHaveBeenCalled();
     expect(getSheetProfile).not.toHaveBeenCalled();
+    expect(workingResourceManager.resolveReadablePath).not.toHaveBeenCalled();
   });
 });
+
+function createWorkingResourceManager(
+  resolvePath: (request: ExcelWorkingResourceRequest) => string = (request) => request.sourcePath,
+) {
+  return {
+    resolveReadablePath: vi.fn(async (request: ExcelWorkingResourceRequest) =>
+      resolvePath(request),
+    ),
+  };
+}

@@ -21,10 +21,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createGetSheetProfileTool,
   createGetWorkbookInfoTool,
+  ExcelWorkingResourceManager,
   ExecuteTurn,
   type TurnExecutionEvent,
 } from '@opspilot/application';
 import {
+  FileSystemExcelWorkingResourceStore,
   FileSystemExcelSourceResourceStore,
   FileSystemSessionStore,
   FileSystemTurnStore,
@@ -70,7 +72,12 @@ describe('Application Excel discovery Turn integration', () => {
       turnStore: new FileSystemTurnStore(sessionDirectory),
       modelGateway: gateway,
       defaultModel: model,
-      toolDefinitions: [createGetWorkbookInfoTool(new ExcelJsDiscoveryAdapter())],
+      toolDefinitions: [
+        createGetWorkbookInfoTool(
+          new ExcelJsDiscoveryAdapter(),
+          createWorkingResourceManager(join(sessionDirectory, 'working-resources')),
+        ),
+      ],
     });
     const events: TurnExecutionEvent[] = [];
 
@@ -134,7 +141,12 @@ describe('Application Excel discovery Turn integration', () => {
       turnStore: new FileSystemTurnStore(sessionDirectory),
       modelGateway: gateway,
       defaultModel: model,
-      toolDefinitions: [createGetSheetProfileTool(new ExcelJsDiscoveryAdapter())],
+      toolDefinitions: [
+        createGetSheetProfileTool(
+          new ExcelJsDiscoveryAdapter(),
+          createWorkingResourceManager(join(sessionDirectory, 'working-resources')),
+        ),
+      ],
     });
     const events: TurnExecutionEvent[] = [];
 
@@ -219,7 +231,12 @@ describe('Application Excel discovery Turn integration', () => {
       turnStore: new FileSystemTurnStore(sessionDirectory),
       modelGateway: gateway,
       defaultModel: model,
-      toolDefinitions: [createGetWorkbookInfoTool(new ExcelJsDiscoveryAdapter())],
+      toolDefinitions: [
+        createGetWorkbookInfoTool(
+          new ExcelJsDiscoveryAdapter(),
+          createWorkingResourceManager(join(sessionDirectory, 'working-resources')),
+        ),
+      ],
     });
 
     const result = await runner.execute({
@@ -322,9 +339,7 @@ function lastAssistantText(messages: readonly AgentMessage[]): string {
     .join('');
 }
 
-function eventTypes(
-  events: readonly TurnExecutionEvent[],
-): readonly TurnExecutionEvent['type'][] {
+function eventTypes(events: readonly TurnExecutionEvent[]): readonly TurnExecutionEvent['type'][] {
   return events.map((event) => event.type);
 }
 
@@ -350,4 +365,9 @@ async function createFixture(): Promise<{
   const sessionDirectory = join(directory, 'sessions');
   await mkdir(sessionDirectory);
   return { filePath, sessionDirectory };
+}
+
+function createWorkingResourceManager(workspaceRoot: string): ExcelWorkingResourceManager {
+  const store = new FileSystemExcelWorkingResourceStore(workspaceRoot);
+  return new ExcelWorkingResourceManager({ store, fileOperator: store });
 }

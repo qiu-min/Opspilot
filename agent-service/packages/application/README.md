@@ -93,11 +93,11 @@ live presentation 相同的 `ToolPresentationResolver` 重新解析，失败时�
 
 Excel Application Tools 使用当前 Turn 的 `ToolExecutionContext` 携带完整的
 `excelResources`、`excelResourceRefs` 与 `activeExcelResourceId`。模型可以在工具参数中传入
-Session-local 的 `resource` 别名；Application 在调用 Capability 前将别名解析为对应的
-`ExcelResource.filePath`。因此别名、内部 resource id、Session
-状态和默认资源选择不会进入 `@opspilot/tool-gateway`，Gateway 仍只接收业务无关的
-`filePath` 等 Capability 参数。durable `TurnExecutionContext` 仍保持现有的单 active
-Excel resource 契约，恢复扩展留待后续变更。
+Session-local 的 `resource` 别名；Application 先将别名解析为 `ExcelResource`，再通过
+`ExcelWorkingResourceManager.resolveReadablePath()` 按当前 Session 与 resource id 选择 source 或
+working path。Gateway 只收到最终的 `filePath` 等 Capability 参数，不接触别名、内部 resource id
+或 working resource 状态。durable `TurnExecutionContext` 仍保持现有的单 active Excel resource
+契约，恢复扩展留待后续变更。
 
 当前范围暂不包含动态切换模型或 thinking level、复杂重试、扩展系统和 Session 切换等 Coding Agent 能力。
 
@@ -110,11 +110,11 @@ Excel resource 契约，恢复扩展留待后续变更。
 - `context/`、`tools/`、`system-prompt/`：保持为独立的应用能力模块。
 - `resources/excel/`：定义 Session-scoped Excel resource registry 的 source locator port、Turn
   resource context，以及 Excel working resource、copy-on-write 生命周期及持久化 port；不依赖具体
-  filesystem adapter，也不改变 Tool Gateway contract。
+  filesystem adapter，也不改变 Tool Gateway contract。Excel read tools 通过注入的 manager 解析有效路径。
 - `Session.registerResource()`：由 `ExecuteTurn` 在收到新 Excel resource 后登记 `id + kind + alias`；
   alias 以 `excel-N` 形式在 Session 内稳定分配并持久化。后续 Turn 从独立 source locator store
-  恢复可用 resources，并以内部 `activeResourceId` 作为默认 resource；不接入 Working Resource
-  Manager。
+  恢复可用 resources，并以内部 `activeResourceId` 作为默认 resource。resource alias 选择与物理路径
+  选择仍由各自边界处理。
 
 ## Excel working resources
 
@@ -132,7 +132,9 @@ data/workspaces/{sessionId}/resources/{sourceResourceId}/
 └── metadata.json
 ```
 
-Tool Gateway 仍然只接收 `filePath`。Excel tools 的 working resource 接入留给后续 PR。
+`get_workbook_info` 与 `get_sheet_profile` 会经 manager 读取现有 working copy，否则读取 immutable
+source。Application 当前没有 Excel mutation tool wrapper；Tool Gateway 的写入、aggregate 与 filter
+capabilities 不在此处包装，也不会自行选择 source 或 working path。
 
 其中 `turn/presentation/` 提供 live stream 与历史 Turn presentation 共用的工具展示解析能力；`turn/ports/` 与 `session/ports/` 只定义 Application persistence port，不包含 infrastructure 实现。
 

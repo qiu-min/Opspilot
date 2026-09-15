@@ -17,10 +17,12 @@ import { Workbook } from 'exceljs';
 import {
   createGetSheetProfileTool,
   createGetWorkbookInfoTool,
+  ExcelWorkingResourceManager,
   ExecuteTurn,
   type TurnExecutionEvent,
 } from '@opspilot/application';
 import {
+  FileSystemExcelWorkingResourceStore,
   FileSystemExcelSourceResourceStore,
   FileSystemSessionStore,
   FileSystemTurnStore,
@@ -54,6 +56,13 @@ async function main(): Promise<void> {
 
     const toolEvents: string[] = [];
     const excelDiscoveryConnector = new ExcelJsDiscoveryAdapter();
+    const workingResourceStore = new FileSystemExcelWorkingResourceStore(
+      join(directory, 'workspaces'),
+    );
+    const workingResourceManager = new ExcelWorkingResourceManager({
+      store: workingResourceStore,
+      fileOperator: workingResourceStore,
+    });
     const runner = new ExecuteTurn({
       sessionStore: new FileSystemSessionStore(sessionDirectory),
       excelSourceResourceStore: new FileSystemExcelSourceResourceStore(
@@ -63,8 +72,8 @@ async function main(): Promise<void> {
       modelGateway: gateway,
       defaultModel: model,
       toolDefinitions: [
-        createGetWorkbookInfoTool(excelDiscoveryConnector),
-        createGetSheetProfileTool(excelDiscoveryConnector),
+        createGetWorkbookInfoTool(excelDiscoveryConnector, workingResourceManager),
+        createGetSheetProfileTool(excelDiscoveryConnector, workingResourceManager),
       ],
     });
 

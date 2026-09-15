@@ -2,6 +2,10 @@ import type { ExcelDiscoveryConnector, GetWorkbookInfoResult } from '@opspilot/t
 import type { JsonObject } from '@opspilot/model-gateway';
 
 import { resolveExcelResource } from './require-excel-resource.js';
+import {
+  createExcelWorkingResourceRequest,
+  type ExcelWorkingResourcePathResolver,
+} from './excel-working-resource-request.js';
 import type { ToolDefinition } from '../tool-definition.js';
 
 const GET_WORKBOOK_INFO_PARAMETERS: JsonObject = {
@@ -20,6 +24,7 @@ const GET_WORKBOOK_INFO_PARAMETERS: JsonObject = {
 /** Creates the Application Tool that describes the workbook in the current Excel resource. */
 export function createGetWorkbookInfoTool(
   discoveryConnector: ExcelDiscoveryConnector,
+  workingResourceManager: ExcelWorkingResourcePathResolver,
 ): ToolDefinition<GetWorkbookInfoResult> {
   return {
     name: 'get_workbook_info',
@@ -30,10 +35,10 @@ export function createGetWorkbookInfoTool(
     async execute(_callId, args, signal, context) {
       const resourceAlias = narrowResourceAlias(args);
       const excelResource = resolveExcelResource(context, resourceAlias);
-      const result = await discoveryConnector.getWorkbookInfo(
-        { filePath: excelResource.filePath },
-        signal,
+      const filePath = await workingResourceManager.resolveReadablePath(
+        createExcelWorkingResourceRequest(context, excelResource, signal),
       );
+      const result = await discoveryConnector.getWorkbookInfo({ filePath }, signal);
 
       return {
         content: [{ type: 'text', text: formatWorkbookInfo(result) }],

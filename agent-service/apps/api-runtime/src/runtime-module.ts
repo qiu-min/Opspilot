@@ -34,12 +34,14 @@ import { FileSystemExcelResourcePathResolver } from './files/excel-resource-path
 import type { RuntimeConfig } from './runtime-config.js';
 
 /** Builds the only Excel tools exposed by this runtime composition root. */
-export function createExcelDiscoveryToolDefinitions(): readonly ToolDefinition[] {
+export function createExcelDiscoveryToolDefinitions(
+  workingResourceManager: Pick<ExcelWorkingResourceManager, 'resolveReadablePath'>,
+): readonly ToolDefinition[] {
   const excelDiscoveryConnector = new ExcelJsDiscoveryAdapter();
 
   return [
-    createGetWorkbookInfoTool(excelDiscoveryConnector),
-    createGetSheetProfileTool(excelDiscoveryConnector),
+    createGetWorkbookInfoTool(excelDiscoveryConnector, workingResourceManager),
+    createGetSheetProfileTool(excelDiscoveryConnector, workingResourceManager),
   ];
 }
 
@@ -55,21 +57,21 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     );
   }
 
-  const toolDefinitions = createExcelDiscoveryToolDefinitions();
-  const systemPrompt = buildOpsPilotSystemPrompt({
-    tools: toolDefinitions,
-  });
-  const sessionStore = new FileSystemSessionStore(config.sessionDirectory);
   const excelWorkingResourceStore = new FileSystemExcelWorkingResourceStore(
-    config.workspaceStorageRoot,
-  );
-  const excelSourceResourceStore = new FileSystemExcelSourceResourceStore(
     config.workspaceStorageRoot,
   );
   const excelWorkingResourceManager = new ExcelWorkingResourceManager({
     store: excelWorkingResourceStore,
     fileOperator: excelWorkingResourceStore,
   });
+  const toolDefinitions = createExcelDiscoveryToolDefinitions(excelWorkingResourceManager);
+  const systemPrompt = buildOpsPilotSystemPrompt({
+    tools: toolDefinitions,
+  });
+  const sessionStore = new FileSystemSessionStore(config.sessionDirectory);
+  const excelSourceResourceStore = new FileSystemExcelSourceResourceStore(
+    config.workspaceStorageRoot,
+  );
   /**一次业务层级别的 Turn实例：包括events.json和metadata.json，前者保存追加式执行事实，后者保存当前 Turn snapshot */
   const turnStore = new FileSystemTurnStore(config.turnStorageRoot);
   /** excution.json保存的是一次 Turn 恢复所需、但不属于 Domain Turn 的最小输入，目前主要是excel业务 */

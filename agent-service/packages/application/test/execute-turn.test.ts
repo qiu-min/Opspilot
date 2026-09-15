@@ -358,7 +358,11 @@ describe('ExecuteTurn', () => {
         assistantStream(assistantMessage('', model, [defaultCall]), model),
         assistantStream(assistantMessage('default b'), model),
       ]),
-      toolDefinitions: [createGetWorkbookInfoTool(connector)],
+      toolDefinitions: [
+        createGetWorkbookInfoTool(connector, {
+          resolveReadablePath: async (request) => request.sourcePath,
+        }),
+      ],
       defaultModel: model,
     });
 
