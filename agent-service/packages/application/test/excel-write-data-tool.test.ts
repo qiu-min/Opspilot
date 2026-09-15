@@ -7,11 +7,13 @@ import {
   type ExcelWorkingMutationRequest,
   type ExcelWorkingResourceManager,
   type ToolContext,
+  createToolMutationId,
 } from '../src/index.js';
 
 const resourceA = { id: 'resource-a', filePath: '/source/a.xlsx' };
 const resourceB = { id: 'resource-b', filePath: '/source/b.xlsx' };
 const multiResourceContext: ToolContext = {
+  turnId: 'turn-1',
   sessionId: 'session-1',
   excelResources: [resourceA, resourceB],
   excelResourceRefs: [
@@ -28,7 +30,7 @@ const writeResult: WriteDataResult = {
 };
 
 describe('write_data Application Tool', () => {
-  it('uses callId as mutationId and writes only to the selected resource staging path', async () => {
+  it('uses a Turn-scoped mutationId and writes only to the selected resource staging path', async () => {
     const order: string[] = [];
     const { manager, executeMutation } = createManager(order);
     const writeData = vi.fn<ExcelDataConnector['writeData']>(async () => {
@@ -58,7 +60,7 @@ describe('write_data Application Tool', () => {
       sourceResourceId: resourceA.id,
       sourcePath: resourceA.filePath,
       signal,
-      mutationId: 'write-call',
+      mutationId: createToolMutationId(multiResourceContext.turnId, 'write-call'),
     };
     expect(order).toEqual(['executeMutation', 'writeData', 'commit']);
     expect(executeMutation).toHaveBeenCalledWith(request, expect.any(Function));

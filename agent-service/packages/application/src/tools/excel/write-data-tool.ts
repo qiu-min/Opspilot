@@ -5,6 +5,7 @@ import type { ExcelWorkingResourceManager } from '../../resources/excel/excel-wo
 import { resolveExcelResource } from './require-excel-resource.js';
 import { createExcelWorkingResourceRequest } from './excel-working-resource-request.js';
 import type { ToolDefinition } from '../tool-definition.js';
+import { createToolMutationId } from '../tool-mutation-id.js';
 
 const WRITE_DATA_PARAMETERS: JsonObject = {
   type: 'object',
@@ -58,8 +59,9 @@ export function createWriteDataTool(
       const { resource, sheetName, startCell, data } = narrowWriteDataArguments(args);
       const excelResource = resolveExcelResource(context, resource);
       const request = createExcelWorkingResourceRequest(context, excelResource, signal);
+      const mutationId = createToolMutationId(context.turnId, callId);
       const mutation = await workingResourceManager.executeMutation(
-        { ...request, mutationId: callId },
+        { ...request, mutationId },
         async ({ stagingPath }) =>
           await dataConnector.writeData(
             {

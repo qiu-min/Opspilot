@@ -62,8 +62,10 @@ fail fast，不会被静默删除。Application manager 在 `sessionId + sourceR
 prepare、Gateway callback、commit/abort 的单进程锁；不同资源可以并发。读取不等待 mutation callback，
 通过 atomic pointer 保持旧版本可见，直到新 pointer 提交。
 
-`write_data` 的 callId 作为 durable mutationId；同一资源重放时，Infrastructure 返回已存回执，
-Application 不会再次调用 Gateway。回执按最近 32 条有界保存。该协议仅提供单进程语义，不实现
+`write_data` 使用 Application 生成的 Turn-scoped opaque `mutationId`；同一资源重放时，Infrastructure
+返回已存回执，Application 不会再次调用 Gateway。旧 PR3 的裸 callId receipt 继续作为合法 opaque string
+读取，manifest 不解析 mutationId 格式；新执行不会 fallback 到裸 callId 查询。回执按最近 32 条有界保存。
+该协议仅提供单进程语义，不实现
 分布式锁、完整 revision history、Undo/Redo 或新的 TurnEvent/checkpoint phase。
 
 ## Live stream adapter

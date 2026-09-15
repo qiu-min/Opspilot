@@ -171,6 +171,7 @@ export class ExecuteTurn {
       recorder.recordInputCommitted(inputEntry.id, inputEntry.id);
 
       const tools = wrapToolDefinitions(this.toolDefinitions, {
+        turnId: turn.getId(),
         sessionId,
         excelResources: excelResourceContext.resources,
         excelResourceRefs: excelResourceContext.excelResourceRefs,

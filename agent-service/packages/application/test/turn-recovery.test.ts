@@ -342,6 +342,7 @@ it('restores the Excel resource, tools, and guidance when resuming a Turn', asyn
 
   expect(result.kind).toBe('resumed');
   expect(toolContext).toEqual({
+    turnId: turn.getId(),
     sessionId: session.getId(),
     excelResources: [resource],
     excelResourceRefs: [{ id: resource.id, kind: 'excel', alias: 'excel-1' }],

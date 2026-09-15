@@ -27,6 +27,7 @@ import {
   ResumeTurn,
   Turn,
   TurnEventRecorder,
+  createToolMutationId,
   type TurnExecutionEvent,
 } from '@opspilot/application';
 import {
@@ -366,6 +367,54 @@ describe('Application Excel mutation Turn integration', () => {
     expect(secondTurn.sessionId).toBe(firstTurn.sessionId);
   });
 
+  it('treats the same Provider callId in a different Turn as a new mutation', async () => {
+    const { filePath, sessionDirectory } = await createFixture();
+    const workspaceRoot = join(dirname(filePath), 'workspaces');
+    const call: ModelToolCall = {
+      callId: 'duplicated-call',
+      name: 'write_data',
+      arguments: { sheetName: 'Sales', startCell: 'D1', data: [['Turn A']] },
+    };
+    const repeatedCall: ModelToolCall = {
+      ...call,
+      arguments: { sheetName: 'Sales', startCell: 'E1', data: [['Turn B']] },
+    };
+    const harness = createExcelTurnHarness(sessionDirectory, workspaceRoot, [
+      assistantMessage('', [call]),
+      assistantMessage('First write completed.'),
+      assistantMessage('', [repeatedCall]),
+      assistantMessage('Second write completed.'),
+    ]);
+    const executeMutation = vi.spyOn(harness.workingResourceManager, 'executeMutation');
+    const writeData = vi.spyOn(harness.dataConnector, 'writeData');
+
+    const first = await harness.runner.execute({
+      message: userMessage('Write from the first Turn.'),
+      excelResource: { id: 'fixture-workbook', filePath },
+    });
+    const second = await harness.runner.execute({
+      sessionId: first.sessionId,
+      message: userMessage('Write from the second Turn.'),
+    });
+
+    const mutationIds = executeMutation.mock.calls.map(([request]) => request.mutationId);
+    expect(first.turnId).not.toBe(second.turnId);
+    expect(mutationIds).toEqual([
+      createToolMutationId(first.turnId, call.callId),
+      createToolMutationId(second.turnId, call.callId),
+    ]);
+    expect(mutationIds[0]).not.toBe(mutationIds[1]);
+    expect(writeData).toHaveBeenCalledTimes(2);
+    expect((await harness.workingResourceStore.get(first.sessionId, 'fixture-workbook'))?.revision)
+      .toBe(2);
+
+    const current = await harness.workingResourceStore.get(first.sessionId, 'fixture-workbook');
+    const workbook = new Workbook();
+    await workbook.xlsx.readFile(current!.workingPath);
+    expect(workbook.getWorksheet('Sales')?.getCell('D1').value).toBe('Turn A');
+    expect(workbook.getWorksheet('Sales')?.getCell('E1').value).toBe('Turn B');
+  });
+
   it('routes an explicit alias to its own working copy when another resource is active', async () => {
     const { filePath: filePathA, sessionDirectory } = await createFixture();
     const filePathB = join(dirname(filePathA), 'second-fixture.xlsx');
@@ -485,6 +534,7 @@ describe('Application Excel mutation Turn integration', () => {
       .spyOn(harness.dataConnector, 'writeData')
       .mockRejectedValue(new Error('Excel write failed.'));
     const context = {
+      turnId: 'turn-write-failure',
       sessionId: 'session-write-failure',
       excelResources: [{ id: 'fixture-workbook', filePath }],
       excelResourceRefs: [{ id: 'fixture-workbook', kind: 'excel' as const, alias: 'excel-1' }],
@@ -551,7 +601,9 @@ describe('Application Excel mutation Turn integration', () => {
     const dataConnector = new ExcelJsDataAdapter();
     const writeData = vi.spyOn(dataConnector, 'writeData');
     const writeTool = createWriteDataTool(dataConnector, workingResourceManager);
+    const executeMutation = vi.spyOn(workingResourceManager, 'executeMutation');
     const toolContext = {
+      turnId: turn.getId(),
       sessionId: session.getId(),
       excelResources: [{ id: 'fixture-workbook', filePath }],
       excelResourceRefs: [
@@ -597,6 +649,10 @@ describe('Application Excel mutation Turn integration', () => {
     expect(result.kind).toBe('resumed');
     expect(result.plan?.kind).toBe('resume_tools');
     expect(writeData).toHaveBeenCalledTimes(1);
+    expect(executeMutation.mock.calls.map(([request]) => request.mutationId)).toEqual([
+      createToolMutationId(turn.getId(), call.callId),
+      createToolMutationId(turn.getId(), call.callId),
+    ]);
     expect(recoveryGateway.streamMock).toHaveBeenCalledTimes(1);
     expect(toolResults).toHaveLength(1);
     expect(toolResults[0]).toMatchObject({

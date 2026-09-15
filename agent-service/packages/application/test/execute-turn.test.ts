@@ -416,19 +416,21 @@ describe('ExecuteTurn', () => {
       message: userMessage('use workbook a'),
       excelResource: resource,
     });
-    await runner.execute({
+    const second = await runner.execute({
       sessionId: first.sessionId,
       message: userMessage('continue with the workbook'),
     });
 
     expect(receivedContexts).toEqual([
       {
+        turnId: first.turnId,
         sessionId: first.sessionId,
         excelResources: [resource],
         excelResourceRefs: [{ id: resource.id, kind: 'excel', alias: 'excel-1' }],
         activeExcelResourceId: resource.id,
       },
       {
+        turnId: second.turnId,
         sessionId: first.sessionId,
         excelResources: [resource],
         excelResourceRefs: [{ id: resource.id, kind: 'excel', alias: 'excel-1' }],
@@ -439,6 +441,7 @@ describe('ExecuteTurn', () => {
       { id: 'resource-a', kind: 'excel', alias: 'excel-1' },
     ]);
     expect(store.load(first.sessionId).getActiveResourceId()).toBe('resource-a');
+    expect(first.turnId).not.toBe(second.turnId);
   });
 
   it('persists a completed Turn with ordered events and an assistant checkpoint', async () => {
@@ -1460,6 +1463,7 @@ describe('ExecuteTurn', () => {
     );
 
     expect(receivedContext).toEqual({
+      turnId: result.turnId,
       sessionId: result.sessionId,
       excelResources: [{ id: 'resource-1', filePath: 'workbook.xlsx' }],
       excelResourceRefs: [{ id: 'resource-1', kind: 'excel', alias: 'excel-1' }],
@@ -1523,6 +1527,7 @@ describe('ExecuteTurn', () => {
     await runner.execute({ message: userMessage('use lookup') });
 
     expect(receivedContext).toEqual({
+      turnId: expect.any(String),
       sessionId: expect.any(String),
       excelResources: [],
       excelResourceRefs: [],
@@ -1563,7 +1568,7 @@ describe('ExecuteTurn', () => {
       message: userMessage('use workbook a'),
       excelResource: resourceA,
     });
-    await runner.execute({
+    const secondResult = await runner.execute({
       sessionId: firstResult.sessionId,
       message: userMessage('use workbook b'),
       excelResource: resourceB,
@@ -1571,12 +1576,14 @@ describe('ExecuteTurn', () => {
 
     expect(receivedContexts).toEqual([
       {
+        turnId: firstResult.turnId,
         sessionId: firstResult.sessionId,
         excelResources: [resourceA],
         excelResourceRefs: [{ id: resourceA.id, kind: 'excel', alias: 'excel-1' }],
         activeExcelResourceId: resourceA.id,
       },
       {
+        turnId: secondResult.turnId,
         sessionId: firstResult.sessionId,
         excelResources: [resourceA, resourceB],
         excelResourceRefs: [

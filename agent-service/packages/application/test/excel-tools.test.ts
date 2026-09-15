@@ -17,6 +17,7 @@ import {
 
 const excelResource = { id: 'resource-1', filePath: 'C:/workbooks/report.xlsx' };
 const context: ToolContext = {
+  turnId: 'turn-1',
   sessionId: 'session-1',
   excelResources: [excelResource],
   excelResourceRefs: [{ id: excelResource.id, kind: 'excel', alias: 'excel-1' }],
@@ -24,6 +25,7 @@ const context: ToolContext = {
 };
 
 const contextWithoutResource: ToolContext = {
+  turnId: 'turn-1',
   sessionId: 'session-1',
   excelResources: [],
   excelResourceRefs: [],
@@ -33,6 +35,7 @@ const contextWithoutResource: ToolContext = {
 const resourceA = { id: 'resource-a', filePath: 'C:/workbooks/a.xlsx' };
 const resourceB = { id: 'resource-b', filePath: 'C:/workbooks/b.xlsx' };
 const multiResourceContext: ToolContext = {
+  turnId: 'turn-1',
   sessionId: 'session-1',
   excelResources: [resourceA, resourceB],
   excelResourceRefs: [

@@ -254,6 +254,7 @@ export class ResumeTurn {
         sessionStore: this.sessionStore,
         modelGateway: this.modelGateway,
         tools: wrapToolDefinitions(this.toolDefinitions, {
+          turnId: turn.getId(),
           sessionId,
           excelResources,
           excelResourceRefs,

@@ -30,6 +30,7 @@ describe('ToolDefinition wrappers', () => {
     const definition = createDefinition('lookup', execute);
 
     const wrapped = wrapToolDefinition(definition, {
+      turnId: 'turn-1',
       sessionId: 'session-1',
       excelResources: [],
       excelResourceRefs: [],
@@ -44,6 +45,7 @@ describe('ToolDefinition wrappers', () => {
 
   it('forwards runtime execute arguments and returns the definition result', async () => {
     const context: ToolContext = {
+      turnId: 'turn-1',
       sessionId: 'session-1',
       excelResources: [],
       excelResourceRefs: [],
@@ -95,6 +97,7 @@ describe('ToolDefinition wrappers', () => {
     ];
 
     const wrapped = wrapToolDefinitions(definitions, {
+      turnId: 'turn-1',
       sessionId: 'session-1',
       excelResources: [],
       excelResourceRefs: [],
@@ -121,6 +124,7 @@ describe('ToolDefinition wrappers', () => {
 
     expect(
       wrapToolDefinitions(definitions, {
+        turnId: 'turn-1',
         sessionId: 'session-1',
         excelResources: [],
         excelResourceRefs: [],
@@ -129,6 +133,7 @@ describe('ToolDefinition wrappers', () => {
     ).toEqual(['lookup']);
     expect(
       wrapToolDefinitions(definitions, {
+        turnId: 'turn-1',
         sessionId: 'session-1',
         excelResources: [{ id: 'resource-1', filePath: 'workbook.xlsx' }],
         excelResourceRefs: [{ id: 'resource-1', kind: 'excel', alias: 'excel-1' }],

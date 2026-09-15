@@ -91,8 +91,9 @@ live presentation 相同的 `ToolPresentationResolver` 重新解析，失败时�
 - 组合具体 Agent 所需的模型配置、System Prompt 与工具
 - 向上层 API 提供稳定的应用用例接口
 
-Excel Application Tools 使用当前 Turn 的 `ToolExecutionContext` 携带完整的
-`excelResources`、`excelResourceRefs` 与 `activeExcelResourceId`。模型可以在工具参数中传入
+Excel Application Tools 使用当前 Turn 的 `ToolExecutionContext` 携带 `turnId`、
+`excelResources`、`excelResourceRefs` 与 `activeExcelResourceId`。其中 `turnId` 只供 Application
+执行期使用，不进入 Agent Runtime、模型可见参数或持久化 `execution.json`。模型可以在工具参数中传入
 Session-local 的 `resource` 别名；Application 先将别名解析为 `ExcelResource`，再通过
 `ExcelWorkingResourceManager.resolveReadablePath()` 按当前 Session 与 resource id 选择 source 或
 working path。`write_data` 复用相同 alias 选择与 request helper，确保 working copy 后只将
@@ -122,15 +123,20 @@ resource 契约，恢复扩展留待后续变更。
 Backend 提供的 Excel source 是 immutable input。Application 的
 `ExcelWorkingResourceManager` 以 `sessionId + sourceResourceId` 为稳定身份；读操作返回 source
 或当前 committed revision。首次成功 mutation 从 source 创建 revision 1。`executeMutation()`
-持有同一 resource 的单进程锁，直到 staging callback、commit 或 abort 完成；它用 Tool `callId`
-作为 mutationId，并在回放时返回 manifest 中的 opaque JSON receipt，不再次调用 callback。
-sourcePath 变更会被拒绝。Staging、revision 文件、manifest 和原子 rename 细节属于 Infrastructure。
+持有同一 resource 的单进程锁，直到 staging callback、commit 或 abort 完成。Application 使用
+`createToolMutationId(turnId, callId)` 生成 durable `mutationId`；长度前缀编码使 identity 稳定且无歧义，
+不包含 attempt、工具参数、alias 或物理路径。`ResumeTurn` 继续使用原 Turn ID，因此重放命中相同 receipt；
+不同 Turn 的相同 Provider `callId` 则是不同 mutation。Provider `callId` 本身保持原样，用于 ToolResult、
+TurnEvent 与 Trace correlation。Working Resource 只接收 opaque `mutationId`，回放时返回 manifest 中的
+opaque JSON receipt，不再次调用 callback。旧 PR3 裸 `callId` receipt 仍是合法 opaque string，但新执行不
+回退查询裸 `callId`。sourcePath 变更会被拒绝。Staging、revision 文件、manifest 和原子 rename 细节属于
+Infrastructure。
 
 Application 的 `write_data` 校验非空矩形 JSON scalar 数据，并只把 staging path 交给 Tool Gateway。
 只有 Gateway 成功且 current pointer 提交成功后，工具才返回成功；其 recovery policy 为
 `retry_safe`。现有 `TurnRecoveryPlanner` 按 ToolDefinition policy 决定是否重试，`ResumeTurn`
-重放原 ToolCall；Working Resource Manager 根据 callId 回执保证该重放幂等。Turn recovery 不增加
-Excel 特判，`execution.json` 仍只保存恢复所需的最小输入。
+重放原 ToolCall 并沿用原 Turn ID；Working Resource Manager 根据 scoped mutation receipt 保证该重放幂等。
+Turn recovery 不增加 Excel 特判，`execution.json` 仍只保存恢复所需的最小输入。
 
 Filesystem adapter 位于 `@opspilot/infrastructure`，使用：
 
