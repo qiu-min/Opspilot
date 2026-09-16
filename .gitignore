@@ -39,6 +39,7 @@ backend/src/OpsPilot.Api/storage/
 # Local persisted sessions
 agent-service/data/sessions/
 agent-service/data/turns/
+agent-service/data/workspaces
 # Docker local overrides
 docker-compose.override.yml
 
