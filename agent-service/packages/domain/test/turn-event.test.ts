@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { TurnEventError, isTurnEvent, validateTurnEvent } from '../src/index.js';
+import {
+  MAX_DURABLE_JSON_VALUE_BYTES,
+  TurnEventError,
+  isTurnEvent,
+  validateTurnEvent,
+} from '../src/index.js';
 
 const baseEvent = {
   version: 2 as const,
@@ -175,7 +180,7 @@ describe('TurnEvent validation', () => {
                   retryable: true,
                 },
               }
-          : { ...baseEvent, type };
+            : { ...baseEvent, type };
 
       expect(() => validateTurnEvent({ ...event, modelCallId: undefined })).toThrow(TurnEventError);
       expect(() => validateTurnEvent({ ...event, modelCallId: '' })).toThrow(TurnEventError);
@@ -237,5 +242,83 @@ describe('TurnEvent validation', () => {
       }),
     ).toThrow(TurnEventError);
     expect(() => validateTurnEvent({ ...baseEvent, type: 'model_started' })).not.toThrow();
+  });
+
+  it('accepts legacy and JSON-safe tool_completed resultDetails', () => {
+    const legacy = {
+      ...baseEvent,
+      type: 'tool_completed' as const,
+      callId: 'call-1',
+      name: 'aggregate_data',
+      isError: false,
+      resultEntryId: 'entry-1',
+      sessionLeafId: 'entry-1',
+    };
+    expect(() => validateTurnEvent(legacy)).not.toThrow();
+
+    for (const resultDetails of [
+      null,
+      'ok',
+      4,
+      true,
+      { sheetName: 'SalesData', rows: [['South', 92_726.94]], truncated: false },
+      [{ name: 'South' }, { name: 'North' }],
+    ]) {
+      expect(() => validateTurnEvent({ ...legacy, resultDetails })).not.toThrow();
+    }
+  });
+
+  it.each([
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['function', () => undefined],
+    ['symbol', Symbol('details')],
+    ['bigint', BigInt(1)],
+    ['undefined', undefined],
+    ['Date', new Date('2026-01-01T00:00:00.000Z')],
+    [
+      'class instance',
+      new (class Details {
+        public readonly value = 1;
+      })(),
+    ],
+    ['nested undefined', { value: undefined }],
+  ])('rejects non-JSON-safe tool_completed resultDetails: %s', (_name, resultDetails) => {
+    const event = {
+      ...baseEvent,
+      type: 'tool_completed' as const,
+      callId: 'call-1',
+      name: 'lookup',
+      isError: false,
+      resultEntryId: 'entry-1',
+      sessionLeafId: 'entry-1',
+      resultDetails,
+    };
+    expect(() => validateTurnEvent(event)).toThrow(TurnEventError);
+    expect(isTurnEvent(event)).toBe(false);
+  });
+
+  it('rejects circular and oversized tool_completed resultDetails', () => {
+    const circular: { self?: unknown } = {};
+    circular.self = circular;
+    const event = {
+      ...baseEvent,
+      type: 'tool_completed' as const,
+      callId: 'call-1',
+      name: 'lookup',
+      isError: false,
+      resultEntryId: 'entry-1',
+      sessionLeafId: 'entry-1',
+    };
+
+    expect(() => validateTurnEvent({ ...event, resultDetails: circular })).toThrow(
+      'must not contain circular references',
+    );
+    expect(() =>
+      validateTurnEvent({
+        ...event,
+        resultDetails: 'x'.repeat(MAX_DURABLE_JSON_VALUE_BYTES),
+      }),
+    ).toThrow('durable JSON value limit');
   });
 });

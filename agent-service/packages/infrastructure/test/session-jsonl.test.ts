@@ -272,6 +272,55 @@ describe('Session JSONL persistence', () => {
     ]);
     expect(readFileSync(filePath, 'utf8')).toContain('"type":"compaction"');
   });
+
+  it('loads legacy ToolResult details while keeping them out of Runtime context', () => {
+    const directory = temporaryDirectory();
+    const filePath = join(directory, 'legacy-tool-result.jsonl');
+    const records = [
+      {
+        type: 'session',
+        version: 1,
+        id: 'session-legacy-tool',
+        timestamp: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        type: 'message',
+        id: 'request',
+        parentId: null,
+        timestamp: '2026-01-01T00:00:01.000Z',
+        message: userMessage('lookup'),
+      },
+      {
+        type: 'message',
+        id: 'tool-result',
+        parentId: 'request',
+        timestamp: '2026-01-01T00:00:02.000Z',
+        message: {
+          role: 'tool',
+          callId: 'call-1',
+          name: 'lookup',
+          content: [{ type: 'text', text: 'failed' }],
+          isError: true,
+          details: { kind: 'recoverable', source: 'legacy-session' },
+        },
+      },
+    ];
+    writeFileSync(
+      filePath,
+      `${records.map((record) => JSON.stringify(record)).join('\n')}\n`,
+      'utf8',
+    );
+
+    const loaded = restoreSession(filePath);
+    const loadedTool = loaded.getEntry('tool-result');
+    expect(loadedTool).toMatchObject({
+      type: 'message',
+      message: { details: { kind: 'recoverable', source: 'legacy-session' } },
+    });
+
+    const runtimeTool = buildSessionContext(loaded).messages.at(-1);
+    expect(runtimeTool).not.toHaveProperty('details');
+  });
 });
 
 describe('Session invalid JSONL files', () => {

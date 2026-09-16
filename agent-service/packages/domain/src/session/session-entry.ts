@@ -93,7 +93,6 @@ export interface SessionToolResultMessage {
   readonly callId: string;
   readonly name: string;
   readonly content: readonly SessionTextContent[];
-  readonly details?: unknown;
   readonly isError: boolean;
 }
 

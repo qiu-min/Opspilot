@@ -22,7 +22,7 @@ sessions/{sessionId}/
 
 为 OpsPilot Application 层建立可持续演进的上下文工程能力，使：
 
-- Session 保存完整、可恢复的会话事实
+- Session 保存完整、可恢复的会话历史；一次执行的 machine-facing ToolResult details 由 durable TurnEvent 保存
 - LLM Context 与 Session History 解耦
 - 长对话可以通过自动 Compaction 持续运行
 - ContextManager 保持为单次模型调用的上下文变换入口

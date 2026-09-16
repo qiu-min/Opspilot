@@ -4,6 +4,7 @@ import {
   type ModelFailureKind,
   type ModelFailureSnapshot,
 } from '../model/model-failure.js';
+import { assertDurableJsonValue, type JsonValue } from '../json-value.js';
 
 /** Current durable TurnEvent record version. */
 export const CURRENT_TURN_EVENT_VERSION = 2 as const;
@@ -82,6 +83,7 @@ export interface ToolCompletedEvent extends TurnEventBase {
   readonly isError: boolean;
   readonly resultEntryId: string;
   readonly sessionLeafId: string;
+  readonly resultDetails?: JsonValue;
 }
 
 export interface CompactionStartedEvent extends TurnEventBase {
@@ -181,14 +183,10 @@ export function validateTurnEvent(event: unknown): asserts event is TurnEvent {
     case 'model_retry_scheduled':
       assertModelCallId(event.modelCallId);
       if (!isPositiveInteger(event.failedAttempt)) {
-        throw new TurnEventError(
-          'model_retry_scheduled failedAttempt must be a positive integer.',
-        );
+        throw new TurnEventError('model_retry_scheduled failedAttempt must be a positive integer.');
       }
       if (!isPositiveInteger(event.nextAttempt) || event.nextAttempt !== event.failedAttempt + 1) {
-        throw new TurnEventError(
-          'model_retry_scheduled nextAttempt must equal failedAttempt + 1.',
-        );
+        throw new TurnEventError('model_retry_scheduled nextAttempt must equal failedAttempt + 1.');
       }
       assertNonNegativeInteger(event.delayMs, 'model_retry_scheduled delayMs');
       assertModelFailure(event.error, 'model_retry_scheduled');
@@ -214,6 +212,17 @@ export function validateTurnEvent(event: unknown): asserts event is TurnEvent {
       }
       assertEntryId(event.resultEntryId, 'tool_completed resultEntryId');
       assertEntryId(event.sessionLeafId, 'tool_completed sessionLeafId');
+      if ('resultDetails' in event) {
+        try {
+          assertDurableJsonValue(event.resultDetails, 'tool_completed resultDetails');
+        } catch (error) {
+          throw new TurnEventError(
+            error instanceof Error
+              ? error.message
+              : 'tool_completed resultDetails must be JSON serializable.',
+          );
+        }
+      }
       return;
     case 'compaction_completed':
       if (event.entryId !== undefined) assertEntryId(event.entryId, 'compaction_completed entryId');

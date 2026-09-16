@@ -138,7 +138,8 @@ function toolCompletedEvent(
   turn: Turn,
   sequence = 0,
   attempt = turn.getState().attempt,
-): TurnEvent {
+  resultDetails?: Extract<TurnEvent, { type: 'tool_completed' }>['resultDetails'],
+): Extract<TurnEvent, { type: 'tool_completed' }> {
   return {
     version: 2,
     id: eventId(sequence, attempt),
@@ -153,6 +154,7 @@ function toolCompletedEvent(
     isError: false,
     resultEntryId: 'entry-3',
     sessionLeafId: 'leaf-3',
+    ...(resultDetails === undefined ? {} : { resultDetails }),
   };
 }
 
@@ -266,6 +268,23 @@ describe('FileSystemTurnStore', () => {
     expect(store.loadEvents(turn.getId()).map((event) => event.sequence)).toEqual([0, 1]);
   });
 
+  it('persists structured ToolResult details in the durable event log', () => {
+    const { root, store } = createStore();
+    const turn = createStartedTurn();
+    store.create(turn);
+    const resultDetails = { kind: 'recoverable', source: 'turn-event', attempts: [1, 2] };
+
+    store.appendEvent(
+      turn.getId(),
+      toolCompletedEvent(turn, 0, turn.getState().attempt, resultDetails),
+    );
+
+    expect(store.loadEvents(turn.getId())).toMatchObject([{ resultDetails }]);
+    expect(readFileSync(join(root, 'turns', turn.getId(), 'events.jsonl'), 'utf8')).toContain(
+      '"resultDetails":{"kind":"recoverable","source":"turn-event","attempts":[1,2]}',
+    );
+  });
+
   it('accepts valid attempt histories, including a resume crash window', () => {
     const initial = createStore();
     const initialTurn = createStartedTurn('turn-initial');
@@ -347,7 +366,12 @@ describe('FileSystemTurnStore', () => {
 
     const events = store.loadEvents(turn.getId());
     const modelEvents = events.filter(
-      (event): event is Extract<TurnEvent, { type: 'model_started' | 'model_completed' | 'usage_recorded' }> =>
+      (
+        event,
+      ): event is Extract<
+        TurnEvent,
+        { type: 'model_started' | 'model_completed' | 'usage_recorded' }
+      > =>
         event.type === 'model_started' ||
         event.type === 'model_completed' ||
         event.type === 'usage_recorded',

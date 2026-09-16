@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { Session, Turn } from '@opspilot/domain';
-import type { AssistantMessage } from '@opspilot/model-gateway';
+import type { AssistantMessage, ToolResultMessage } from '@opspilot/model-gateway';
 
+import { toSessionMessage } from '../src/session/runtime/session-message-mapper.js';
 import { TurnEventRecorder } from '../src/turn/execution/turn-event-recorder.js';
 import { InMemoryTurnStore } from './support/in-memory-turn-store.js';
 
@@ -12,18 +13,16 @@ function startedRecorder(): {
   recorder: TurnEventRecorder;
   turnStore: InMemoryTurnStore;
   turn: Turn;
+  session: Session;
 } {
   const turn = Turn.create({ id: 'turn-recorder-1', sessionId: 'session-1', createdAt: timestamp });
   turn.start(timestamp);
   const turnStore = new InMemoryTurnStore();
   turnStore.create(turn);
-  const recorder = new TurnEventRecorder(
-    turn,
-    turnStore,
-    Session.create({ id: 'session-1', timestamp }),
-  );
+  const session = Session.create({ id: 'session-1', timestamp });
+  const recorder = new TurnEventRecorder(turn, turnStore, session);
   recorder.recordTurnStarted();
-  return { recorder, turnStore, turn };
+  return { recorder, turnStore, turn, session };
 }
 
 function failedMessage(
@@ -108,9 +107,7 @@ describe('TurnEventRecorder model failures', () => {
     const modelFailed = events.find((event) => event.type === 'model_failed');
     const usageRecorded = events.find((event) => event.type === 'usage_recorded');
     expect(modelFailed?.sequence).toBeLessThan(usageRecorded?.sequence ?? Number.MAX_SAFE_INTEGER);
-    expect(
-      events.some((event) => event.type === 'model_completed'),
-    ).toBe(false);
+    expect(events.some((event) => event.type === 'model_completed')).toBe(false);
   });
 
   it('does not record aborted or synthetic runtime failures as model_failed', () => {
@@ -147,5 +144,74 @@ describe('TurnEventRecorder model failures', () => {
         },
       }),
     );
+  });
+});
+
+describe('TurnEventRecorder tool results', () => {
+  it('stores Runtime ToolResult details in tool_completed after the Session entry', () => {
+    const { recorder, turnStore, session } = startedRecorder();
+    session.appendMessage({
+      role: 'assistant',
+      api: 'openai-completions',
+      provider: 'moonshot',
+      model: 'kimi',
+      content: [],
+      finishReason: 'tool_calls',
+      toolCalls: [{ callId: 'call-1', name: 'aggregate_data', arguments: {} }],
+    });
+    const runtimeMessage: ToolResultMessage = {
+      role: 'tool',
+      callId: 'call-1',
+      name: 'aggregate_data',
+      content: [{ type: 'text', text: 'Aggregated 4 rows.' }],
+      details: { sheetName: 'SalesData', resultRowCount: 4 },
+      isError: false,
+    };
+    const sessionMessage = toSessionMessage(runtimeMessage);
+    if (sessionMessage === undefined) throw new Error('Expected a Session ToolResult message.');
+    const resultEntry = session.appendMessage(sessionMessage);
+
+    recorder.recordToolCompleted(runtimeMessage);
+
+    const event = turnStore
+      .loadEvents('turn-recorder-1')
+      .find((item) => item.type === 'tool_completed');
+    expect(event).toMatchObject({
+      type: 'tool_completed',
+      callId: runtimeMessage.callId,
+      resultEntryId: resultEntry.id,
+      sessionLeafId: resultEntry.id,
+      resultDetails: runtimeMessage.details,
+    });
+    expect(resultEntry.message).not.toHaveProperty('details');
+  });
+
+  it('rejects non-JSON ToolResult details before appending tool_completed', () => {
+    const { recorder, turnStore, session } = startedRecorder();
+    session.appendMessage({
+      role: 'assistant',
+      api: 'openai-completions',
+      provider: 'moonshot',
+      model: 'kimi',
+      content: [],
+      finishReason: 'tool_calls',
+      toolCalls: [{ callId: 'call-1', name: 'lookup', arguments: {} }],
+    });
+    const runtimeMessage: ToolResultMessage = {
+      role: 'tool',
+      callId: 'call-1',
+      name: 'lookup',
+      content: [{ type: 'text', text: 'failed' }],
+      details: { nested: undefined },
+      isError: true,
+    };
+    const sessionMessage = toSessionMessage(runtimeMessage);
+    if (sessionMessage === undefined) throw new Error('Expected a Session ToolResult message.');
+    session.appendMessage(sessionMessage);
+
+    expect(() => recorder.recordToolCompleted(runtimeMessage)).toThrow(
+      /ToolResult details(?:\.nested)? must be JSON serializable\./,
+    );
+    expect(turnStore.loadEvents('turn-recorder-1')).toHaveLength(1);
   });
 });

@@ -108,7 +108,9 @@ export class TurnRecoveryPlanner {
 
     const pendingToolCalls = toolCalls.filter((call) => !completedCallIds.has(call.callId));
     const nonRecoverableError = results.find(
-      (result) => result.message.isError && !isRecoverableToolError(result.message.details),
+      (result) =>
+        result.message.isError &&
+        !isRecoverableToolError(resolveToolResultDetails(result, input.events)),
     );
     if (nonRecoverableError !== undefined) {
       return {
@@ -396,6 +398,27 @@ function isRecoverableToolError(details: unknown): boolean {
     'kind' in details &&
     details.kind === 'recoverable'
   );
+}
+
+function resolveToolResultDetails(
+  result: Extract<SessionEntry, { type: 'message' }> & {
+    readonly message: SessionToolResultMessage;
+  },
+  events: readonly TurnEvent[],
+): unknown {
+  const completedEvent = events.find(
+    (event): event is Extract<TurnEvent, { type: 'tool_completed' }> =>
+      event.type === 'tool_completed' &&
+      event.callId === result.message.callId &&
+      event.resultEntryId === result.id,
+  );
+  if (completedEvent?.resultDetails !== undefined) return completedEvent.resultDetails;
+
+  return getLegacySessionToolResultDetails(result.message);
+}
+
+function getLegacySessionToolResultDetails(message: SessionToolResultMessage): unknown {
+  return (message as SessionToolResultMessage & { readonly details?: unknown }).details;
 }
 
 function isToolResultEntry(entry: SessionEntry): entry is Extract<

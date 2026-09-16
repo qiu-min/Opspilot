@@ -4,7 +4,7 @@ OpsPilot Agent Service 的应用层。
 
 `application` 位于业务入口与通用 Agent Runtime 之间，负责围绕 Session 组织 Agent 的实际使用流程，并协调运行时、会话状态、上下文、工具与持久化 port。
 
-当前已提供最小 `AgentSession` 闭环：从 Domain `Session` 恢复消息、模型和 thinking level，组合 `Agent` 与 `ModelGateway`，并通过 Application 的 `SessionStore` 在 Runtime `message_end` 之后 append finalized message。
+当前已提供最小 `AgentSession` 闭环：从 Domain `Session` 恢复消息、模型和 thinking level，组合 `Agent` 与 `ModelGateway`，并通过 Application 的 `SessionStore` 在 Runtime `message_end` 之后 append finalized message。ToolResult 的 `content` 进入 Session history；machine-facing `details` 进入对应的 durable `TurnEvent.tool_completed.resultDetails`。
 
 ## Session persistence
 
@@ -86,7 +86,7 @@ live presentation 相同的 `ToolPresentationResolver` 重新解析，失败时�
 - 通过 `ContextManager` 决定单次模型调用看到的消息
 - 通过 Context Accounting 估算上下文用量并判断是否接近模型窗口
 - 监听 Agent Runtime 产生的消息与执行事件
-- 将完成的消息、工具结果等写入 Session
+- 将完成的消息和 ToolResult content 写入 Session，并将 ToolResult details 写入 durable TurnEvent
 - 组织 Session 的创建、继续、切换与后续扩展能力
 - 组合具体 Agent 所需的模型配置、System Prompt 与工具
 - 向上层 API 提供稳定的应用用例接口

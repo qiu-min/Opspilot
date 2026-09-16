@@ -777,7 +777,10 @@ describe('ExecuteTurn', () => {
           name: 'lookup',
           description: 'Lookup',
           parameters: { type: 'object', properties: {}, additionalProperties: false },
-          execute: async () => ({ content: [{ type: 'text', text: 'result' }] }),
+          execute: async () => ({
+            content: [{ type: 'text', text: 'result' }],
+            details: { source: 'runtime', rows: 2 },
+          }),
         },
       ],
       defaultModel: model,
@@ -812,7 +815,9 @@ describe('ExecuteTurn', () => {
       type: 'tool_completed',
       resultEntryId: toolEntry?.id,
       sessionLeafId: toolEntry?.id,
+      resultDetails: { source: 'runtime', rows: 2 },
     });
+    expect(toolEntry).not.toHaveProperty('message.details');
     const modelStartedEvents = events.filter(
       (event): event is Extract<typeof event, { type: 'model_started' }> =>
         event.type === 'model_started',

@@ -4,11 +4,13 @@ import type { AgentMessage } from '@opspilot/agent-runtime';
 import type { AssistantMessage, ToolResultMessage } from '@opspilot/model-gateway';
 import {
   CURRENT_TURN_EVENT_VERSION,
+  assertDurableJsonValue,
   type Session,
   type SessionEntry,
   type Turn,
   type TurnEvent,
   type TurnEventBase,
+  type JsonValue,
 } from '@opspilot/domain';
 
 import type { AgentSessionEvent } from '../../session/runtime/agent-session.js';
@@ -104,6 +106,7 @@ export class TurnEventRecorder {
   public recordToolCompleted(message: AgentMessage): void {
     if (message.role !== 'tool') throw new Error('tool_completed requires a ToolResult message.');
     const entry = this.requireCurrentMessageEntry(message, 'tool');
+    const resultDetails = toDurableJsonValue(message.details);
     const event = this.append({
       type: 'tool_completed',
       callId: message.callId,
@@ -111,6 +114,7 @@ export class TurnEventRecorder {
       isError: message.isError,
       resultEntryId: entry.id,
       sessionLeafId: entry.id,
+      ...(resultDetails === undefined ? {} : { resultDetails }),
     });
     this.turn.recordResultLeaf(entry.id);
     this.advanceCheckpoint(event, entry.id, 'tool_completed');
@@ -295,6 +299,17 @@ export class TurnEventRecorder {
       }
     }
     return entry;
+  }
+}
+
+function toDurableJsonValue(value: unknown): JsonValue | undefined {
+  if (value === undefined) return undefined;
+  try {
+    assertDurableJsonValue(value, 'ToolResult details');
+    return structuredClone(value);
+  } catch (error) {
+    if (error instanceof Error) throw new Error(error.message, { cause: error });
+    throw new Error('ToolResult details must be JSON serializable.');
   }
 }
 

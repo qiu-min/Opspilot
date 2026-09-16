@@ -8,7 +8,7 @@ import type {
 /** JSON-friendly Excel cell value stored by the bounded read_range Application Tool. */
 export type ReadRangeToolCellValue = string | number | boolean | null;
 
-/** Bounded, rectangular range output returned by read_range and persisted in the Session. */
+/** Bounded, rectangular range output returned by read_range and retained as durable tool details. */
 export interface ReadRangeToolDetails {
   readonly sheetName: string;
   readonly range: string;
@@ -20,7 +20,7 @@ export interface ReadRangeToolDetails {
   readonly truncatedCellValueCount: number;
 }
 
-/** Bounded aggregate output returned by the Application Tool and persisted in the Session. */
+/** Bounded aggregate output returned by the Application Tool and retained as durable tool details. */
 export interface AggregateDataToolDetails {
   readonly sheetName: string;
   readonly columns: readonly AggregateResultColumn[];
@@ -34,7 +34,7 @@ export interface AggregateDataToolDetails {
   readonly truncated: boolean;
 }
 
-/** Bounded filter output returned by the Application Tool and persisted in the Session. */
+/** Bounded filter output returned by the Application Tool and retained as durable tool details. */
 export interface FilterDataToolDetails {
   readonly sheetName: string;
   readonly sourceRowCount: number;

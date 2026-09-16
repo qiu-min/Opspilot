@@ -142,6 +142,37 @@ describe('TurnRecoveryPlanner', () => {
 
     expect(plan).toMatchObject({ kind: 'blocked', callIds: ['side-effect'] });
   });
+
+  it('uses recoverability from the new tool_completed resultDetails', () => {
+    const plan = planCompletedToolError({ resultDetails: { kind: 'recoverable' } });
+
+    expect(plan.kind).toBe('continue_model');
+  });
+
+  it('blocks a non-recoverable error from tool_completed resultDetails', () => {
+    const plan = planCompletedToolError({ resultDetails: { kind: 'terminal' } });
+
+    expect(plan).toMatchObject({
+      kind: 'blocked',
+      reason: 'A previous tool attempt ended with a non-recoverable tool error.',
+      callIds: ['call-1'],
+    });
+  });
+
+  it('falls back to legacy Session ToolResult details when the event has none', () => {
+    const plan = planCompletedToolError({ sessionDetails: { kind: 'recoverable' } });
+
+    expect(plan.kind).toBe('continue_model');
+  });
+
+  it('prefers event resultDetails over conflicting legacy Session details', () => {
+    const plan = planCompletedToolError({
+      sessionDetails: { kind: 'terminal' },
+      resultDetails: { kind: 'recoverable' },
+    });
+
+    expect(plan.kind).toBe('continue_model');
+  });
 });
 
 function createStartedTurn(): {
@@ -175,8 +206,69 @@ function assistantMessage(
   };
 }
 
-function toolMessage(callId: string, name: string): ToolResultMessage {
-  return { role: 'tool', callId, name, content: [{ type: 'text', text: 'ok' }], isError: false };
+function toolMessage(
+  callId: string,
+  name: string,
+  options: { readonly details?: unknown; readonly isError?: boolean } = {},
+): ToolResultMessage {
+  return {
+    role: 'tool',
+    callId,
+    name,
+    content: [{ type: 'text', text: 'ok' }],
+    ...(options.details === undefined ? {} : { details: options.details }),
+    isError: options.isError ?? false,
+  };
+}
+
+function planCompletedToolError(options: {
+  readonly sessionDetails?: unknown;
+  readonly resultDetails?: unknown;
+}): ReturnType<TurnRecoveryPlanner['plan']> {
+  const { session, turn, store, input } = createStartedTurn();
+  const call = { callId: 'call-1', name: 'lookup', arguments: {} } as const;
+  const assistantEntry = session.appendMessage(assistantMessage('tool_calls', [call]));
+  const resultEntry = session.appendMessage(
+    toolMessage(call.callId, call.name, {
+      isError: true,
+      ...(options.sessionDetails === undefined ? {} : { details: options.sessionDetails }),
+    }),
+  );
+  const toolCompleted = {
+    type: 'tool_completed' as const,
+    callId: call.callId,
+    name: call.name,
+    isError: true,
+    resultEntryId: resultEntry.id,
+    sessionLeafId: resultEntry.id,
+    ...(options.resultDetails === undefined ? {} : { resultDetails: options.resultDetails }),
+  };
+  const events: TurnEvent[] = [
+    event(turn, 0, { type: 'turn_started' }),
+    event(turn, 1, { type: 'input_committed', entryId: input.id, sessionLeafId: input.id }),
+    event(turn, 2, {
+      type: 'assistant_message_completed',
+      entryId: assistantEntry.id,
+      sessionLeafId: assistantEntry.id,
+    }),
+    event(turn, 3, toolCompleted),
+  ];
+  for (const item of events) store.appendEvent(turn.getId(), item);
+  turn.recordInput(input.id);
+  turn.recordResultLeaf(input.id);
+  turn.advanceCheckpoint({
+    eventSequence: 3,
+    sessionLeafId: resultEntry.id,
+    phase: 'tool_completed',
+  });
+  store.save(turn);
+
+  return new TurnRecoveryPlanner().plan({
+    turn: store.load(turn.getId()),
+    events: store.loadEvents(turn.getId()),
+    session,
+    toolDefinitions: [toolDefinition(call.name)],
+  });
 }
 
 function event(turn: Turn, sequence: number, payload: object): TurnEvent {

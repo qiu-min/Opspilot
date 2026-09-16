@@ -14,6 +14,7 @@ Session 知道的资源 `id + kind`，不包含 storage path 或 working-copy �
 接收和返回业务状态。
 
 Session history 使用 Domain 自己的 `SessionMessage` 和 `SessionThinkingLevel` 持久化模型，不依赖 Agent Runtime。Application projection 通过 `buildSessionContext(session)` 将 durable history 转换为 Agent Runtime context，metadata 不进入 Agent context。
+Session 中的 ToolResult 只保存后续模型上下文需要的 `content`、调用身份和错误状态；Runtime 的 machine-facing `ToolResultMessage.details` 不属于 SessionEntry，而由对应 `TurnEvent.tool_completed.resultDetails` 作为 durable execution fact 保存。
 
 ## Turn
 
@@ -22,6 +23,7 @@ Session history 使用 Domain 自己的 `SessionMessage` 和 `SessionThinkingLev
 
 `TurnEvent` 是 append-only durable execution fact，不是 SSE event，也不是 `SessionEntry`。
 `Turn` 保存当前 snapshot，Turn event history 由 Application 的 `TurnStore` port 管理。
+`tool_completed.resultDetails` 是可选的、经过 JSON-safe 和大小限制校验的结构化 ToolResult fact；因此旧版不含该字段的 TurnEvent 仍然有效。
 
 Session assistant messages may optionally persist a Domain-owned `SessionModelErrorInfo` snapshot.
 The durable Turn event `model_failed` records a `ModelFailureSnapshot` for one failed model call;
