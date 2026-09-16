@@ -36,5 +36,21 @@
       ]
     },
     "tags": ["excel", "discovery", "row-count", "golden"]
+  },
+  {
+    "id": "excel-top-region-sales-003",
+    "name": "Find region with highest sales",
+    "description": "Checks regional sales aggregation and identifies the region with the highest total sales.",
+    "input": "SalesData 工作表中哪个地区的销售额最高？请告诉我该地区、销售额合计以及订单数。",
+    "workbook": "sales.xlsx",
+    "expected": {
+      "topRegionSales": {
+        "sheetName": "SalesData",
+        "region": "South",
+        "totalSales": 92726.94,
+        "orderCount": 40
+      }
+    },
+    "tags": ["excel", "analysis", "aggregate", "golden"]
   }
 ]

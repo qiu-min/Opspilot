@@ -20,6 +20,7 @@ export {
   type ExcelGoldenCase,
   type ExcelGoldenCaseExpected,
   type ExcelGoldenSheetRowsExpected,
+  type ExcelGoldenTopRegionSalesExpected,
 } from './datasets/excel-dataset-loader.js';
 export { ConsoleReporter } from './reporters/console-reporter.js';
 export { JsonReporter } from './reporters/json-reporter.js';

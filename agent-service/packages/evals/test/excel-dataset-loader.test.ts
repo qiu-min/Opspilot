@@ -12,12 +12,13 @@ import type {
 } from '../src/executors/agent-eval-executor.js';
 
 describe('loadExcelCases', () => {
-  it('loads both checked-in sales Golden Cases with fixed expected values', async () => {
+  it('loads all checked-in sales Golden Cases with fixed expected values', async () => {
     const cases = await loadExcelCases();
     const excelCase = cases[0];
     const rowCountCase = cases[1];
+    const topRegionSalesCase = cases[2];
 
-    expect(cases).toHaveLength(2);
+    expect(cases).toHaveLength(3);
     expect(excelCase).toMatchObject({
       id: 'excel-sheet-count-001',
       expected: { sheetCount: 3 },
@@ -53,6 +54,23 @@ describe('loadExcelCases', () => {
       },
       tags: ['excel', 'discovery', 'row-count', 'golden'],
     });
+
+    expect(topRegionSalesCase).toMatchObject({
+      id: 'excel-top-region-sales-003',
+      expected: {
+        topRegionSales: {
+          sheetName: 'SalesData',
+          region: 'South',
+          totalSales: 92726.94,
+          orderCount: 40,
+        },
+      },
+      input: {
+        message: 'SalesData 工作表中哪个地区的销售额最高？请告诉我该地区、销售额合计以及订单数。',
+        excelResource: { id: 'excel-sales-workbook' },
+      },
+      tags: ['excel', 'analysis', 'aggregate', 'golden'],
+    });
   });
 
   it('rejects malformed sheetRows expected values', async () => {
@@ -76,6 +94,37 @@ describe('loadExcelCases', () => {
     );
     try {
       await expect(loadExcelCases(datasetPath)).rejects.toThrow(/sheetRows/);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects malformed topRegionSales expected values', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'opspilot-evals-loader-'));
+    const datasetPath = join(directory, 'cases.json');
+    await writeFile(
+      datasetPath,
+      JSON.stringify([
+        {
+          id: 'invalid-top-region-sales',
+          name: 'Invalid top region sales',
+          input: 'test',
+          workbook: 'sales.xlsx',
+          expected: {
+            topRegionSales: {
+              sheetName: 'SalesData',
+              region: 'South',
+              totalSales: Number.NaN,
+              orderCount: 40,
+            },
+          },
+          tags: ['excel'],
+        },
+      ]),
+      'utf8',
+    );
+    try {
+      await expect(loadExcelCases(datasetPath)).rejects.toThrow(/totalSales/);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

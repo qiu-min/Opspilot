@@ -9,6 +9,7 @@ import type { AgentEvalInput } from '../executors/agent-eval-executor.js';
 export interface ExcelGoldenCaseExpected {
   readonly sheetCount?: number;
   readonly sheetRows?: readonly ExcelGoldenSheetRowsExpected[];
+  readonly topRegionSales?: ExcelGoldenTopRegionSalesExpected;
 }
 
 /** Fixed expected data/header row counts for one worksheet in an Excel Golden Case. */
@@ -16,6 +17,14 @@ export interface ExcelGoldenSheetRowsExpected {
   readonly sheetName: string;
   readonly dataRowCount: number;
   readonly headerRowCount: number;
+}
+
+/** Fixed regional sales aggregate expected by the Excel top-region Golden Case. */
+export interface ExcelGoldenTopRegionSalesExpected {
+  readonly sheetName: string;
+  readonly region: string;
+  readonly totalSales: number;
+  readonly orderCount: number;
 }
 
 /** Parsed Excel Golden Case returned by the dataset loader. */
@@ -101,7 +110,13 @@ function parseExcelGoldenCaseRecord(value: unknown, index: number): ExcelGoldenC
 /** Validates the deliberately small Excel expected-value contract. */
 function parseExpected(value: unknown, index: number): ExcelGoldenCaseExpected {
   if (!isRecord(value)) {
-    throw new Error(`Excel dataset case ${index} expected must define sheetCount or sheetRows.`);
+    throw new Error(
+      `Excel dataset case ${index} expected must define sheetCount, sheetRows, or topRegionSales.`,
+    );
+  }
+
+  if (value.topRegionSales !== undefined) {
+    return { topRegionSales: parseTopRegionSalesExpected(value.topRegionSales, index) };
   }
 
   if (value.sheetRows !== undefined) {
@@ -145,6 +160,41 @@ function parseExpected(value: unknown, index: number): ExcelGoldenCaseExpected {
     throw new Error(`Excel dataset case ${index} expected.sheetCount must be an integer >= 0.`);
   }
   return { sheetCount: value.sheetCount };
+}
+
+/** Validates the fixed worksheet, region, sales, and order-count Golden values. */
+function parseTopRegionSalesExpected(
+  value: unknown,
+  index: number,
+): ExcelGoldenTopRegionSalesExpected {
+  if (!isRecord(value)) {
+    throw new Error(`Excel dataset case ${index} expected.topRegionSales must be an object.`);
+  }
+  const sheetName = value.sheetName;
+  if (!isNonEmptyString(sheetName)) {
+    throw new Error(
+      `Excel dataset case ${index} expected.topRegionSales.sheetName must be a non-empty string.`,
+    );
+  }
+  const region = value.region;
+  if (!isNonEmptyString(region)) {
+    throw new Error(
+      `Excel dataset case ${index} expected.topRegionSales.region must be a non-empty string.`,
+    );
+  }
+  const totalSales = value.totalSales;
+  if (!isFiniteNumber(totalSales)) {
+    throw new Error(
+      `Excel dataset case ${index} expected.topRegionSales.totalSales must be a finite number.`,
+    );
+  }
+  const orderCount = value.orderCount;
+  if (!isNonNegativeInteger(orderCount)) {
+    throw new Error(
+      `Excel dataset case ${index} expected.topRegionSales.orderCount must be an integer >= 0.`,
+    );
+  }
+  return { sheetName, region, totalSales, orderCount };
 }
 
 /** Resolves one workbook only when it remains inside the checked-in Excel dataset directory. */
@@ -211,4 +261,9 @@ function isNonEmptyString(value: unknown): value is string {
 /** Checks the fixed numeric shape used by Excel Golden expected values. */
 function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
+/** Checks a numeric expected value without accepting NaN or infinities. */
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
 }
