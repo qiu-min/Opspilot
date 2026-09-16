@@ -59,6 +59,8 @@ const resultPath = resolve(packageRoot, 'results/eval-report.json');
 async function createApplicationExecutor(modelConfigPath: string): Promise<{
   readonly executeTurn: ExecuteTurn;
   readonly getTurnTrace: GetTurnTrace;
+  readonly turnStore: FileSystemTurnStore;
+  readonly sessionStore: FileSystemSessionStore;
   readonly cleanup: () => Promise<void>;
 }> {
   const config = await loadModelGatewayConfig(modelConfigPath);
@@ -88,8 +90,9 @@ async function createApplicationExecutor(modelConfigPath: string): Promise<{
   });
   const toolDefinitions = createExcelToolDefinitions(excelWorkingResourceManager);
   const turnStore = new FileSystemTurnStore(storageRoot);
+  const sessionStore = new FileSystemSessionStore(join(storageRoot, 'sessions'));
   const executeTurn = new ExecuteTurn({
-    sessionStore: new FileSystemSessionStore(join(storageRoot, 'sessions')),
+    sessionStore,
     excelSourceResourceStore: new FileSystemExcelSourceResourceStore(workspaceStorageRoot),
     turnStore,
     turnExecutionContextStore: new FileSystemTurnExecutionContextStore(storageRoot),
@@ -103,6 +106,8 @@ async function createApplicationExecutor(modelConfigPath: string): Promise<{
   return {
     executeTurn,
     getTurnTrace,
+    turnStore,
+    sessionStore,
     cleanup: async () => await rm(storageRoot, { recursive: true, force: true }),
   };
 }
@@ -176,7 +181,10 @@ async function main(): Promise<void> {
       executor,
       evaluators: [
         new RunCompletedEvaluator<ExecuteTurnResult>(),
-        new ExcelWorkbookCorrectnessEvaluator(),
+        new ExcelWorkbookCorrectnessEvaluator({
+          turns: application.turnStore,
+          sessions: application.sessionStore,
+        }),
         new TraceBehaviorEvaluator({ getTurnTrace: application.getTurnTrace }),
       ],
     });

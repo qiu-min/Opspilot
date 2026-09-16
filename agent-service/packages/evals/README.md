@@ -31,9 +31,11 @@ Deterministic evaluators should be preferred whenever the result can be verified
 
 ## Outcome Eval and Behavior Eval
 
-Outcome Eval uses `ExecuteTurnResult`, structured `ToolResult` facts, and workbook state to decide
-whether the Agent completed the requested task correctly. The existing correctness evaluators keep
-this responsibility.
+Outcome Eval determines whether the Agent completed the requested task correctly. The
+`ExcelWorkbookCorrectnessEvaluator` is a fully durable outcome evaluator: its evidence comes from
+the durable `Turn`, `TurnEvent.tool_completed.resultDetails`, and the `SessionEntry` referenced by
+the durable Turn events. It does not use `ExecuteTurnResult.messages`, so the evaluator can replay
+an already-finished Turn after the transient runtime result has been discarded.
 
 Behavior Eval uses the durable `TurnTrace` for the same run to decide whether execution followed
 the expected behavior. The Excel dataset currently supports these optional constraints:
@@ -59,11 +61,14 @@ observational details only; they are not hard gates for an Eval Case.
 Eval 会把 fixture 作为 `ExcelResource` 传入 Application `ExecuteTurn.execute()`，并在 Eval
 自己的 composition root 中组合真实 Excel tools，包括 `get_workbook_info`、
 `get_sheet_profile`、`aggregate_data`、`filter_data`、`read_range` 和 `write_data`。
-`ExcelWorkbookCorrectnessEvaluator` 会检查真实 `get_workbook_info` tool result 的固定
-`sheetCount` Golden expected，以及最后一个成功 Assistant 回答中的阿拉伯数字。Case 2 使用同一
-evaluator 检查三个成功 `get_sheet_profile` tool result 的结构化 `sheetName` / `rowCount`，按固定
+`ExcelWorkbookCorrectnessEvaluator` 会从 `run.metadata.turnId` 加载 durable `Turn` 和
+`TurnEvent`，使用 `tool_completed.resultDetails` 检查真实 `get_workbook_info`、
+`get_sheet_profile`、`aggregate_data` facts，并通过 `turn_completed.resultLeafId`、
+`assistant_message_completed` 和 `SessionEntry` 定位最终 Assistant。Case 1 检查固定
+`sheetCount` Golden expected；Case 2 使用三个成功 profile 的结构化 `sheetName` / `rowCount`，按固定
 `headerRowCount` 计算数据行数，并验证最终 Assistant 回答将 `SalesData`、`Products` 和
-`MonthlySummary` 分别对应到 120、8 和 7 行数据。
+`MonthlySummary` 分别对应到 120、8 和 7 行数据。Case 3 同样只使用 durable aggregate facts
+和被 Turn 引用的最终 Assistant 文本。
 
 ```text
 Observability:
@@ -77,6 +82,17 @@ Runner 继续保留 `RunCompletedEvaluator` 和 smoke case；一个 case 只有�
 evaluators 通过时才通过。Excel runner 额外运行 `TraceBehaviorEvaluator`；它通过共享的
 Application `TurnStore` 调用 `GetTurnTrace`，不直接读取原始 `TurnEvent`，也不依赖
 `ExecuteTurnResult.messages` 作为行为证据。
+
+两类 Eval 的证据边界保持分离：
+
+```text
+Observability / Behavior: TurnEvent -> TurnTrace
+Outcome: TurnEvent + referenced Session durable state
+```
+
+Eval composition root 为 `ExecuteTurn`、`TraceBehaviorEvaluator` 和
+`ExcelWorkbookCorrectnessEvaluator` 共享同一个临时 `TurnStore` / `SessionStore` 实例；评估
+完成后临时 durable state 会统一清理。
 
 ## Run the Eval suite
 

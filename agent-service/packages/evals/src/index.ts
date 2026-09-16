@@ -14,7 +14,16 @@ export {
   type ApplicationTurnExecutor,
 } from './executors/agent-eval-executor.js';
 export { RunCompletedEvaluator } from './evaluators/run-completed-evaluator.js';
-export { ExcelWorkbookCorrectnessEvaluator } from './evaluators/excel-workbook-correctness-evaluator.js';
+export {
+  ExcelWorkbookCorrectnessEvaluator,
+  type ExcelWorkbookCorrectnessEvaluatorOptions,
+} from './evaluators/excel-workbook-correctness-evaluator.js';
+export {
+  type DurableExcelEvidence,
+  type DurableSessionReader,
+  type DurableTurnEvidenceReaderOptions,
+  type DurableTurnReader,
+} from './evaluators/durable-turn-evidence.js';
 export {
   TraceBehaviorEvaluator,
   type TraceBehaviorEvaluatorOptions,

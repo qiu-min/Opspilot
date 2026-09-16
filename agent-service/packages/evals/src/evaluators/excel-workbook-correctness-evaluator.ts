@@ -1,5 +1,4 @@
-import type { AssistantMessage, ToolResultMessage } from '@opspilot/model-gateway';
-import type { ExecuteTurnResult } from '@opspilot/application';
+import type { ExecuteTurnResult, ToolCompletedEvent } from '@opspilot/application';
 
 import type { EvalRunResult } from '../core/eval-run-result.js';
 import type { EvalScore } from '../core/eval-score.js';
@@ -8,6 +7,13 @@ import type {
   ExcelGoldenSheetRowsExpected,
   ExcelGoldenTopRegionSalesExpected,
 } from '../datasets/excel-dataset-loader.js';
+import {
+  extractAssistantText,
+  loadDurableExcelEvidence,
+  type DurableExcelEvidence,
+  type DurableSessionReader,
+  type DurableTurnReader,
+} from './durable-turn-evidence.js';
 
 const REGIONAL_SALES_COLUMNS = {
   group: 'Region',
@@ -15,10 +21,26 @@ const REGIONAL_SALES_COLUMNS = {
   orderId: 'OrderID',
 } as const;
 const SALES_COMPARISON_TOLERANCE = 0.01;
+const EVALUATOR_NAME = 'excel_workbook_correctness';
 
-/** Deterministically checks both the real workbook tool result and the final answer. */
+/** Dependencies used to read the durable state required by Excel correctness evaluation. */
+export interface ExcelWorkbookCorrectnessEvaluatorOptions {
+  readonly turns: DurableTurnReader;
+  readonly sessions: DurableSessionReader;
+}
+
+/** Deterministically evaluates Excel outcome facts from durable Turn and Session evidence. */
 export class ExcelWorkbookCorrectnessEvaluator implements Evaluator<unknown, ExecuteTurnResult> {
-  public readonly name = 'excel_workbook_correctness';
+  public readonly name = EVALUATOR_NAME;
+
+  private readonly turns: DurableTurnReader;
+  private readonly sessions: DurableSessionReader;
+
+  /** Creates an evaluator that never needs the transient ExecuteTurn result as evidence. */
+  public constructor(options: ExcelWorkbookCorrectnessEvaluatorOptions) {
+    this.turns = options.turns;
+    this.sessions = options.sessions;
+  }
 
   /** Returns a binary score for the supported deterministic Excel Golden contracts. */
   public async evaluate(input: {
@@ -26,133 +48,164 @@ export class ExcelWorkbookCorrectnessEvaluator implements Evaluator<unknown, Exe
     readonly actual: ExecuteTurnResult | undefined;
     readonly run: EvalRunResult<ExecuteTurnResult>;
   }): Promise<EvalScore> {
-    if (hasExpectedTopRegionSales(input.expected)) {
-      return evaluateTopRegionSales(input);
-    }
-    if (hasExpectedSheetRows(input.expected)) {
-      return evaluateSheetRows(input);
+    const turnId = readTurnId(input.run.metadata);
+    if (turnId === undefined) {
+      return fail(
+        'Eval run did not expose a valid turnId for durable Excel evaluation.',
+        durableDetails(null),
+      );
     }
 
+    const expectedTopRegionSales = hasExpectedTopRegionSales(input.expected)
+      ? readExpectedTopRegionSales(input.expected)
+      : undefined;
+    const expectedSheetRows = hasExpectedSheetRows(input.expected)
+      ? readExpectedSheetRows(input.expected)
+      : undefined;
     const expectedSheetCount = readExpectedSheetCount(input.expected);
-    const details: Record<string, unknown> = {
-      expectedSheetCount,
-      actualToolSheetCount: null,
-    };
 
-    if (!isValidSheetCount(expectedSheetCount)) {
-      return fail('expected.sheetCount must be an integer >= 0.', details);
-    }
-    if (input.actual === undefined) {
+    if (hasExpectedTopRegionSales(input.expected) && expectedTopRegionSales === undefined) {
       return fail(
-        input.run.error?.message ?? 'Application execution did not produce a result.',
-        details,
+        'expected.topRegionSales is invalid.',
+        { ...durableDetails(turnId), ...topRegionDetails(null) },
       );
     }
-
-    const toolResult = findSuccessfulWorkbookInfo(input.actual);
-    if (toolResult === undefined) {
+    if (hasExpectedSheetRows(input.expected) && expectedSheetRows === undefined) {
       return fail(
-        hasWorkbookInfoToolResult(input.actual)
-          ? 'get_workbook_info tool execution failed.'
-          : 'get_workbook_info was not executed.',
-        details,
+        'expected.sheetRows must be a non-empty array of valid worksheet row expectations.',
+        { ...durableDetails(turnId), sheets: [] },
       );
     }
-
-    const actualToolSheetCount = readSheetCount(toolResult.details);
-    details.actualToolSheetCount = actualToolSheetCount;
-    if (actualToolSheetCount === undefined) {
-      return fail('get_workbook_info returned invalid sheetCount details.', details);
-    }
-    if (actualToolSheetCount !== expectedSheetCount) {
-      return fail(
-        `Expected sheetCount ${expectedSheetCount} but tool returned ${actualToolSheetCount}.`,
-        details,
-      );
+    if (!hasExpectedTopRegionSales(input.expected) && !hasExpectedSheetRows(input.expected)) {
+      const details: Record<string, unknown> = {
+        ...durableDetails(turnId),
+        expectedSheetCount,
+        actualToolSheetCount: null,
+      };
+      if (!isValidSheetCount(expectedSheetCount)) {
+        return fail('expected.sheetCount must be an integer >= 0.', details);
+      }
     }
 
-    const assistant = findLastSuccessfulAssistant(input.actual);
-    if (assistant === undefined) {
-      return fail('No successful final assistant answer was produced.', details);
-    }
-    const answer = assistant.content
-      .filter(
-        (content): content is Extract<AssistantMessage['content'][number], { type: 'text' }> =>
-          content.type === 'text',
-      )
-      .map((content) => content.text)
-      .join('\n');
-    if (!containsInteger(answer, expectedSheetCount)) {
-      return fail(
-        `The workbook tool returned the correct sheet count, but the final assistant answer did not contain the expected value ${expectedSheetCount}.`,
-        details,
-      );
+    let evidence: DurableExcelEvidence;
+    try {
+      evidence = loadDurableExcelEvidence(turnId, {
+        turns: this.turns,
+        sessions: this.sessions,
+      });
+    } catch (error: unknown) {
+      return fail(errorMessage(error), durableDetails(turnId));
     }
 
-    return {
-      evaluator: this.name,
-      score: 1,
-      passed: true,
-      details,
-    };
+    if (expectedTopRegionSales !== undefined) {
+      return evaluateTopRegionSales(evidence, expectedTopRegionSales);
+    }
+    if (expectedSheetRows !== undefined) {
+      return evaluateSheetRows(evidence, expectedSheetRows);
+    }
+
+    return evaluateSheetCount(evidence, expectedSheetCount!);
   }
 }
 
-/** Evaluates the regional sales aggregate and the final assistant answer. */
-async function evaluateTopRegionSales(input: {
-  readonly expected: unknown;
-  readonly actual: ExecuteTurnResult | undefined;
-  readonly run: EvalRunResult<ExecuteTurnResult>;
-}): Promise<EvalScore> {
-  const expected = readExpectedTopRegionSales(input.expected);
+/** Evaluates Case 1 using the last successful durable workbook-info event. */
+function evaluateSheetCount(
+  evidence: DurableExcelEvidence,
+  expectedSheetCount: number,
+): EvalScore {
   const details: Record<string, unknown> = {
-    sheetName: expected?.sheetName ?? null,
-    expectedRegion: expected?.region ?? null,
-    actualRegion: null,
-    expectedTotalSales: expected?.totalSales ?? null,
-    actualTotalSales: null,
-    expectedOrderCount: expected?.orderCount ?? null,
-    actualOrderCount: null,
-    highestSalesVerified: false,
+    ...durableDetails(evidence),
+    expectedSheetCount,
+    actualToolSheetCount: null,
   };
-
-  if (expected === undefined) {
-    return fail('expected.topRegionSales is invalid.', details);
+  const attempts = evidence.toolEvents.filter((event) => event.name === 'get_workbook_info');
+  if (attempts.length === 0) {
+    return fail('get_workbook_info was not executed.', details);
   }
-  if (input.actual === undefined) {
+
+  const successfulAttempts = attempts.filter((event) => !event.isError);
+  if (successfulAttempts.length === 0) {
+    return fail('get_workbook_info tool execution failed.', details);
+  }
+
+  const toolEvent = successfulAttempts.at(-1)!;
+  addToolDiagnostics(details, toolEvent);
+  if (toolEvent.resultDetails === undefined) {
+    return fail('get_workbook_info completed without durable resultDetails.', details);
+  }
+
+  const actualToolSheetCount = readSheetCount(toolEvent.resultDetails);
+  details.actualToolSheetCount = actualToolSheetCount ?? null;
+  if (actualToolSheetCount === undefined) {
+    return fail('get_workbook_info returned invalid sheetCount details.', details);
+  }
+  if (actualToolSheetCount !== expectedSheetCount) {
     return fail(
-      input.run.error?.message ?? 'Application execution did not produce a result.',
+      `Expected sheetCount ${expectedSheetCount} but tool returned ${actualToolSheetCount}.`,
       details,
     );
   }
 
-  const aggregateAttempts = findAggregateDataMessages(input.actual);
+  const answer = extractAssistantText(evidence.finalAssistant);
+  if (!containsInteger(answer, expectedSheetCount)) {
+    return fail(
+      `The workbook tool returned the correct sheet count, but the final assistant answer did not contain the expected value ${expectedSheetCount}.`,
+      details,
+    );
+  }
+
+  return pass(details);
+}
+
+/** Evaluates Case 3 using the most recent complete valid durable aggregate candidate. */
+function evaluateTopRegionSales(
+  evidence: DurableExcelEvidence,
+  expected: ExcelGoldenTopRegionSalesExpected,
+): EvalScore {
+  const details: Record<string, unknown> = {
+    ...durableDetails(evidence),
+    ...topRegionDetails(expected),
+  };
+  const aggregateAttempts = evidence.toolEvents.filter((event) => event.name === 'aggregate_data');
   if (aggregateAttempts.length === 0) {
     return fail('aggregate_data was not executed.', details);
   }
-  const successfulAttempts = aggregateAttempts.filter((message) => message.isError !== true);
+
+  const successfulAttempts = aggregateAttempts.filter((event) => !event.isError);
   if (successfulAttempts.length === 0) {
     return fail('aggregate_data tool execution failed.', details);
   }
 
   const aggregateCandidates = successfulAttempts
-    .map((message) => readRegionalSalesAggregate(message.details, expected.sheetName))
+    .map((event) => {
+      const aggregate = readRegionalSalesAggregate(event.resultDetails, expected.sheetName);
+      return aggregate === undefined
+        ? undefined
+        : { ...aggregate, callId: event.callId, eventSequence: event.sequence };
+    })
     .filter((candidate): candidate is RegionalSalesAggregate => candidate !== undefined);
-  const aggregate = [...aggregateCandidates]
-    .reverse()
-    .find(
-      (candidate) =>
-        !candidate.truncated &&
-        candidate.rows.length >= candidate.resultRowCount &&
-        candidate.returnedRowCount >= candidate.resultRowCount,
-    ) ?? aggregateCandidates.at(-1);
+  const aggregate =
+    [...aggregateCandidates]
+      .reverse()
+      .find(
+        (candidate) =>
+          !candidate.truncated &&
+          candidate.rows.length >= candidate.resultRowCount &&
+          candidate.returnedRowCount >= candidate.resultRowCount,
+      ) ?? aggregateCandidates.at(-1);
+
   if (aggregate === undefined) {
+    if (successfulAttempts.every((event) => event.resultDetails === undefined)) {
+      return fail('aggregate_data completed without durable resultDetails.', details);
+    }
     return fail(
       `No aggregate_data result for ${expected.sheetName} contained the required regional sales aggregation.`,
       details,
     );
   }
 
+  details.aggregateCallId = aggregate.callId;
+  details.aggregateEventSequence = aggregate.eventSequence;
   if (
     aggregate.truncated ||
     aggregate.rows.length < aggregate.resultRowCount ||
@@ -219,17 +272,7 @@ async function evaluateTopRegionSales(input: {
     );
   }
 
-  const assistant = findLastSuccessfulAssistant(input.actual);
-  if (assistant === undefined) {
-    return fail('No successful final assistant answer was produced.', details);
-  }
-  const answer = assistant.content
-    .filter(
-      (content): content is Extract<AssistantMessage['content'][number], { type: 'text' }> =>
-        content.type === 'text',
-    )
-    .map((content) => content.text)
-    .join(' ');
+  const answer = extractAssistantText(evidence.finalAssistant);
   if (!containsTopRegionSalesAnswer(answer, expected)) {
     return fail(
       'The aggregate result was correct, but the final assistant answer did not report the expected top region and metrics together.',
@@ -237,14 +280,10 @@ async function evaluateTopRegionSales(input: {
     );
   }
 
-  return {
-    evaluator: 'excel_workbook_correctness',
-    score: 1,
-    passed: true,
-    details,
-  };
+  return pass(details);
 }
 
+/** Describes one parsed aggregate result and its durable event identity. */
 interface RegionalSalesAggregate {
   readonly columns: readonly AggregateColumnMetadata[];
   readonly rows: readonly (readonly unknown[])[];
@@ -254,27 +293,22 @@ interface RegionalSalesAggregate {
   readonly resultRowCount: number;
   readonly returnedRowCount: number;
   readonly truncated: boolean;
+  readonly callId: string;
+  readonly eventSequence: number;
 }
 
+/** Describes one structured aggregate column without trusting its display alias. */
 interface AggregateColumnMetadata {
   readonly kind: 'group' | 'metric';
   readonly sourceColumn: string;
   readonly operation?: string;
 }
 
-/** Finds all aggregate_data messages so a valid later attempt can supersede an invalid one. */
-function findAggregateDataMessages(result: ExecuteTurnResult): readonly ToolResultMessage[] {
-  return result.messages.filter(
-    (message): message is ToolResultMessage =>
-      message.role === 'tool' && message.name === 'aggregate_data',
-  );
-}
-
 /** Reads aggregate metadata without trusting aliases or display text. */
 function readRegionalSalesAggregate(
   details: unknown,
   expectedSheetName: string,
-): RegionalSalesAggregate | undefined {
+): Omit<RegionalSalesAggregate, 'callId' | 'eventSequence'> | undefined {
   if (
     !isRecord(details) ||
     details.sheetName !== expectedSheetName ||
@@ -364,7 +398,7 @@ function readExpectedTopRegionSales(
   };
 }
 
-/** Distinguishes Case 3's expected contract from the existing discovery contracts. */
+/** Distinguishes Case 3's expected contract from the discovery contracts. */
 function hasExpectedTopRegionSales(value: unknown): boolean {
   return isRecord(value) && value.topRegionSales !== undefined;
 }
@@ -472,66 +506,60 @@ function isAsciiWordCharacter(value: string): boolean {
   return /^[A-Za-z0-9_]$/u.test(value);
 }
 
-/** Evaluates every expected worksheet using successful structured profile results and the final answer. */
-async function evaluateSheetRows(input: {
-  readonly expected: unknown;
-  readonly actual: ExecuteTurnResult | undefined;
-  readonly run: EvalRunResult<ExecuteTurnResult>;
-}): Promise<EvalScore> {
-  const expectedSheetRows = readExpectedSheetRows(input.expected);
+/** Evaluates Case 2 using the last valid durable profile for each expected worksheet. */
+function evaluateSheetRows(
+  evidence: DurableExcelEvidence,
+  expectedSheetRows: readonly ExcelGoldenSheetRowsExpected[],
+): EvalScore {
   const details: Record<string, unknown> = {
-    sheets:
-      expectedSheetRows?.map((sheet) => ({
-        sheetName: sheet.sheetName,
-        expectedDataRowCount: sheet.dataRowCount,
-        expectedHeaderRowCount: sheet.headerRowCount,
-        actualToolRowCount: null,
-        actualDataRowCount: null,
-      })) ?? [],
+    ...durableDetails(evidence),
+    sheets: expectedSheetRows.map((sheet) => ({
+      sheetName: sheet.sheetName,
+      expectedDataRowCount: sheet.dataRowCount,
+      expectedHeaderRowCount: sheet.headerRowCount,
+      actualToolRowCount: null,
+      actualDataRowCount: null,
+    })),
   };
-
-  if (expectedSheetRows === undefined) {
-    return fail(
-      'expected.sheetRows must be a non-empty array of valid worksheet row expectations.',
-      details,
-    );
-  }
-  if (input.actual === undefined) {
-    return fail(
-      input.run.error?.message ?? 'Application execution did not produce a result.',
-      details,
-    );
-  }
-
-  const successfulProfiles = findSuccessfulSheetProfiles(input.actual);
+  const successfulProfiles = evidence.toolEvents.filter(
+    (event) => event.name === 'get_sheet_profile' && !event.isError,
+  );
   const detailSheets = details.sheets as Array<Record<string, unknown>>;
+
   for (let index = 0; index < expectedSheetRows.length; index += 1) {
     const expectedSheet = expectedSheetRows[index]!;
     const profile = [...successfulProfiles]
       .reverse()
-      .find(
-        (candidate) =>
-          readSheetProfileDetails(candidate.details)?.sheetName === expectedSheet.sheetName,
-      );
+      .map((event) => ({ event, profile: readSheetProfileDetails(event.resultDetails) }))
+      .find((candidate) => candidate.profile?.sheetName === expectedSheet.sheetName);
+
     if (profile === undefined) {
+      const matchingRawAttempt = successfulProfiles.find(
+        (event) => readDeclaredSheetName(event.resultDetails) === expectedSheet.sheetName,
+      );
+      if (matchingRawAttempt !== undefined && matchingRawAttempt.resultDetails === undefined) {
+        return fail('get_sheet_profile completed without durable resultDetails.', details);
+      }
+      if (matchingRawAttempt !== undefined) {
+        return fail(
+          `get_sheet_profile returned invalid details for ${expectedSheet.sheetName}.`,
+          details,
+        );
+      }
+      if (successfulProfiles.some((event) => event.resultDetails === undefined)) {
+        return fail('get_sheet_profile completed without durable resultDetails.', details);
+      }
       return fail(
         `No successful get_sheet_profile result was found for ${expectedSheet.sheetName}.`,
         details,
       );
     }
 
-    const actualProfile = readSheetProfileDetails(profile.details);
-    if (actualProfile === undefined) {
-      return fail(
-        `get_sheet_profile returned invalid details for ${expectedSheet.sheetName}.`,
-        details,
-      );
-    }
+    addToolDiagnostics(detailSheets[index]!, profile.event);
+    const actualProfile = profile.profile!;
     const actualDataRowCount = actualProfile.rowCount - expectedSheet.headerRowCount;
     detailSheets[index] = {
-      sheetName: expectedSheet.sheetName,
-      expectedDataRowCount: expectedSheet.dataRowCount,
-      expectedHeaderRowCount: expectedSheet.headerRowCount,
+      ...detailSheets[index],
       actualToolRowCount: actualProfile.rowCount,
       actualDataRowCount,
     };
@@ -543,17 +571,7 @@ async function evaluateSheetRows(input: {
     }
   }
 
-  const assistant = findLastSuccessfulAssistant(input.actual);
-  if (assistant === undefined) {
-    return fail('No successful final assistant answer was produced.', details);
-  }
-  const answer = assistant.content
-    .filter(
-      (content): content is Extract<AssistantMessage['content'][number], { type: 'text' }> =>
-        content.type === 'text',
-    )
-    .map((content) => content.text)
-    .join('\n');
+  const answer = extractAssistantText(evidence.finalAssistant);
   for (const expectedSheet of expectedSheetRows) {
     if (!containsSheetDataRowCount(answer, expectedSheet, expectedSheetRows)) {
       return fail(
@@ -563,57 +581,10 @@ async function evaluateSheetRows(input: {
     }
   }
 
-  return {
-    evaluator: 'excel_workbook_correctness',
-    score: 1,
-    passed: true,
-    details,
-  };
+  return pass(details);
 }
 
-/** Finds the last successful get_workbook_info result, ignoring failed tool attempts. */
-function findSuccessfulWorkbookInfo(result: ExecuteTurnResult): ToolResultMessage | undefined {
-  return [...result.messages]
-    .reverse()
-    .find(
-      (message): message is ToolResultMessage =>
-        message.role === 'tool' && message.name === 'get_workbook_info' && message.isError !== true,
-    );
-}
-
-/** Collects all successful sheet-profile tool results without reading display text or arguments. */
-function findSuccessfulSheetProfiles(result: ExecuteTurnResult): readonly ToolResultMessage[] {
-  return result.messages.filter(
-    (message): message is ToolResultMessage =>
-      message.role === 'tool' && message.name === 'get_sheet_profile' && message.isError !== true,
-  );
-}
-
-/** Distinguishes a missing tool call from a tool call that returned an error. */
-function hasWorkbookInfoToolResult(result: ExecuteTurnResult): boolean {
-  return result.messages.some(
-    (message): message is ToolResultMessage =>
-      message.role === 'tool' && message.name === 'get_workbook_info',
-  );
-}
-
-/** Finds the final assistant response that completed normally. */
-function findLastSuccessfulAssistant(result: ExecuteTurnResult): AssistantMessage | undefined {
-  return [...result.messages]
-    .reverse()
-    .find(
-      (message): message is AssistantMessage =>
-        message.role === 'assistant' && message.finishReason === 'stop',
-    );
-}
-
-/** Reads the structured tool fact without trusting tool-call arguments or display text. */
-function readSheetCount(details: unknown): number | undefined {
-  if (!isRecord(details) || !isValidSheetCount(details.sheetCount)) return undefined;
-  return details.sheetCount;
-}
-
-/** Reads the structured worksheet name and total row count from a profile result. */
+/** Reads one successful worksheet profile's durable structured details. */
 function readSheetProfileDetails(
   details: unknown,
 ): { readonly sheetName: string; readonly rowCount: number } | undefined {
@@ -626,6 +597,13 @@ function readSheetProfileDetails(
     return undefined;
   }
   return { sheetName: details.sheetName, rowCount: details.rowCount };
+}
+
+/** Reads a worksheet name for diagnostics without accepting the whole profile as valid. */
+function readDeclaredSheetName(details: unknown): string | undefined {
+  return isRecord(details) && typeof details.sheetName === 'string'
+    ? details.sheetName
+    : undefined;
 }
 
 /** Checks the fixed numeric contract shared by Golden expected and tool result. */
@@ -671,6 +649,12 @@ function hasExpectedSheetRows(value: unknown): boolean {
   return isRecord(value) && value.sheetRows !== undefined;
 }
 
+/** Reads a workbook-info sheet count from a structured durable result. */
+function readSheetCount(details: unknown): number | undefined {
+  if (!isRecord(details) || !isValidSheetCount(details.sheetCount)) return undefined;
+  return details.sheetCount;
+}
+
 /** Checks that a sheet name's answer segment contains its expected data-row integer. */
 function containsSheetDataRowCount(
   answer: string,
@@ -699,7 +683,7 @@ function containsInteger(text: string, expected: number): boolean {
   while (true) {
     const index = text.indexOf(token, searchFrom);
     if (index < 0) return false;
-    const before = index === 0 ? '' : text[index - 1];
+    const before = index === 0 ? '' : text[index - 1]!;
     const after = text[index + token.length] ?? '';
     if (!isAsciiDigit(before) && !isAsciiDigit(after)) return true;
     searchFrom = index + token.length;
@@ -711,15 +695,68 @@ function isAsciiDigit(value: string): boolean {
   return value >= '0' && value <= '9';
 }
 
+/** Reads only a non-blank turn ID from the executor metadata boundary. */
+function readTurnId(metadata: Readonly<Record<string, unknown>> | undefined): string | undefined {
+  const turnId = metadata?.turnId;
+  return typeof turnId === 'string' && turnId.trim().length > 0 ? turnId : undefined;
+}
+
+/** Builds common durable-evidence diagnostics before and after evidence loading. */
+function durableDetails(
+  value: string | DurableExcelEvidence | null,
+): Record<string, unknown> {
+  if (value === null) {
+    return { evidenceSource: 'durable', turnId: null, finalAssistantEntryId: null };
+  }
+  if (typeof value === 'string') {
+    return { evidenceSource: 'durable', turnId: value, finalAssistantEntryId: null };
+  }
+  return {
+    evidenceSource: 'durable',
+    turnId: value.turnId,
+    sessionId: value.sessionId,
+    finalAssistantEntryId: value.finalAssistantEntryId,
+  };
+}
+
+/** Builds the initial Case 3 diagnostics without copying durable result rows into the report. */
+function topRegionDetails(
+  expected: ExcelGoldenTopRegionSalesExpected | null,
+): Record<string, unknown> {
+  return {
+    sheetName: expected?.sheetName ?? null,
+    expectedRegion: expected?.region ?? null,
+    actualRegion: null,
+    expectedTotalSales: expected?.totalSales ?? null,
+    actualTotalSales: null,
+    expectedOrderCount: expected?.orderCount ?? null,
+    actualOrderCount: null,
+    highestSalesVerified: false,
+  };
+}
+
+/** Adds only the identity of a selected durable tool event to evaluator diagnostics. */
+function addToolDiagnostics(
+  details: Record<string, unknown>,
+  event: ToolCompletedEvent,
+): void {
+  details.toolCallId = event.callId;
+  details.toolEventSequence = event.sequence;
+}
+
+/** Creates a passing score while retaining only durable evidence identities and derived facts. */
+function pass(details: Readonly<Record<string, unknown>>): EvalScore {
+  return { evaluator: EVALUATOR_NAME, score: 1, passed: true, details };
+}
+
 /** Creates the normalized binary failure score used by this evaluator. */
 function fail(reason: string, details: Readonly<Record<string, unknown>>): EvalScore {
-  return {
-    evaluator: 'excel_workbook_correctness',
-    score: 0,
-    passed: false,
-    reason,
-    details,
-  };
+  return { evaluator: EVALUATOR_NAME, score: 0, passed: false, reason, details };
+}
+
+/** Converts an unknown thrown value into a stable evaluator failure message. */
+function errorMessage(error: unknown): string {
+  return error instanceof Error && error.message.length > 0 ? error.message : String(error);
 }
 
 /** Checks an unknown details payload without weakening the evaluator contract. */
