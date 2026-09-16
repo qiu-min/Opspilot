@@ -42,9 +42,11 @@ import {
   JsonReporter,
   RunCompletedEvaluator,
   TraceBehaviorEvaluator,
+  WorkbookMutationEvaluator,
   loadExcelCases,
   type AgentEvalInput,
   type EvalCase,
+  type WorkbookMutationReader,
 } from '../index.js';
 
 const packageRoot = fileURLToPath(new URL('../../', import.meta.url));
@@ -61,6 +63,7 @@ async function createApplicationExecutor(modelConfigPath: string): Promise<{
   readonly getTurnTrace: GetTurnTrace;
   readonly turnStore: FileSystemTurnStore;
   readonly sessionStore: FileSystemSessionStore;
+  readonly workbookMutationReader: WorkbookMutationReader;
   readonly cleanup: () => Promise<void>;
 }> {
   const config = await loadModelGatewayConfig(modelConfigPath);
@@ -89,6 +92,7 @@ async function createApplicationExecutor(modelConfigPath: string): Promise<{
     fileOperator: excelWorkingResourceStore,
   });
   const toolDefinitions = createExcelToolDefinitions(excelWorkingResourceManager);
+  const workbookMutationReader = createWorkbookMutationReader(excelWorkingResourceStore);
   const turnStore = new FileSystemTurnStore(storageRoot);
   const sessionStore = new FileSystemSessionStore(join(storageRoot, 'sessions'));
   const executeTurn = new ExecuteTurn({
@@ -108,7 +112,27 @@ async function createApplicationExecutor(modelConfigPath: string): Promise<{
     getTurnTrace,
     turnStore,
     sessionStore,
+    workbookMutationReader,
     cleanup: async () => await rm(storageRoot, { recursive: true, force: true }),
+  };
+}
+
+/** Composes the evaluator reader over the committed working-resource store and Excel adapter. */
+function createWorkbookMutationReader(
+  workingResourceStore: FileSystemExcelWorkingResourceStore,
+): WorkbookMutationReader {
+  const excelDataConnector = new ExcelJsDataAdapter();
+  return {
+    async readRange({ sessionId, resourceId, sheetName, range }) {
+      const resource = await workingResourceStore.get(sessionId, resourceId);
+      if (resource === null) return null;
+      const result = await excelDataConnector.readRange({
+        filePath: resource.workingPath,
+        sheetName,
+        range,
+      });
+      return result.values;
+    },
   };
 }
 
@@ -184,6 +208,10 @@ async function main(): Promise<void> {
         new ExcelWorkbookCorrectnessEvaluator({
           turns: application.turnStore,
           sessions: application.sessionStore,
+        }),
+        new WorkbookMutationEvaluator({
+          turns: application.turnStore,
+          workbook: application.workbookMutationReader,
         }),
         new TraceBehaviorEvaluator({ getTurnTrace: application.getTurnTrace }),
       ],

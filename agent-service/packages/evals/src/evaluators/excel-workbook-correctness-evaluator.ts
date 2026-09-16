@@ -48,6 +48,14 @@ export class ExcelWorkbookCorrectnessEvaluator implements Evaluator<unknown, Exe
     readonly actual: ExecuteTurnResult | undefined;
     readonly run: EvalRunResult<ExecuteTurnResult>;
   }): Promise<EvalScore> {
+    if (hasExpectedWorkbookMutation(input.expected)) {
+      return pass({
+        evidenceSource: 'durable',
+        kind: 'skipped',
+        reason: 'Workbook mutation expectations are evaluated by workbook_mutation.',
+      });
+    }
+
     const turnId = readTurnId(input.run.metadata);
     if (turnId === undefined) {
       return fail(
@@ -401,6 +409,11 @@ function readExpectedTopRegionSales(
 /** Distinguishes Case 3's expected contract from the discovery contracts. */
 function hasExpectedTopRegionSales(value: unknown): boolean {
   return isRecord(value) && value.topRegionSales !== undefined;
+}
+
+/** Keeps mutation-only cases out of this evaluator's read-only Golden contracts. */
+function hasExpectedWorkbookMutation(value: unknown): boolean {
+  return isRecord(value) && value.workbookMutation !== undefined;
 }
 
 /** Checks a finite numeric value from structured aggregate details. */

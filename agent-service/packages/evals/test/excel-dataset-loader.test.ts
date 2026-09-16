@@ -17,8 +17,9 @@ describe('loadExcelCases', () => {
     const excelCase = cases[0];
     const rowCountCase = cases[1];
     const topRegionSalesCase = cases[2];
+    const writeCase = cases[3];
 
-    expect(cases).toHaveLength(3);
+    expect(cases).toHaveLength(4);
     expect(excelCase).toMatchObject({
       id: 'excel-sheet-count-001',
       expected: {
@@ -88,6 +89,32 @@ describe('loadExcelCases', () => {
       },
       tags: ['excel', 'analysis', 'aggregate', 'golden'],
     });
+
+    expect(writeCase).toMatchObject({
+      id: 'excel-write-cell-004',
+      expected: {
+        workbookMutation: {
+          sheetName: 'MonthlySummary',
+          range: 'H2',
+          expectedValues: [['Verified']],
+        },
+        behavior: { requiredTools: ['write_data'], maxToolErrors: 0 },
+      },
+      input: {
+        message: '请在 MonthlySummary 工作表的 H2 单元格写入 Verified。',
+        excelResource: { id: 'excel-sales-workbook' },
+      },
+      tags: ['excel', 'write', 'mutation', 'golden'],
+    });
+  });
+
+  it.each([
+    { sheetName: '', range: 'H2', expectedValues: [['Verified']] },
+    { sheetName: 'MonthlySummary', range: '', expectedValues: [['Verified']] },
+    { sheetName: 'MonthlySummary', range: 'H2', expectedValues: [] },
+    { sheetName: 'MonthlySummary', range: 'H2', expectedValues: ['Verified'] },
+  ])('rejects malformed workbookMutation expected values: %j', async (workbookMutation) => {
+    await expectWorkbookMutationToReject(workbookMutation, /workbookMutation/);
   });
 
   it('rejects malformed sheetRows expected values', async () => {
@@ -178,6 +205,33 @@ async function expectBehaviorToReject(behavior: unknown, message: RegExp): Promi
         input: 'test',
         workbook: 'sales.xlsx',
         expected: { sheetCount: 3, behavior },
+        tags: ['excel'],
+      },
+    ]),
+    'utf8',
+  );
+  try {
+    await expect(loadExcelCases(datasetPath)).rejects.toThrow(message);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function expectWorkbookMutationToReject(
+  workbookMutation: unknown,
+  message: RegExp,
+): Promise<void> {
+  const directory = await mkdtemp(join(tmpdir(), 'opspilot-evals-loader-'));
+  const datasetPath = join(directory, 'cases.json');
+  await writeFile(
+    datasetPath,
+    JSON.stringify([
+      {
+        id: 'invalid-workbook-mutation',
+        name: 'Invalid workbook mutation',
+        input: 'test',
+        workbook: 'sales.xlsx',
+        expected: { workbookMutation },
         tags: ['excel'],
       },
     ]),

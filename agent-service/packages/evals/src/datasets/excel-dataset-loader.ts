@@ -11,6 +11,7 @@ export interface ExcelGoldenCaseExpected {
   readonly sheetCount?: number;
   readonly sheetRows?: readonly ExcelGoldenSheetRowsExpected[];
   readonly topRegionSales?: ExcelGoldenTopRegionSalesExpected;
+  readonly workbookMutation?: ExcelGoldenWorkbookMutationExpected;
   readonly behavior?: TraceBehaviorExpected;
 }
 
@@ -27,6 +28,13 @@ export interface ExcelGoldenTopRegionSalesExpected {
   readonly region: string;
   readonly totalSales: number;
   readonly orderCount: number;
+}
+
+/** Fixed worksheet range values expected after a workbook mutation Golden Case. */
+export interface ExcelGoldenWorkbookMutationExpected {
+  readonly sheetName: string;
+  readonly range: string;
+  readonly expectedValues: readonly (readonly unknown[])[];
 }
 
 /** Parsed Excel Golden Case returned by the dataset loader. */
@@ -113,7 +121,7 @@ function parseExcelGoldenCaseRecord(value: unknown, index: number): ExcelGoldenC
 function parseExpected(value: unknown, index: number): ExcelGoldenCaseExpected {
   if (!isRecord(value)) {
     throw new Error(
-      `Excel dataset case ${index} expected must define sheetCount, sheetRows, or topRegionSales.`,
+      `Excel dataset case ${index} expected must define sheetCount, sheetRows, topRegionSales, or workbookMutation.`,
     );
   }
 
@@ -158,6 +166,13 @@ function parseExpected(value: unknown, index: number): ExcelGoldenCaseExpected {
     });
 
     return { sheetRows, ...behavior };
+  }
+
+  if (value.workbookMutation !== undefined) {
+    return {
+      workbookMutation: parseWorkbookMutationExpected(value.workbookMutation, index),
+      ...behavior,
+    };
   }
 
   if (!isNonNegativeInteger(value.sheetCount)) {
@@ -251,6 +266,47 @@ function parseTopRegionSalesExpected(
     );
   }
   return { sheetName, region, totalSales, orderCount };
+}
+
+/** Validates the worksheet range and matrix used by a workbook mutation Golden Case. */
+function parseWorkbookMutationExpected(
+  value: unknown,
+  index: number,
+): ExcelGoldenWorkbookMutationExpected {
+  if (!isRecord(value)) {
+    throw new Error(`Excel dataset case ${index} expected.workbookMutation must be an object.`);
+  }
+
+  const sheetName = value.sheetName;
+  if (!isNonEmptyString(sheetName)) {
+    throw new Error(
+      `Excel dataset case ${index} expected.workbookMutation.sheetName must be a non-empty string.`,
+    );
+  }
+
+  const range = value.range;
+  if (!isNonEmptyString(range)) {
+    throw new Error(
+      `Excel dataset case ${index} expected.workbookMutation.range must be a non-empty string.`,
+    );
+  }
+
+  const rawExpectedValues = value.expectedValues;
+  if (
+    !Array.isArray(rawExpectedValues) ||
+    rawExpectedValues.length === 0 ||
+    !rawExpectedValues.every((row) => Array.isArray(row))
+  ) {
+    throw new Error(
+      `Excel dataset case ${index} expected.workbookMutation.expectedValues must be a non-empty two-dimensional array.`,
+    );
+  }
+
+  return {
+    sheetName,
+    range,
+    expectedValues: rawExpectedValues.map((row) => [...row]),
+  };
 }
 
 /** Resolves one workbook only when it remains inside the checked-in Excel dataset directory. */

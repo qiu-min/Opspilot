@@ -32,7 +32,7 @@ Deterministic evaluators should be preferred whenever the result can be verified
 ## Outcome Eval and Behavior Eval
 
 Outcome Eval determines whether the Agent completed the requested task correctly. The
-`ExcelWorkbookCorrectnessEvaluator` is a fully durable outcome evaluator: its evidence comes from
+`ExcelWorkbookCorrectnessEvaluator` is a fully durable read-only outcome evaluator: its evidence comes from
 the durable `Turn`, `TurnEvent.tool_completed.resultDetails`, and the `SessionEntry` referenced by
 the durable Turn events. It does not use `ExecuteTurnResult.messages`, so the evaluator can replay
 an already-finished Turn after the transient runtime result has been discarded.
@@ -52,7 +52,7 @@ observational details only; they are not hard gates for an Eval Case.
 
 ## Excel Golden Cases
 
-当前三个 Golden Case 使用真实 fixture `datasets/excel/sales.xlsx`。Case 1 验证：
+当前四个 Golden Case 使用真实 fixture `datasets/excel/sales.xlsx`。前三个 Case 验证：
 
 ```text
 这个 Excel 工作簿总共有几个工作表？
@@ -83,16 +83,40 @@ evaluators 通过时才通过。Excel runner 额外运行 `TraceBehaviorEvaluato
 Application `TurnStore` 调用 `GetTurnTrace`，不直接读取原始 `TurnEvent`，也不依赖
 `ExecuteTurnResult.messages` 作为行为证据。
 
+Excel deterministic outcome 现在分为两类：
+
+```text
+Read-only correctness
+- workbook info
+- sheet profile
+- aggregate
+
+Mutation correctness
+- durable write evidence
+- final workbook artifact verification
+```
+
+Case 4 使用 `WorkbookMutationEvaluator`。`write_data` 成功事件本身并不足以通过评估；评估器
+会从 durable `TurnEvent` 确认成功写入，再通过 Eval composition root 注入的最小 workbook
+reader 读取最终 committed working resource，并独立验证目标范围的真实值。它不检查写入后
+是否调用 `read_range`、工具顺序、model calls 或 token usage。
+
 两类 Eval 的证据边界保持分离：
 
 ```text
 Observability / Behavior: TurnEvent -> TurnTrace
-Outcome: TurnEvent + referenced Session durable state
+Read-only Outcome: TurnEvent + referenced Session durable state
+Mutation Outcome: TurnEvent + final committed working workbook
 ```
 
-Eval composition root 为 `ExecuteTurn`、`TraceBehaviorEvaluator` 和
-`ExcelWorkbookCorrectnessEvaluator` 共享同一个临时 `TurnStore` / `SessionStore` 实例；评估
-完成后临时 durable state 会统一清理。
+Eval composition root 为 `ExecuteTurn`、`TraceBehaviorEvaluator`、
+`ExcelWorkbookCorrectnessEvaluator` 和 `WorkbookMutationEvaluator` 共享同一个临时
+`TurnStore` / `SessionStore` / Excel working-resource store；评估完成后临时 durable state
+会统一清理。
+
+Case 4 仍使用 `datasets/excel/sales.xlsx` 作为只读 Golden fixture。Application 的
+`ExcelWorkingResourceManager` 会在 Eval workspace 中创建并提交 Session 级 working copy，
+所以 Agent 的 `write_data` 不会修改 checked-in fixture。
 
 ## Run the Eval suite
 

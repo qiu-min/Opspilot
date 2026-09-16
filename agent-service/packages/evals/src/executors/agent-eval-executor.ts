@@ -61,6 +61,7 @@ export class AgentEvalExecutor implements EvalExecutor<AgentEvalInput, ExecuteTu
         this.onEvent === undefined ? undefined : { onEvent: this.onEvent },
       );
       const failedAssistant = findFailedAssistant(result);
+      const excelResourceId = readExcelResourceId(evalCase.input);
 
       return {
         caseId: evalCase.id,
@@ -71,6 +72,9 @@ export class AgentEvalExecutor implements EvalExecutor<AgentEvalInput, ExecuteTu
           sessionId: result.sessionId,
           turnId: result.turnId,
           leafId: result.leafId,
+          ...(excelResourceId === undefined
+            ? {}
+            : { excelResourceId }),
         },
         ...(failedAssistant === undefined
           ? {}
@@ -91,6 +95,12 @@ export class AgentEvalExecutor implements EvalExecutor<AgentEvalInput, ExecuteTu
       };
     }
   }
+}
+
+/** Reads the attached Excel resource identity without exposing its filesystem path. */
+function readExcelResourceId(input: AgentEvalInput): string | undefined {
+  if (!isAgentEvalInputWithResource(input) || input.excelResource === undefined) return undefined;
+  return input.excelResource.id;
 }
 
 /** Converts a plain smoke prompt into the standard Application user message. */

@@ -32,11 +32,17 @@ export {
   type TurnTraceReader,
 } from './evaluators/trace-behavior-evaluator.js';
 export {
+  WorkbookMutationEvaluator,
+  type WorkbookMutationEvaluatorOptions,
+  type WorkbookMutationReader,
+} from './evaluators/workbook-mutation-evaluator.js';
+export {
   loadExcelCases,
   type ExcelGoldenCase,
   type ExcelGoldenCaseExpected,
   type ExcelGoldenSheetRowsExpected,
   type ExcelGoldenTopRegionSalesExpected,
+  type ExcelGoldenWorkbookMutationExpected,
 } from './datasets/excel-dataset-loader.js';
 export { ConsoleReporter } from './reporters/console-reporter.js';
 export { JsonReporter } from './reporters/json-reporter.js';

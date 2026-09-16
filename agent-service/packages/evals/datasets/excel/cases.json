@@ -67,5 +67,24 @@
       }
     },
     "tags": ["excel", "analysis", "aggregate", "golden"]
+  },
+  {
+    "id": "excel-write-cell-004",
+    "name": "Write value to workbook",
+    "description": "Checks that the agent writes the expected value into the workbook.",
+    "input": "请在 MonthlySummary 工作表的 H2 单元格写入 Verified。",
+    "workbook": "sales.xlsx",
+    "expected": {
+      "workbookMutation": {
+        "sheetName": "MonthlySummary",
+        "range": "H2",
+        "expectedValues": [["Verified"]]
+      },
+      "behavior": {
+        "requiredTools": ["write_data"],
+        "maxToolErrors": 0
+      }
+    },
+    "tags": ["excel", "write", "mutation", "golden"]
   }
 ]

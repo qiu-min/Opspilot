@@ -33,6 +33,28 @@ const expectedTopRegionSales = {
 };
 
 describe('ExcelWorkbookCorrectnessEvaluator', () => {
+  it('skips mutation-only expected contracts for the dedicated mutation evaluator', async () => {
+    const fixture = createFixture({ assistantText: 'Verified' });
+
+    const result = await evaluate(
+      {
+        workbookMutation: {
+          sheetName: 'MonthlySummary',
+          range: 'H2',
+          expectedValues: [['Verified']],
+        },
+      },
+      fixture,
+    );
+
+    expect(result).toMatchObject({
+      evaluator: 'excel_workbook_correctness',
+      score: 1,
+      passed: true,
+      details: { kind: 'skipped' },
+    });
+  });
+
   it('passes from durable evidence even when the runtime result is undefined', async () => {
     const fixture = createFixture({
       tools: [workbookInfoTool(3)],

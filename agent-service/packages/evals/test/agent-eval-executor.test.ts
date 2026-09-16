@@ -71,7 +71,7 @@ describe('AgentEvalExecutor', () => {
       },
     });
 
-    await executor.execute({
+    const result = await executor.execute({
       id: 'excel-case-1',
       name: 'Excel Case 1',
       input: {
@@ -87,5 +87,6 @@ describe('AgentEvalExecutor', () => {
       },
       excelResource: { id: 'excel-sales-workbook', filePath: '/fixtures/sales.xlsx' },
     });
+    expect(result.metadata).toMatchObject({ excelResourceId: 'excel-sales-workbook' });
   });
 });
