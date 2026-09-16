@@ -7,7 +7,15 @@ import type { AgentEvalInput } from '../executors/agent-eval-executor.js';
 
 /** Fixed, checked-in expected facts for one Excel Golden Case. */
 export interface ExcelGoldenCaseExpected {
-  readonly sheetCount: number;
+  readonly sheetCount?: number;
+  readonly sheetRows?: readonly ExcelGoldenSheetRowsExpected[];
+}
+
+/** Fixed expected data/header row counts for one worksheet in an Excel Golden Case. */
+export interface ExcelGoldenSheetRowsExpected {
+  readonly sheetName: string;
+  readonly dataRowCount: number;
+  readonly headerRowCount: number;
 }
 
 /** Parsed Excel Golden Case returned by the dataset loader. */
@@ -92,11 +100,51 @@ function parseExcelGoldenCaseRecord(value: unknown, index: number): ExcelGoldenC
 
 /** Validates the deliberately small Excel expected-value contract. */
 function parseExpected(value: unknown, index: number): ExcelGoldenCaseExpected {
-  const sheetCount = isRecord(value) ? value.sheetCount : undefined;
-  if (!isNonNegativeInteger(sheetCount)) {
+  if (!isRecord(value)) {
+    throw new Error(`Excel dataset case ${index} expected must define sheetCount or sheetRows.`);
+  }
+
+  if (value.sheetRows !== undefined) {
+    if (!Array.isArray(value.sheetRows) || value.sheetRows.length === 0) {
+      throw new Error(`Excel dataset case ${index} expected.sheetRows must be a non-empty array.`);
+    }
+
+    const sheetRows = value.sheetRows.map((sheet, sheetIndex) => {
+      if (!isRecord(sheet)) {
+        throw new Error(
+          `Excel dataset case ${index} expected.sheetRows[${sheetIndex}] must be an object.`,
+        );
+      }
+      const sheetName = sheet.sheetName;
+      if (!isNonEmptyString(sheetName)) {
+        throw new Error(
+          `Excel dataset case ${index} expected.sheetRows[${sheetIndex}].sheetName must be a non-empty string.`,
+        );
+      }
+      if (!isNonNegativeInteger(sheet.dataRowCount)) {
+        throw new Error(
+          `Excel dataset case ${index} expected.sheetRows[${sheetIndex}].dataRowCount must be an integer >= 0.`,
+        );
+      }
+      if (!isNonNegativeInteger(sheet.headerRowCount)) {
+        throw new Error(
+          `Excel dataset case ${index} expected.sheetRows[${sheetIndex}].headerRowCount must be an integer >= 0.`,
+        );
+      }
+      return {
+        sheetName,
+        dataRowCount: sheet.dataRowCount,
+        headerRowCount: sheet.headerRowCount,
+      } satisfies ExcelGoldenSheetRowsExpected;
+    });
+
+    return { sheetRows };
+  }
+
+  if (!isNonNegativeInteger(value.sheetCount)) {
     throw new Error(`Excel dataset case ${index} expected.sheetCount must be an integer >= 0.`);
   }
-  return { sheetCount };
+  return { sheetCount: value.sheetCount };
 }
 
 /** Resolves one workbook only when it remains inside the checked-in Excel dataset directory. */

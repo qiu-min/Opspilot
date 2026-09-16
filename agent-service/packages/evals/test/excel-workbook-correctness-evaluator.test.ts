@@ -7,6 +7,13 @@ import { ExcelWorkbookCorrectnessEvaluator } from '../src/evaluators/excel-workb
 
 const evaluator = new ExcelWorkbookCorrectnessEvaluator();
 const expected = { sheetCount: 3 };
+const rowCountExpected = {
+  sheetRows: [
+    { sheetName: 'SalesData', dataRowCount: 120, headerRowCount: 1 },
+    { sheetName: 'Products', dataRowCount: 8, headerRowCount: 1 },
+    { sheetName: 'MonthlySummary', dataRowCount: 7, headerRowCount: 1 },
+  ],
+};
 
 describe('ExcelWorkbookCorrectnessEvaluator', () => {
   it('passes when the real tool result and final assistant answer agree', async () => {
@@ -84,10 +91,137 @@ describe('ExcelWorkbookCorrectnessEvaluator', () => {
       details: { expectedSheetCount: 3 },
     });
   });
+
+  it('passes when all three sheet profiles and the final answer are correct', async () => {
+    const result = await evaluator.evaluate({
+      expected: rowCountExpected,
+      actual: turnResult([
+        sheetProfileResult('SalesData', 121),
+        sheetProfileResult('Products', 9),
+        sheetProfileResult('MonthlySummary', 8),
+        assistantMessage(
+          'SalesData 有 120 行数据，另有 1 行标题；Products 有 8 行数据，另有 1 行标题；MonthlySummary 有 7 行数据，另有 1 行标题。',
+        ),
+      ]),
+      run: completedRun('excel-sheet-row-counts-002'),
+    });
+
+    expect(result).toEqual({
+      evaluator: 'excel_workbook_correctness',
+      score: 1,
+      passed: true,
+      details: {
+        sheets: [
+          {
+            sheetName: 'SalesData',
+            expectedDataRowCount: 120,
+            expectedHeaderRowCount: 1,
+            actualToolRowCount: 121,
+            actualDataRowCount: 120,
+          },
+          {
+            sheetName: 'Products',
+            expectedDataRowCount: 8,
+            expectedHeaderRowCount: 1,
+            actualToolRowCount: 9,
+            actualDataRowCount: 8,
+          },
+          {
+            sheetName: 'MonthlySummary',
+            expectedDataRowCount: 7,
+            expectedHeaderRowCount: 1,
+            actualToolRowCount: 8,
+            actualDataRowCount: 7,
+          },
+        ],
+      },
+    });
+  });
+
+  it('fails when SalesData has the wrong total row count', async () => {
+    const result = await evaluateRows([
+      sheetProfileResult('SalesData', 120),
+      sheetProfileResult('Products', 9),
+      sheetProfileResult('MonthlySummary', 8),
+      assistantMessage('SalesData 119 行数据；Products 8 行数据；MonthlySummary 7 行数据。'),
+    ]);
+
+    expect(result).toMatchObject({
+      score: 0,
+      passed: false,
+      reason:
+        'Expected SalesData to contain 120 data rows, but calculated 119 from get_sheet_profile.',
+    });
+  });
+
+  it('fails when Products has no successful profile result', async () => {
+    const result = await evaluateRows([
+      sheetProfileResult('SalesData', 121),
+      sheetProfileResult('MonthlySummary', 8),
+      assistantMessage('SalesData 120 行数据；Products 8 行数据；MonthlySummary 7 行数据。'),
+    ]);
+
+    expect(result).toMatchObject({
+      score: 0,
+      passed: false,
+      reason: 'No successful get_sheet_profile result was found for Products.',
+    });
+  });
+
+  it('fails when MonthlySummary profile is an error result', async () => {
+    const result = await evaluateRows([
+      sheetProfileResult('SalesData', 121),
+      sheetProfileResult('Products', 9),
+      sheetProfileResult('MonthlySummary', 8, true),
+      assistantMessage('SalesData 120 行数据；Products 8 行数据；MonthlySummary 7 行数据。'),
+    ]);
+
+    expect(result).toMatchObject({
+      score: 0,
+      passed: false,
+      reason: 'No successful get_sheet_profile result was found for MonthlySummary.',
+    });
+  });
+
+  it('fails when tool results are correct but SalesData is reported as 121 data rows', async () => {
+    const result = await evaluateRows([
+      sheetProfileResult('SalesData', 121),
+      sheetProfileResult('Products', 9),
+      sheetProfileResult('MonthlySummary', 8),
+      assistantMessage('SalesData 121 行数据；Products 8 行数据；MonthlySummary 7 行数据。'),
+    ]);
+
+    expect(result).toMatchObject({
+      score: 0,
+      passed: false,
+      reason:
+        'The tool results were correct, but the final assistant answer did not report SalesData as having 120 data rows.',
+    });
+  });
+
+  it('fails when the correct numbers are assigned to the wrong sheets', async () => {
+    const result = await evaluateRows([
+      sheetProfileResult('SalesData', 121),
+      sheetProfileResult('Products', 9),
+      sheetProfileResult('MonthlySummary', 8),
+      assistantMessage('SalesData 8 行数据；Products 120 行数据；MonthlySummary 7 行数据。'),
+    ]);
+
+    expect(result).toMatchObject({ score: 0, passed: false });
+    expect(result.reason).toContain('SalesData');
+  });
 });
 
-function completedRun(): EvalRunResult<ExecuteTurnResult> {
-  return { caseId: 'excel-sheet-count-001', status: 'completed', durationMs: 1 };
+function completedRun(caseId = 'excel-sheet-count-001'): EvalRunResult<ExecuteTurnResult> {
+  return { caseId, status: 'completed', durationMs: 1 };
+}
+
+async function evaluateRows(messages: readonly ExecuteTurnResult['messages'][number][]) {
+  return evaluator.evaluate({
+    expected: rowCountExpected,
+    actual: turnResult(messages),
+    run: completedRun('excel-sheet-row-counts-002'),
+  });
 }
 
 function turnResult(messages: readonly ExecuteTurnResult['messages'][number][]): ExecuteTurnResult {
@@ -106,6 +240,21 @@ function workbookInfoResult(sheetCount: number, isError = false): ToolResultMess
     name: 'get_workbook_info',
     content: [{ type: 'text', text: `sheetCount: ${sheetCount}` }],
     details: { sheetCount },
+    isError,
+  };
+}
+
+function sheetProfileResult(
+  sheetName: string,
+  rowCount: number,
+  isError = false,
+): ToolResultMessage {
+  return {
+    role: 'tool',
+    callId: `profile-${sheetName}`,
+    name: 'get_sheet_profile',
+    content: [{ type: 'text', text: `sheetName: ${sheetName}\nrowCount: ${rowCount}` }],
+    details: { sheetName, rowCount },
     isError,
   };
 }

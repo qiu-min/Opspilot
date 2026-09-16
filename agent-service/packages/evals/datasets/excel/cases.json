@@ -9,5 +9,32 @@
       "sheetCount": 3
     },
     "tags": ["excel", "discovery", "golden"]
+  },
+  {
+    "id": "excel-sheet-row-counts-002",
+    "name": "Count worksheet data rows",
+    "description": "Checks the data row count of every worksheet in the sales workbook.",
+    "input": "Sales 工作表有多少行数据？请检查工作簿中的所有工作表，并分别告诉我每个工作表有多少行数据以及多少行标题。",
+    "workbook": "sales.xlsx",
+    "expected": {
+      "sheetRows": [
+        {
+          "sheetName": "SalesData",
+          "dataRowCount": 120,
+          "headerRowCount": 1
+        },
+        {
+          "sheetName": "Products",
+          "dataRowCount": 8,
+          "headerRowCount": 1
+        },
+        {
+          "sheetName": "MonthlySummary",
+          "dataRowCount": 7,
+          "headerRowCount": 1
+        }
+      ]
+    },
+    "tags": ["excel", "discovery", "row-count", "golden"]
   }
 ]
