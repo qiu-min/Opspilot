@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 
 import {
   ExecuteTurn,
+  GetExcelResourceContent,
   GetActiveTurn,
   GetSessionHistory,
   GetTurnTrace,
@@ -628,6 +629,10 @@ async function startServer(
             provide: GetSessionHistory,
             useValue: { execute: () => ({ leafId: null, items: [] }) },
           },
+          {
+            provide: GetExcelResourceContent,
+            useValue: { execute: async () => { throw new Error('not used'); } },
+          },
           { provide: EXCEL_RESOURCE_PATH_RESOLVER, useValue: excelResourcePathResolver },
           { provide: GetActiveTurn, useValue: new GetActiveTurn(streamHub) },
           { provide: SubscribeTurnStream, useValue: new SubscribeTurnStream(streamHub) },
@@ -636,6 +641,7 @@ async function startServer(
         exports: [
           ExecuteTurn,
           GetSessionHistory,
+          GetExcelResourceContent,
           GetActiveTurn,
           SubscribeTurnStream,
           GetTurnTrace,

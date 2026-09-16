@@ -23,6 +23,8 @@ SSE 意外断开不等于 Turn failed。Web 会重新读取 active-turn；仍 ac
 
 terminal `turn_completed`、`turn_failed` 或 `turn_cancelled` 到达后，Web 重新获取 Session detail，以包含 `turnSummaries` 的 durable history 为 source of truth，再清理对应 Turn live state 并刷新 Session list metadata。历史 response 通过 `inputEntryId` 关联 user message，并使用稳定的 `turn-{turnId}` identity；刷新失败时暂时保留已完成的 live response。
 
+完成 Turn 中成功执行过 `write_data` 的 Excel resource 会在对应 assistant response 后投影为独立的 GeneratedArtifact。Download 只调用 Backend 的 `/api/sessions/{sessionId}/resources/{resourceId}/content`，由服务端解析当前 committed revision。
+
 历史 Turn 的 `TurnPresentationSummary` 是 Agent Service 从 durable Turn、TurnEvent 与
 SessionEntry 重建的 application read model。它提供 Turn status、端到端 timing、usage、
 tool timing 和通过同一个 `ToolPresentationResolver` 得到的 UI-safe display；Web 只负责

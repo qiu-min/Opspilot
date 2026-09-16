@@ -14,6 +14,9 @@ import {
   TurnStreamReplayGapError,
   TurnStreamSessionConflictError,
   SessionRecoverableTurnConflictError,
+  ExcelResourceContentNotFoundError,
+  ExcelResourceNotFoundError,
+  SessionNotFoundError,
 } from '@opspilot/application';
 
 import type { ApiErrorCode, ApiErrorResponse } from './api-error.js';
@@ -49,6 +52,13 @@ export class ApiExceptionFilter implements ExceptionFilter {
 }
 
 function mapException(exception: unknown): MappedError {
+  if (
+    exception instanceof SessionNotFoundError ||
+    exception instanceof ExcelResourceNotFoundError ||
+    exception instanceof ExcelResourceContentNotFoundError
+  ) {
+    return { statusCode: 404, code: 'NOT_FOUND', message: 'Resource not found.' };
+  }
   if (exception instanceof TurnNotFoundError) {
     return { statusCode: 404, code: 'NOT_FOUND', message: 'Turn not found.' };
   }

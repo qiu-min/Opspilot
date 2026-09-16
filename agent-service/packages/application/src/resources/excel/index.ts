@@ -9,8 +9,15 @@ export type {
 export type { ExcelWorkingResourceFileOperator } from './excel-working-resource-file-operator.js';
 export {
   ExcelWorkingResourceError,
+  ExcelResourceContentNotFoundError,
+  ExcelResourceNotFoundError,
   ExcelWorkingResourceSourceMismatchError,
 } from './excel-working-resource-errors.js';
+export {
+  GetExcelResourceContent,
+  type ExcelResourceContent,
+  type GetExcelResourceContentDependencies,
+} from './get-excel-resource-content.js';
 export {
   ExcelWorkingResourceManager,
   type ExcelWorkingResourceManagerDependencies,

@@ -7,6 +7,7 @@ import {
 
 import {
   ExecuteTurn,
+  GetExcelResourceContent,
   GetActiveTurn,
   GetSessionHistory,
   GetTurnTrace,
@@ -283,6 +284,10 @@ async function startServer(
             useValue: { execute: () => ({ leafId: null, items: [] }) },
           },
           {
+            provide: GetExcelResourceContent,
+            useValue: { execute: async () => { throw new Error('not used'); } },
+          },
+          {
             provide: EXCEL_RESOURCE_PATH_RESOLVER,
             useValue: {
               resolve: (resource) => ({ id: resource.id, filePath: resource.storagePath }),
@@ -298,6 +303,7 @@ async function startServer(
         exports: [
           ExecuteTurn,
           GetSessionHistory,
+          GetExcelResourceContent,
           GetActiveTurn,
           SubscribeTurnStream,
           GetTurnTrace,

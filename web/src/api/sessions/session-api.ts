@@ -23,6 +23,30 @@ export function getSessionTurnTrace(sessionId: string, turnId: string, accessTok
   return apiRequest(`/api/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/trace`, { method: "GET", accessToken, signal, cache: "no-store" });
 }
 
+/** Downloads the current committed workbook through the Backend API proxy. */
+export async function downloadExcelResource(sessionId: string, resourceId: string, accessToken: string, signal?: AbortSignal): Promise<void> {
+  const response = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/resources/${encodeURIComponent(resourceId)}/content`, {
+    method: "GET",
+    accessToken,
+    signal,
+    cache: "no-store",
+    headers: { Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+  });
+  const objectUrl = URL.createObjectURL(await response.blob());
+  let link: HTMLAnchorElement | undefined;
+  try {
+    link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = getDownloadFileName(response.headers.get("Content-Disposition"));
+    link.style.display = "none";
+    document.body.append(link);
+    link.click();
+  } finally {
+    link?.remove();
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 export async function* startSessionTurnStream(sessionId: string, request: RunSessionTurnRequest, accessToken: string, signal?: AbortSignal): AsyncGenerator<TurnStreamEvent> {
   yield* readTurnStream(`/api/sessions/${encodeURIComponent(sessionId)}/turns/stream`, "start", request, accessToken, signal);
 }
@@ -38,4 +62,20 @@ async function* readTurnStream(path: string, mode: "start" | "reattach", body: R
   if (contentType !== "text/event-stream") throw new TurnStreamProtocolError("Turn stream response must use content type text/event-stream.");
   if (response.body === null) throw new TurnStreamProtocolError("Turn stream response has no readable body.");
   for await (const event of parseTurnSseStream(response.body)) yield event;
+}
+
+function getDownloadFileName(contentDisposition: string | null): string {
+  if (contentDisposition !== null) {
+    const encoded = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(contentDisposition)?.[1];
+    if (encoded !== undefined) {
+      try {
+        return decodeURIComponent(encoded.trim().replace(/^"|"$/g, ""));
+      } catch {
+        // Fall through to the plain filename or safe default.
+      }
+    }
+    const plain = /filename="([^"]+)"/i.exec(contentDisposition)?.[1] ?? /filename=([^;]+)/i.exec(contentDisposition)?.[1];
+    if (plain !== undefined && plain.trim().length > 0) return plain.trim();
+  }
+  return "modified-workbook.xlsx";
 }

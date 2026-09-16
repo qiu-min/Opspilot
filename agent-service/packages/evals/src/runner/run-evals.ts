@@ -42,6 +42,7 @@ import {
   JsonReporter,
   RunCompletedEvaluator,
   TraceBehaviorEvaluator,
+  VerifyAfterWriteEvaluator,
   WorkbookMutationEvaluator,
   loadExcelCases,
   type AgentEvalInput,
@@ -213,6 +214,7 @@ async function main(): Promise<void> {
           turns: application.turnStore,
           workbook: application.workbookMutationReader,
         }),
+        new VerifyAfterWriteEvaluator({ turns: application.turnStore }),
         new TraceBehaviorEvaluator({ getTurnTrace: application.getTurnTrace }),
       ],
     });

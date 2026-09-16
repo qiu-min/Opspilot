@@ -16,6 +16,8 @@ const WORKBOOK_GROUNDING_GUIDELINE =
   'When workbook-specific facts are required, inspect the workbook before answering.';
 const WRITE_DATA_GUIDELINE =
   'Use write_data to write structured tabular data into the selected Excel resource.';
+const WRITE_VERIFICATION_GUIDELINE =
+  'After a successful Excel mutation, read back the affected range before reporting completion.';
 const READ_RANGE_GUIDELINE =
   'Use read_range only for a specific small range when exact cell values are needed.';
 const FILTERED_RANGE_DETAIL_GUIDELINE =
@@ -69,6 +71,9 @@ export function buildOpsPilotSystemPrompt(options: BuildOpsPilotSystemPromptOpti
     }
   }
   if (toolNames.has('write_data')) addGuideline(WRITE_DATA_GUIDELINE);
+  if (toolNames.has('write_data') && toolNames.has('read_range')) {
+    addGuideline(WRITE_VERIFICATION_GUIDELINE);
+  }
   const hasAggregateData = toolNames.has('aggregate_data');
   const hasFilterData = toolNames.has('filter_data');
   if (hasAggregateData) {

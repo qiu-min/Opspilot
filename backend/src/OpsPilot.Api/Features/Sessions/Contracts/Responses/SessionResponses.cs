@@ -21,7 +21,8 @@ public sealed record SessionTurnPresentationSummaryResponse(
     DateTimeOffset StartedAt,
     DateTimeOffset CompletedAt,
     SessionTurnPresentationUsageResponse? Usage,
-    IReadOnlyList<SessionToolPresentationSummaryResponse> Tools);
+    IReadOnlyList<SessionToolPresentationSummaryResponse> Tools,
+    IReadOnlyList<Guid>? ModifiedExcelResourceIds = null);
 
 public sealed record SessionTurnPresentationUsageResponse(int InputTokens, int OutputTokens, int TotalTokens);
 

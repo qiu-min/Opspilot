@@ -403,11 +403,39 @@ public sealed class SessionEndpointTests : IClassFixture<SessionTestFactory>
         using HttpResponseMessage detail = await SendAsync(HttpMethod.Get, $"/api/sessions/{sessionId}", other.AccessToken);
         using HttpResponseMessage reattach = await SendAsync(HttpMethod.Get, $"/api/sessions/{sessionId}/turns/{turnId}/stream?after=0", other.AccessToken);
         using HttpResponseMessage trace = await SendAsync(HttpMethod.Get, $"/api/sessions/{sessionId}/turns/{turnId}/trace", other.AccessToken);
+        using HttpResponseMessage download = await SendAsync(HttpMethod.Get, $"/api/sessions/{sessionId}/resources/{Guid.NewGuid()}/content", other.AccessToken);
 
         Assert.Equal(HttpStatusCode.NotFound, detail.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, reattach.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, trace.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, download.StatusCode);
         Assert.Equal(traceCallsBefore, factory.Agent.TraceCalls);
+    }
+
+    [Fact]
+    public async Task DownloadResource_ProxiesCommittedWorkbookWithOriginalFileName()
+    {
+        LoginResponse login = await RegisterAndLoginAsync();
+        Guid sessionId = await CreateSessionAsync(login.AccessToken);
+        Guid resourceId = await UploadWorkbookAsync(login.AccessToken, "sales.xlsx");
+        byte[] committedWorkbook = [80, 75, 3, 4, 42, 43];
+        factory.Agent.ExcelResourceContent = new AgentExcelResourceContent(
+            new MemoryStream(committedWorkbook),
+            "internal-revision-name.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+
+        using HttpResponseMessage response = await SendAsync(
+            HttpMethod.Get,
+            $"/api/sessions/{sessionId}/resources/{resourceId}/content",
+            login.AccessToken);
+        byte[] responseBytes = await response.Content.ReadAsByteArrayAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", response.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("sales.xlsx", response.Content.Headers.ContentDisposition?.ToString() ?? string.Empty, StringComparison.Ordinal);
+        Assert.Equal(committedWorkbook, responseBytes);
+        Assert.DoesNotContain("workingPath", response.Content.Headers.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("stagingPath", response.Content.Headers.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<Guid> CreateSessionAsync(string token)
@@ -427,6 +455,20 @@ public sealed class SessionEndpointTests : IClassFixture<SessionTestFactory>
         using HttpResponseMessage login = await httpClient.PostAsJsonAsync("/api/auth/login", new { email, password });
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         return (await login.Content.ReadFromJsonAsync<LoginResponse>())!;
+    }
+
+    private async Task<Guid> UploadWorkbookAsync(string token, string fileName)
+    {
+        using var form = new MultipartFormDataContent();
+        using var fileContent = new ByteArrayContent([80, 75, 3, 4, 1]);
+        fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        form.Add(fileContent, "file", fileName);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/files") { Content = form };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using HttpResponseMessage response = await httpClient.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        JsonElement body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        return body.GetProperty("id").GetGuid();
     }
 
     private Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, string token)
@@ -486,6 +528,7 @@ public sealed class FakeAgentSessionClient : IAgentSessionClient
     public long? LastAfterSequence { get; private set; }
     public int RunTurnCalls { get; private set; }
     public int TraceCalls { get; private set; }
+    public AgentExcelResourceContent? ExcelResourceContent { get; set; }
 
     public Task<AgentSessionCreated> CreateSessionAsync(CancellationToken cancellationToken)
     {
@@ -496,6 +539,11 @@ public sealed class FakeAgentSessionClient : IAgentSessionClient
 
     public Task<AgentSessionHistory> GetHistoryAsync(Guid sessionId, CancellationToken cancellationToken) =>
         Task.FromResult(Histories.GetValueOrDefault(sessionId, new AgentSessionHistory(null, [])));
+
+    public Task<AgentExcelResourceContent> GetExcelResourceContentAsync(Guid sessionId, Guid resourceId, CancellationToken cancellationToken) =>
+        ExcelResourceContent is not null
+            ? Task.FromResult(ExcelResourceContent)
+            : throw new OpsPilot.Application.Exceptions.ApplicationNotFoundException("Agent Service resource was not found.");
 
     public Task<AgentTurnTrace> GetTurnTraceAsync(Guid turnId, CancellationToken cancellationToken)
     {

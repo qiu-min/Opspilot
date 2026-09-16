@@ -47,6 +47,7 @@ POST /api/sessions
 GET  /api/sessions
 GET  /api/sessions/{sessionId}
 POST /api/sessions/{sessionId}/turns
+GET  /api/sessions/{sessionId}/resources/{resourceId}/content
 POST /api/sessions/{sessionId}/turns/stream
 GET  /api/sessions/{sessionId}/active-turn
 GET  /api/sessions/{sessionId}/turns/{turnId}/trace
@@ -58,6 +59,8 @@ Trace endpoint 会验证 Session ownership，按 `turnId` 读取 Agent Service �
 Backend stream adapter 以强类型 contract 解析并转发 Agent Service 的 `TurnStreamEvent`，包括 `model_retry`；保留 `turnId`、`sessionId`、`sequence`、`timestamp`，SSE `id` 等于 `sequence`。`model_retry` 的 retry metadata 由 Backend 校验后按 typed adapter 转发，不透传未知 JSON 字段。Backend 只负责 ownership、文件资源解析、错误映射和 SSE transport，不再次推断 thinking、assistant、tool、model retry 或 compaction semantics。
 
 `GET /api/sessions/${sessionId}/active-turn` 同样强类型解析 Agent Service 的 `TurnStreamProjection`，并转发 `projection.retry`。Turn trace 的 model span 通过 typed contract 转发 `error` 与 `retries`；Backend 不解释这些字段、不重新分类错误、不持久化 TurnEvent 或 projection，也不实现 retry。这里的 typed adapter / transport forwarding 替代了“无需同步 contract 的透明字节代理”假设。
+
+`GET /api/sessions/{sessionId}/resources/{resourceId}/content` 验证当前用户的 Session 和文件资产 ownership，再通过 Agent Service 流式转发当前 committed Excel workbook；Web 不接触 Agent Service 地址或服务器文件路径。
 
 Agent Service stream conflicts 的 machine-readable `code` 会继续透传到 Backend ProblemDetails；`TURN_STREAM_REPLAY_GAP` 与 `SESSION_ACTIVE_TURN_CONFLICT` 不会被折叠成同一种 Web 语义。
 

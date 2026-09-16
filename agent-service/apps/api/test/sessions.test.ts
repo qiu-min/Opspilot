@@ -1,4 +1,7 @@
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 import {
   GetSessionHistory,
@@ -7,6 +10,7 @@ import {
   GetActiveTurn,
   SubscribeTurnStream,
   GetTurnTrace,
+  GetExcelResourceContent,
   Session,
   type SessionStore,
   type TurnStore,
@@ -23,6 +27,12 @@ interface HttpResponse {
   readonly statusCode: number;
   readonly headers: IncomingHttpHeaders;
   readonly body: string;
+}
+
+interface BinaryHttpResponse {
+  readonly statusCode: number;
+  readonly headers: IncomingHttpHeaders;
+  readonly body: Buffer;
 }
 
 describe('Session history API', () => {
@@ -212,9 +222,53 @@ describe('Session history API', () => {
     expect(response.body).not.toContain('private tool output');
     expect(response.body).not.toContain('private details');
   });
+
+  it('streams workbook bytes with download metadata and no server path', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'opspilot-api-'));
+    const filePath = join(directory, 'sales.xlsx');
+    const fileBytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x01]);
+    await writeFile(filePath, fileBytes);
+    const getContent = {
+      execute: async () => ({
+        filePath,
+        fileName: 'sales.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' as const,
+      }),
+    } as unknown as GetExcelResourceContent;
+
+    try {
+      app = await startServer(
+        new GetSessionHistory({ sessionStore: unusedSessionStore(), turnStore: emptyTurnStore() }),
+        getContent,
+      );
+      const response = await getBuffer(
+        app,
+        '/sessions/11111111-1111-4111-8111-111111111111/resources/resource-1/content',
+      );
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['content-type']).toContain(
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+      expect(response.headers['content-disposition']).toContain('sales.xlsx');
+      expect(response.body).toEqual(fileBytes);
+      expect(response.body.toString()).not.toContain(filePath);
+      expect(JSON.stringify(response.headers)).not.toContain(filePath);
+      expect(JSON.stringify(response.headers)).not.toContain('stagingPath');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });
 
-async function startServer(getSessionHistory: GetSessionHistory): Promise<INestApplication> {
+async function startServer(
+  getSessionHistory: GetSessionHistory,
+  getExcelResourceContent: GetExcelResourceContent = ({
+    execute: async () => {
+      throw new Error('not used');
+    },
+  } as unknown as GetExcelResourceContent),
+): Promise<INestApplication> {
   const streamHub = {
     getActiveTurn: () => null,
   } as unknown as TurnStreamHub;
@@ -241,6 +295,7 @@ async function startServer(getSessionHistory: GetSessionHistory): Promise<INestA
             },
           },
           { provide: GetSessionHistory, useValue: getSessionHistory },
+          { provide: GetExcelResourceContent, useValue: getExcelResourceContent },
           {
             provide: EXCEL_RESOURCE_PATH_RESOLVER,
             useValue: {
@@ -262,6 +317,7 @@ async function startServer(getSessionHistory: GetSessionHistory): Promise<INestA
           ExecuteTurn,
           CreateSession,
           GetSessionHistory,
+          GetExcelResourceContent,
           GetActiveTurn,
           SubscribeTurnStream,
           GetTurnTrace,
@@ -275,6 +331,39 @@ async function startServer(getSessionHistory: GetSessionHistory): Promise<INestA
   await testApp.init();
   await testApp.listen(0, '127.0.0.1');
   return testApp;
+}
+
+function getBuffer(app: INestApplication, path: string): Promise<BinaryHttpResponse> {
+  const address = app.getHttpServer().address();
+  if (address === null || typeof address === 'string') {
+    throw new Error('Test server did not expose a TCP address.');
+  }
+
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(
+      { host: '127.0.0.1', port: address.port, path, method: 'GET' },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)));
+        response.on('end', () => resolve({
+          statusCode: response.statusCode ?? 0,
+          headers: response.headers,
+          body: Buffer.concat(chunks),
+        }));
+      },
+    );
+    request.on('error', reject);
+    request.end();
+  });
+}
+
+function unusedSessionStore(): SessionStore {
+  return {
+    create: () => { throw new Error('not used'); },
+    load: () => { throw new Error('not used'); },
+    appendEntry: () => { throw new Error('not used'); },
+    saveMetadata: () => { throw new Error('not used'); },
+  };
 }
 
 function getJson(app: INestApplication, path: string): Promise<HttpResponse> {

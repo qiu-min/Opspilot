@@ -11,7 +11,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 
-import type { SessionStore } from '@opspilot/application';
+import { SessionNotFoundError, type SessionStore } from '@opspilot/application';
 import { Session, type SessionEntry, type SessionMetadata } from '@opspilot/domain';
 
 import {
@@ -19,7 +19,6 @@ import {
   createSessionFile,
   parseSessionJsonl,
   readSessionFileBytes,
-  SessionJsonlError,
 } from './session-jsonl.js';
 import {
   loadSessionMetadata,
@@ -73,7 +72,7 @@ export class FileSystemSessionStore implements SessionStore {
     if (existsSync(paths.directory)) return this.loadNewLayout(sessionId, paths);
     if (existsSync(paths.legacy)) return this.loadAndMigrateLegacy(sessionId, paths);
 
-    throw new SessionJsonlError(`Session file does not exist: ${paths.legacy}`);
+    throw new SessionNotFoundError(sessionId);
   }
 
   /** Appends history first, then atomically advances metadata.updatedAt. */

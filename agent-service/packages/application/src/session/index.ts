@@ -27,4 +27,5 @@ export type {
 } from './runtime/prepare-session-execution-config.js';
 export * from './history/index.js';
 export * from './ports/index.js';
+export * from './errors/index.js';
 export { CreateSession, type CreateSessionResult } from './create-session.js';

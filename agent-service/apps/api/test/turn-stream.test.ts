@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 
 import {
   GetActiveTurn,
+  GetExcelResourceContent,
   GetSessionHistory,
   GetTurnTrace,
   SubscribeTurnStream,
@@ -76,6 +77,7 @@ describe('Turn stream API', () => {
       } as never,
       { execute: () => ({ leafId: null, items: [] }) } as unknown as GetSessionHistory,
       new GetActiveTurn(hub),
+      { execute: async () => { throw new Error('not used'); } } as unknown as GetExcelResourceContent,
     );
 
     expect(controller.getActiveTurnSnapshot(identity.sessionId)).toEqual({

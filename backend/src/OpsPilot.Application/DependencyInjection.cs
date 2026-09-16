@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using OpsPilot.Application.Files.GetById;
 using OpsPilot.Application.Files.Upload;
 using OpsPilot.Application.Sessions.Create;
+using OpsPilot.Application.Sessions.DownloadResource;
 using OpsPilot.Application.Sessions.GetDetail;
 using OpsPilot.Application.Sessions.List;
 using OpsPilot.Application.Sessions.Live;
@@ -20,6 +21,7 @@ public static class DependencyInjection
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<CreateSessionHandler>();
         services.AddScoped<GetSessionDetailHandler>();
+        services.AddScoped<DownloadSessionExcelResourceContentHandler>();
         services.AddScoped<GetFileAssetHandler>();
         services.AddScoped<ListSessionsHandler>();
         services.AddScoped<RunSessionTurnHandler>();

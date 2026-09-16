@@ -37,6 +37,10 @@ export {
   type WorkbookMutationReader,
 } from './evaluators/workbook-mutation-evaluator.js';
 export {
+  VerifyAfterWriteEvaluator,
+  type VerifyAfterWriteEvaluatorOptions,
+} from './evaluators/verify-after-write-evaluator.js';
+export {
   loadExcelCases,
   type ExcelGoldenCase,
   type ExcelGoldenCaseExpected,

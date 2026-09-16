@@ -68,6 +68,39 @@ describe("Session history mapper", () => {
     });
   });
 
+  it("places one downloadable artifact after a completed Turn response", () => {
+    const items = toSessionItems({
+      id: "s",
+      title: "New session",
+      createdAtUtc: "2026-09-09T00:00:00Z",
+      updatedAtUtc: "2026-09-09T00:00:00Z",
+      items: [
+        { type: "message", id: "user-1", role: "user", text: "update", createdAtUtc: "2026-09-09T00:00:00Z" },
+        { type: "message", id: "assistant-1", role: "assistant", text: "updated", createdAtUtc: "2026-09-09T00:00:01Z" },
+      ],
+      turnSummaries: [{
+        turnId: "turn-1",
+        sessionId: "s",
+        inputEntryId: "user-1",
+        status: "completed",
+        startedAt: "2026-09-09T00:00:00Z",
+        completedAt: "2026-09-09T00:00:05Z",
+        usage: null,
+        tools: [],
+        modifiedExcelResourceIds: ["resource-1"],
+      }],
+    });
+
+    expect(items.map((item) => item.type)).toEqual(["message", "response", "artifact"]);
+    expect(items[2]).toMatchObject({
+      type: "artifact",
+      artifact: {
+        resourceId: "resource-1",
+        name: "modified-workbook.xlsx",
+      },
+    });
+  });
+
   it("keeps consecutive Turn summaries associated with their own user messages", () => {
     const items = toSessionItems({
       id: "s",

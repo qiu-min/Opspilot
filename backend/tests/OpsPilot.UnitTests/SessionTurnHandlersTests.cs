@@ -344,6 +344,7 @@ public sealed class SessionTurnHandlersTests
 
         public Task<AgentSessionCreated> CreateSessionAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<AgentSessionHistory> GetHistoryAsync(Guid sessionId, CancellationToken cancellationToken) { LastHistorySessionId = sessionId; return Task.FromResult(History); }
+        public Task<AgentExcelResourceContent> GetExcelResourceContentAsync(Guid sessionId, Guid resourceId, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<AgentTurnTrace> GetTurnTraceAsync(Guid turnId, CancellationToken cancellationToken) { LastTraceTurnId = turnId; return Task.FromResult(Trace!); }
         public Task<AgentTurnResult> RunTurnAsync(Guid sessionId, AgentTurnRequest request, CancellationToken cancellationToken) { LastRunSessionId = sessionId; LastRunRequest = request; RunTurnCalls++; return Task.FromResult(TurnResult); }
         public IAsyncEnumerable<AgentTurnStreamEvent> StartTurnStreamAsync(Guid sessionId, AgentTurnRequest request, CancellationToken cancellationToken) { LastStreamRequest = request; return Yield(StartEvents, cancellationToken); }

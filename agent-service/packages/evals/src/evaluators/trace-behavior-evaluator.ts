@@ -9,6 +9,7 @@ export interface TraceBehaviorExpected {
   readonly requiredTools?: readonly string[];
   readonly forbiddenTools?: readonly string[];
   readonly maxToolErrors?: number;
+  readonly verifyAfterWrite?: boolean;
 }
 
 /** A stable, application-facing seam for reading a projected TurnTrace. */
@@ -76,6 +77,9 @@ export class TraceBehaviorEvaluator implements Evaluator<unknown, ExecuteTurnRes
       ...(behavior?.maxToolErrors === undefined
         ? {}
         : { maxToolErrors: behavior.maxToolErrors }),
+      ...(behavior?.verifyAfterWrite === undefined
+        ? {}
+        : { verifyAfterWrite: behavior.verifyAfterWrite }),
     };
 
     if (behavior === undefined) return pass(details);
@@ -185,6 +189,9 @@ function readBehaviorExpected(value: unknown): TraceBehaviorExpected | undefined
       ? {}
       : { forbiddenTools: behavior.forbiddenTools as readonly string[] }),
     ...(behavior.maxToolErrors === undefined ? {} : { maxToolErrors: behavior.maxToolErrors as number }),
+    ...(typeof behavior.verifyAfterWrite === 'boolean'
+      ? { verifyAfterWrite: behavior.verifyAfterWrite }
+      : {}),
   };
 }
 

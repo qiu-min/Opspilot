@@ -27,6 +27,7 @@ export type TurnPresentationSummaryResponse = {
   startedAt: string;
   completedAt: string;
   usage: { inputTokens: number; outputTokens: number; totalTokens: number } | null;
+  modifiedExcelResourceIds?: string[];
   tools: Array<{
     callId: string;
     name: string;

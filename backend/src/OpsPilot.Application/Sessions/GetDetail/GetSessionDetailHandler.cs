@@ -50,5 +50,6 @@ public sealed class GetSessionDetailHandler(ISessionRepository sessionRepository
                         tool.Display.Subject,
                         tool.Display.Detail),
                 tool.StartedAt,
-                tool.CompletedAt)).ToArray());
+                tool.CompletedAt)).ToArray(),
+            summary.ModifiedExcelResourceIds);
 }

@@ -11,6 +11,7 @@ import {
   GetActiveTurn,
   CreateSession,
   GetSessionHistory,
+  GetExcelResourceContent,
   GetTurnTrace,
   ExecuteTurn,
   InMemorySessionRunCoordinator,
@@ -134,6 +135,12 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     sessionStore,
     turnStore,
     toolPresentationResolver,
+    turnExecutionContextStore,
+  });
+  const getExcelResourceContent = new GetExcelResourceContent({
+    sessionStore,
+    excelSourceResourceStore,
+    workingResourceManager: excelWorkingResourceManager,
   });
   const getTurnTrace = new GetTurnTrace({ turnStore });
   const createSession = new CreateSession(sessionStore);
@@ -146,6 +153,7 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
       { provide: ResumeTurn, useValue: resumeTurn },
       { provide: RecoverTurnsOnStartup, useValue: recoverTurnsOnStartup },
       { provide: GetSessionHistory, useValue: getSessionHistory },
+      { provide: GetExcelResourceContent, useValue: getExcelResourceContent },
       { provide: GetTurnTrace, useValue: getTurnTrace },
       { provide: CreateSession, useValue: createSession },
       { provide: GetActiveTurn, useValue: getActiveTurn },
@@ -156,6 +164,7 @@ export async function createApiRuntimeModule(config: RuntimeConfig): Promise<Dyn
     exports: [
       ExecuteTurn,
       GetSessionHistory,
+      GetExcelResourceContent,
       GetTurnTrace,
       CreateSession,
       GetActiveTurn,

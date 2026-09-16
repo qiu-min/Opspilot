@@ -8,7 +8,8 @@ public sealed record AgentTurnPresentationSummary(
     DateTimeOffset StartedAt,
     DateTimeOffset CompletedAt,
     AgentTurnPresentationUsage? Usage,
-    IReadOnlyList<AgentTurnToolPresentationSummary> Tools);
+    IReadOnlyList<AgentTurnToolPresentationSummary> Tools,
+    IReadOnlyList<Guid>? ModifiedExcelResourceIds = null);
 
 public sealed record AgentTurnPresentationUsage(
     int InputTokens,

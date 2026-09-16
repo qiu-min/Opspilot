@@ -98,7 +98,11 @@ describe('loadExcelCases', () => {
           range: 'H2',
           expectedValues: [['Verified']],
         },
-        behavior: { requiredTools: ['write_data'], maxToolErrors: 0 },
+        behavior: {
+          requiredTools: ['write_data', 'read_range'],
+          maxToolErrors: 0,
+          verifyAfterWrite: true,
+        },
       },
       input: {
         message: '请在 MonthlySummary 工作表的 H2 单元格写入 Verified。',
@@ -113,8 +117,62 @@ describe('loadExcelCases', () => {
     { sheetName: 'MonthlySummary', range: '', expectedValues: [['Verified']] },
     { sheetName: 'MonthlySummary', range: 'H2', expectedValues: [] },
     { sheetName: 'MonthlySummary', range: 'H2', expectedValues: ['Verified'] },
+    { sheetName: 'MonthlySummary', range: 'H2', expectedValues: [[]] },
+    { sheetName: 'MonthlySummary', range: 'H2', expectedValues: [['A', 'B'], ['C']] },
   ])('rejects malformed workbookMutation expected values: %j', async (workbookMutation) => {
     await expectWorkbookMutationToReject(workbookMutation, /workbookMutation/);
+  });
+
+  it.each([
+    { sheetCount: 3 },
+    { sheetRows: [{ sheetName: 'SalesData', dataRowCount: 120, headerRowCount: 1 }] },
+    {
+      topRegionSales: {
+        sheetName: 'SalesData',
+        region: 'South',
+        totalSales: 92726.94,
+        orderCount: 40,
+      },
+    },
+    { workbookMutation: { sheetName: 'MonthlySummary', range: 'H2', expectedValues: [['Verified']] } },
+  ])('accepts exactly one outcome contract: %j', async (expected) => {
+    await expectExcelCaseToLoad(expected);
+  });
+
+  it.each([
+    { expected: { behavior: { requiredTools: ['write_data'] } }, received: 'none' },
+    {
+      expected: {
+        sheetCount: 3,
+        workbookMutation: { sheetName: 'MonthlySummary', range: 'H2', expectedValues: [['Verified']] },
+      },
+      received: 'sheetCount, workbookMutation',
+    },
+    {
+      expected: {
+        sheetRows: [{ sheetName: 'SalesData', dataRowCount: 120, headerRowCount: 1 }],
+        topRegionSales: {
+          sheetName: 'SalesData',
+          region: 'South',
+          totalSales: 92726.94,
+          orderCount: 40,
+        },
+      },
+      received: 'sheetRows, topRegionSales',
+    },
+    {
+      expected: {
+        sheetCount: 3,
+        sheetRows: [{ sheetName: 'SalesData', dataRowCount: 120, headerRowCount: 1 }],
+        workbookMutation: { sheetName: 'MonthlySummary', range: 'H2', expectedValues: [['Verified']] },
+      },
+      received: 'sheetCount, sheetRows, workbookMutation',
+    },
+  ])('rejects expected values without exactly one outcome contract: %j', async ({ expected, received }) => {
+    await expectExcelCaseToReject(
+      expected,
+      new RegExp(`expected must define exactly one outcome contract; received ${received}`),
+    );
   });
 
   it('rejects malformed sheetRows expected values', async () => {
@@ -176,6 +234,28 @@ describe('loadExcelCases', () => {
 
   it.each([-1, 1.5, '0'])('rejects invalid behavior.maxToolErrors: %s', async (maxToolErrors) => {
     await expectBehaviorToReject({ maxToolErrors }, /maxToolErrors/);
+  });
+
+  it('loads verifyAfterWrite for a workbook mutation behavior contract', async () => {
+    await expectExcelCaseToLoad({
+      workbookMutation: {
+        sheetName: 'MonthlySummary',
+        range: 'H2',
+        expectedValues: [['Verified']],
+      },
+      behavior: { verifyAfterWrite: true },
+    });
+  });
+
+  it('rejects a non-boolean behavior.verifyAfterWrite', async () => {
+    await expectBehaviorToReject({ verifyAfterWrite: 'true' }, /verifyAfterWrite.*boolean/);
+  });
+
+  it('rejects verifyAfterWrite on a non-mutation outcome', async () => {
+    await expectBehaviorToReject(
+      { verifyAfterWrite: true },
+      /verifyAfterWrite.*requires a workbookMutation/,
+    );
   });
 
   it('rejects duplicate behavior.requiredTools', async () => {
@@ -242,6 +322,39 @@ async function expectWorkbookMutationToReject(
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+}
+
+async function expectExcelCaseToLoad(expected: unknown): Promise<void> {
+  const directory = await mkdtemp(join(tmpdir(), 'opspilot-evals-loader-'));
+  const datasetPath = join(directory, 'cases.json');
+  await writeFile(datasetPath, JSON.stringify([createDatasetCase(expected)]), 'utf8');
+  try {
+    await expect(loadExcelCases(datasetPath)).resolves.toHaveLength(1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function expectExcelCaseToReject(expected: unknown, message: RegExp): Promise<void> {
+  const directory = await mkdtemp(join(tmpdir(), 'opspilot-evals-loader-'));
+  const datasetPath = join(directory, 'cases.json');
+  await writeFile(datasetPath, JSON.stringify([createDatasetCase(expected)]), 'utf8');
+  try {
+    await expect(loadExcelCases(datasetPath)).rejects.toThrow(message);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+function createDatasetCase(expected: unknown): Record<string, unknown> {
+  return {
+    id: 'loader-contract-test',
+    name: 'Loader contract test',
+    input: 'test',
+    workbook: 'sales.xlsx',
+    expected,
+    tags: ['excel'],
+  };
 }
 
 function isResourceInput(input: AgentEvalInput | undefined): input is AgentEvalInputWithResource {

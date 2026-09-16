@@ -5,6 +5,7 @@ using OpsPilot.Api.Features.Sessions.Contracts.Responses;
 using OpsPilot.Api.Features.Sessions.Streaming;
 using OpsPilot.Application.Abstractions.AgentService;
 using OpsPilot.Application.Sessions.Create;
+using OpsPilot.Application.Sessions.DownloadResource;
 using OpsPilot.Application.Sessions.GetDetail;
 using OpsPilot.Application.Sessions.List;
 using OpsPilot.Application.Sessions.Live;
@@ -26,6 +27,7 @@ public sealed class SessionsController(
     GetActiveSessionTurnHandler getActiveSessionTurnHandler,
     ReattachSessionTurnStreamHandler reattachSessionTurnStreamHandler,
     GetSessionTurnTraceHandler getSessionTurnTraceHandler,
+    DownloadSessionExcelResourceContentHandler downloadSessionExcelResourceContentHandler,
     ILogger<SessionsController> logger) : ControllerBase
 {
     [HttpPost]
@@ -60,6 +62,19 @@ public sealed class SessionsController(
     {
         RunSessionTurnResult result = await runSessionTurnHandler.HandleAsync(new RunSessionTurnCommand(sessionId, request.FileId, request.Message), cancellationToken);
         return Ok(new SessionTurnResponse(result.SessionId, result.TurnId, result.LeafId, result.Status, result.Output));
+    }
+
+    [HttpGet("{sessionId:guid}/resources/{resourceId:guid}/content")]
+    public async Task<IActionResult> DownloadResource(
+        Guid sessionId,
+        Guid resourceId,
+        CancellationToken cancellationToken)
+    {
+        AgentExcelResourceContent content = await downloadSessionExcelResourceContentHandler.HandleAsync(
+            sessionId,
+            resourceId,
+            cancellationToken);
+        return File(content.Content, content.ContentType, content.FileName);
     }
 
     [HttpGet("{sessionId:guid}/active-turn")]
@@ -179,5 +194,6 @@ public sealed class SessionsController(
                         tool.Display.Subject,
                         tool.Display.Detail),
                 tool.StartedAt,
-                tool.CompletedAt)).ToArray());
+                tool.CompletedAt)).ToArray(),
+            summary.ModifiedExcelResourceIds);
 }

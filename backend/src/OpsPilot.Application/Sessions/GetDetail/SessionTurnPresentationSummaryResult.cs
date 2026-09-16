@@ -8,7 +8,8 @@ public sealed record SessionTurnPresentationSummaryResult(
     DateTimeOffset StartedAt,
     DateTimeOffset CompletedAt,
     SessionTurnPresentationUsageResult? Usage,
-    IReadOnlyList<SessionToolPresentationSummaryResult> Tools);
+    IReadOnlyList<SessionToolPresentationSummaryResult> Tools,
+    IReadOnlyList<Guid>? ModifiedExcelResourceIds = null);
 
 public sealed record SessionTurnPresentationUsageResult(
     int InputTokens,

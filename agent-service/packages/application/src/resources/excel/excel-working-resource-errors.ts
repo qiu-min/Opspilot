@@ -30,3 +30,29 @@ export class ExcelWorkingResourceSourceMismatchError extends ExcelWorkingResourc
     this.requestedSourcePath = requestedSourcePath;
   }
 }
+
+/** Raised when a Session does not expose the requested Excel resource. */
+export class ExcelResourceNotFoundError extends ExcelWorkingResourceError {
+  public readonly sessionId: string;
+  public readonly resourceId: string;
+
+  public constructor(sessionId: string, resourceId: string) {
+    super(`Excel resource was not found for Session ${sessionId}: ${resourceId}.`);
+    this.name = 'ExcelResourceNotFoundError';
+    this.sessionId = sessionId;
+    this.resourceId = resourceId;
+  }
+}
+
+/** Raised when the committed workbook can no longer be read. */
+export class ExcelResourceContentNotFoundError extends ExcelWorkingResourceError {
+  public readonly sessionId: string;
+  public readonly resourceId: string;
+
+  public constructor(sessionId: string, resourceId: string, options?: ErrorOptions) {
+    super(`Excel resource content was not found for Session ${sessionId}: ${resourceId}.`, options);
+    this.name = 'ExcelResourceContentNotFoundError';
+    this.sessionId = sessionId;
+    this.resourceId = resourceId;
+  }
+}

@@ -14,6 +14,7 @@ export interface BuildTurnPresentationSummaryOptions {
   readonly events: readonly TurnEvent[];
   readonly session: Session;
   readonly toolPresentationResolver?: ToolPresentationResolver;
+  readonly excelResourceId?: string;
 }
 
 /** Builds a deterministic historical Turn presentation from durable facts only. */
@@ -28,6 +29,12 @@ export function buildTurnPresentationSummary(
   const toolCalls = collectAssistantToolCalls(events, options.session);
   const tools = collectToolSummaries(events, toolCalls, options.toolPresentationResolver);
   const usage = collectUsage(events);
+  const modifiedExcelResourceIds = collectModifiedExcelResourceIds(
+    events,
+    toolCalls,
+    options.session,
+    options.excelResourceId,
+  );
 
   return {
     turnId: state.id,
@@ -38,7 +45,27 @@ export function buildTurnPresentationSummary(
     completedAt: state.completedAt,
     usage,
     tools,
+    ...(modifiedExcelResourceIds.length === 0 ? {} : { modifiedExcelResourceIds }),
   };
+}
+
+function collectModifiedExcelResourceIds(
+  events: readonly TurnEvent[],
+  toolCalls: ReadonlyMap<string, ModelToolCall>,
+  session: Session,
+  excelResourceId: string | undefined,
+): readonly string[] {
+  const resourceIds = new Set<string>();
+  for (const event of events) {
+    if (event.type !== 'tool_completed' || event.name !== 'write_data' || event.isError) continue;
+    const resourceAlias = toolCalls.get(event.callId)?.arguments.resource;
+    const resourceId =
+      typeof resourceAlias === 'string'
+        ? session.getResourceByAlias(resourceAlias)?.id
+        : excelResourceId ?? session.getActiveResourceId() ?? undefined;
+    if (resourceId !== undefined) resourceIds.add(resourceId);
+  }
+  return [...resourceIds];
 }
 
 function collectAssistantToolCalls(

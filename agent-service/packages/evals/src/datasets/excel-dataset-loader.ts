@@ -125,60 +125,74 @@ function parseExpected(value: unknown, index: number): ExcelGoldenCaseExpected {
     );
   }
 
-  const behavior = parseBehaviorExpected(value.behavior, index);
-
-  if (value.topRegionSales !== undefined) {
-    return { topRegionSales: parseTopRegionSalesExpected(value.topRegionSales, index), ...behavior };
+  const outcomeKeys = ['sheetCount', 'sheetRows', 'topRegionSales', 'workbookMutation'] as const;
+  const declaredOutcomeKeys = outcomeKeys.filter((key) => value[key] !== undefined);
+  if (declaredOutcomeKeys.length !== 1) {
+    throw new Error(
+      `Excel dataset case ${index} expected must define exactly one outcome contract; received ${declaredOutcomeKeys.length === 0 ? 'none' : declaredOutcomeKeys.join(', ')}.`,
+    );
   }
 
-  if (value.sheetRows !== undefined) {
-    if (!Array.isArray(value.sheetRows) || value.sheetRows.length === 0) {
-      throw new Error(`Excel dataset case ${index} expected.sheetRows must be a non-empty array.`);
+  const behavior = parseBehaviorExpected(value.behavior, index);
+  if (behavior.behavior?.verifyAfterWrite === true && declaredOutcomeKeys[0] !== 'workbookMutation') {
+    throw new Error(
+      `Excel dataset case ${index} expected.behavior.verifyAfterWrite requires a workbookMutation outcome contract.`,
+    );
+  }
+
+  switch (declaredOutcomeKeys[0]) {
+    case 'topRegionSales':
+      return { topRegionSales: parseTopRegionSalesExpected(value.topRegionSales, index), ...behavior };
+
+    case 'sheetRows': {
+      if (!Array.isArray(value.sheetRows) || value.sheetRows.length === 0) {
+        throw new Error(`Excel dataset case ${index} expected.sheetRows must be a non-empty array.`);
+      }
+
+      const sheetRows = value.sheetRows.map((sheet, sheetIndex) => {
+        if (!isRecord(sheet)) {
+          throw new Error(
+            `Excel dataset case ${index} expected.sheetRows[${sheetIndex}] must be an object.`,
+          );
+        }
+        const sheetName = sheet.sheetName;
+        if (!isNonEmptyString(sheetName)) {
+          throw new Error(
+            `Excel dataset case ${index} expected.sheetRows[${sheetIndex}].sheetName must be a non-empty string.`,
+          );
+        }
+        if (!isNonNegativeInteger(sheet.dataRowCount)) {
+          throw new Error(
+            `Excel dataset case ${index} expected.sheetRows[${sheetIndex}].dataRowCount must be an integer >= 0.`,
+          );
+        }
+        if (!isNonNegativeInteger(sheet.headerRowCount)) {
+          throw new Error(
+            `Excel dataset case ${index} expected.sheetRows[${sheetIndex}].headerRowCount must be an integer >= 0.`,
+          );
+        }
+        return {
+          sheetName,
+          dataRowCount: sheet.dataRowCount,
+          headerRowCount: sheet.headerRowCount,
+        } satisfies ExcelGoldenSheetRowsExpected;
+      });
+
+      return { sheetRows, ...behavior };
     }
 
-    const sheetRows = value.sheetRows.map((sheet, sheetIndex) => {
-      if (!isRecord(sheet)) {
-        throw new Error(
-          `Excel dataset case ${index} expected.sheetRows[${sheetIndex}] must be an object.`,
-        );
-      }
-      const sheetName = sheet.sheetName;
-      if (!isNonEmptyString(sheetName)) {
-        throw new Error(
-          `Excel dataset case ${index} expected.sheetRows[${sheetIndex}].sheetName must be a non-empty string.`,
-        );
-      }
-      if (!isNonNegativeInteger(sheet.dataRowCount)) {
-        throw new Error(
-          `Excel dataset case ${index} expected.sheetRows[${sheetIndex}].dataRowCount must be an integer >= 0.`,
-        );
-      }
-      if (!isNonNegativeInteger(sheet.headerRowCount)) {
-        throw new Error(
-          `Excel dataset case ${index} expected.sheetRows[${sheetIndex}].headerRowCount must be an integer >= 0.`,
-        );
-      }
+    case 'workbookMutation':
       return {
-        sheetName,
-        dataRowCount: sheet.dataRowCount,
-        headerRowCount: sheet.headerRowCount,
-      } satisfies ExcelGoldenSheetRowsExpected;
-    });
+        workbookMutation: parseWorkbookMutationExpected(value.workbookMutation, index),
+        ...behavior,
+      };
 
-    return { sheetRows, ...behavior };
+    case 'sheetCount':
+      if (!isNonNegativeInteger(value.sheetCount)) {
+        throw new Error(`Excel dataset case ${index} expected.sheetCount must be an integer >= 0.`);
+      }
+      return { sheetCount: value.sheetCount, ...behavior };
   }
-
-  if (value.workbookMutation !== undefined) {
-    return {
-      workbookMutation: parseWorkbookMutationExpected(value.workbookMutation, index),
-      ...behavior,
-    };
-  }
-
-  if (!isNonNegativeInteger(value.sheetCount)) {
-    throw new Error(`Excel dataset case ${index} expected.sheetCount must be an integer >= 0.`);
-  }
-  return { sheetCount: value.sheetCount, ...behavior };
 }
 
 /** Validates the minimal Trace behavior contract at the dataset boundary. */
@@ -199,6 +213,12 @@ function parseBehaviorExpected(
       `Excel dataset case ${index} expected.behavior.maxToolErrors must be an integer >= 0.`,
     );
   }
+  const verifyAfterWrite = value.verifyAfterWrite;
+  if (verifyAfterWrite !== undefined && typeof verifyAfterWrite !== 'boolean') {
+    throw new Error(
+      `Excel dataset case ${index} expected.behavior.verifyAfterWrite must be a boolean.`,
+    );
+  }
 
   const forbiddenToolSet = new Set(forbiddenTools ?? []);
   const conflictingTool = (requiredTools ?? []).find((tool) => forbiddenToolSet.has(tool));
@@ -213,6 +233,7 @@ function parseBehaviorExpected(
       ...(requiredTools === undefined ? {} : { requiredTools }),
       ...(forbiddenTools === undefined ? {} : { forbiddenTools }),
       ...(maxToolErrors === undefined ? {} : { maxToolErrors }),
+      ...(verifyAfterWrite === undefined ? {} : { verifyAfterWrite }),
     },
   };
 }
@@ -299,6 +320,19 @@ function parseWorkbookMutationExpected(
   ) {
     throw new Error(
       `Excel dataset case ${index} expected.workbookMutation.expectedValues must be a non-empty two-dimensional array.`,
+    );
+  }
+
+  if (rawExpectedValues.some((row) => row.length === 0)) {
+    throw new Error(
+      `Excel dataset case ${index} expected.workbookMutation.expectedValues must contain non-empty rows.`,
+    );
+  }
+
+  const columnCount = rawExpectedValues[0].length;
+  if (rawExpectedValues.some((row) => row.length !== columnCount)) {
+    throw new Error(
+      `Excel dataset case ${index} expected.workbookMutation.expectedValues must be rectangular.`,
     );
   }
 

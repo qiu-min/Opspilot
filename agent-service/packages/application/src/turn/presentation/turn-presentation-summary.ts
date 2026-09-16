@@ -27,4 +27,6 @@ export interface TurnPresentationSummary {
   readonly completedAt: string;
   readonly usage: TurnPresentationUsage | null;
   readonly tools: readonly TurnToolPresentationSummary[];
+  /** Excel resources successfully mutated by this Turn, deduplicated by resource id. */
+  readonly modifiedExcelResourceIds?: readonly string[];
 }

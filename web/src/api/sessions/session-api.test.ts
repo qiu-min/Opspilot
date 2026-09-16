@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getSessionTurnTrace } from "./session-api";
+import { downloadExcelResource, getSessionTurnTrace } from "./session-api";
 
 describe("getSessionTurnTrace", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -74,5 +74,34 @@ describe("getSessionTurnTrace", () => {
     const requestHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
     expect(requestHeaders.get("Accept")).toBe("application/json");
     expect(requestHeaders.get("Authorization")).toBe("Bearer access-token");
+  });
+
+  it("downloads an Excel resource through the Backend endpoint and revokes the object URL", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(new Blob(["xlsx"]), {
+      headers: {
+        "Content-Disposition": 'attachment; filename="sales.xlsx"',
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      },
+    }));
+    const click = vi.fn();
+    const remove = vi.fn();
+    const link = { href: "", download: "", style: {}, click, remove } as unknown as HTMLAnchorElement;
+    const append = vi.fn();
+    const createElement = vi.fn().mockReturnValue(link);
+    const createObjectURL = vi.fn().mockReturnValue("blob:test");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("document", { createElement, body: { append } });
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+
+    await downloadExcelResource("session/1", "resource/1", "access-token");
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/sessions/session%2F1/resources/resource%2F1/content", expect.objectContaining({ method: "GET" }));
+    expect(link.download).toBe("sales.xlsx");
+    expect(append).toHaveBeenCalledWith(link);
+    expect(click).toHaveBeenCalledOnce();
+    expect(remove).toHaveBeenCalledOnce();
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:test");
   });
 });

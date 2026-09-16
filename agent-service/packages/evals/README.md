@@ -44,8 +44,11 @@ the expected behavior. The Excel dataset currently supports these optional const
 requiredTools
 forbiddenTools
 maxToolErrors
+verifyAfterWrite (workbook mutation cases only)
 ```
 
+`verifyAfterWrite` is evaluated by `VerifyAfterWriteEvaluator`, which checks durable `write_data`
+and covering `read_range` completions; the other constraints remain owned by `TraceBehaviorEvaluator`.
 The Trace evaluator also reports model calls, tool calls, tool errors, retries, compactions, token
 usage, duration, and the unique tools used in first-seen order. In PR1 these efficiency metrics are
 observational details only; they are not hard gates for an Eval Case.

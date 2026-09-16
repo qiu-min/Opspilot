@@ -81,8 +81,9 @@
         "expectedValues": [["Verified"]]
       },
       "behavior": {
-        "requiredTools": ["write_data"],
-        "maxToolErrors": 0
+        "requiredTools": ["write_data", "read_range"],
+        "maxToolErrors": 0,
+        "verifyAfterWrite": true
       }
     },
     "tags": ["excel", "write", "mutation", "golden"]

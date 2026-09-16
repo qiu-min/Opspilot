@@ -15,6 +15,55 @@ const sessionId = '11111111-1111-4111-8111-111111111111';
 const startedAt = '2026-09-12T00:00:00.000Z';
 
 describe('buildTurnPresentationSummary', () => {
+  it('records one logical artifact resource for successful write_data calls only', () => {
+    const session = Session.create({ id: sessionId, timestamp: startedAt });
+    session.registerResource({ id: 'resource-1', kind: 'excel' });
+    const input = session.appendMessage({
+      role: 'user',
+      content: [{ type: 'text', text: 'update workbook' }],
+    });
+    const assistant = session.appendMessage({
+      role: 'assistant',
+      api: 'test-api',
+      provider: 'test-provider',
+      model: 'test-model',
+      content: [],
+      toolCalls: [
+        { callId: 'write-1', name: 'write_data', arguments: { resource: 'excel-1', data: [] } },
+        { callId: 'write-2', name: 'write_data', arguments: { resource: 'excel-1', data: [] } },
+      ],
+      finishReason: 'tool_calls',
+    });
+    const turn = terminalTurn('turn-write', input.id, 'completed');
+
+    const summary = buildTurnPresentationSummary({
+      turn,
+      session,
+      events: [
+        event(turn, 0, 'assistant_message_completed', {
+          entryId: assistant.id,
+          sessionLeafId: assistant.id,
+        }),
+        event(turn, 1, 'tool_completed', {
+          callId: 'write-1',
+          name: 'write_data',
+          isError: false,
+          resultEntryId: 'result-1',
+          sessionLeafId: 'result-1',
+        }),
+        event(turn, 2, 'tool_completed', {
+          callId: 'write-2',
+          name: 'write_data',
+          isError: true,
+          resultEntryId: 'result-2',
+          sessionLeafId: 'result-2',
+        }),
+      ],
+    });
+
+    expect(summary?.modifiedExcelResourceIds).toEqual(['resource-1']);
+  });
+
   it('rebuilds completed timing, usage, tool lifecycle, and display from durable facts', () => {
     const session = Session.create({ id: sessionId, timestamp: startedAt });
     const input = session.appendMessage({

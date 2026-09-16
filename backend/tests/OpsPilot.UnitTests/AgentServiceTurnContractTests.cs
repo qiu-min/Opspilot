@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using OpsPilot.Application.Abstractions.AgentService;
@@ -118,6 +119,29 @@ public sealed class AgentServiceTurnContractTests
         await Assert.ThrowsAsync<ApplicationNotFoundException>(() => client.GetTurnTraceAsync(
             TurnId,
             CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task GetExcelResourceContent_StreamsAgentResponseWithoutPathMetadata()
+    {
+        using var httpClient = new HttpClient(new ExcelContentHandler())
+        {
+            BaseAddress = new Uri("http://agent-service.test/"),
+        };
+        var client = new AgentServiceClient(httpClient);
+
+        AgentExcelResourceContent content = await client.GetExcelResourceContentAsync(
+            SessionId,
+            FileId,
+            CancellationToken.None);
+        await using (content.Content)
+        using (var reader = new StreamReader(content.Content))
+        {
+            Assert.Equal("xlsx bytes", await reader.ReadToEndAsync());
+        }
+
+        Assert.Equal("sales.xlsx", content.FileName);
+        Assert.Equal("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", content.ContentType);
     }
 
     [Fact]
@@ -269,6 +293,21 @@ public sealed class AgentServiceTurnContractTests
             {
                 Content = new StringContent(response, Encoding.UTF8, "application/json"),
             });
+        }
+    }
+
+    private sealed class ExcelContentHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Assert.Equal(HttpMethod.Get, request.Method);
+            Assert.Equal($"/sessions/{SessionId:D}/resources/{FileId:D}/content", request.RequestUri?.AbsolutePath);
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("xlsx bytes", Encoding.UTF8, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+            };
+            response.Content.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment") { FileName = "sales.xlsx" };
+            return Task.FromResult(response);
         }
     }
 

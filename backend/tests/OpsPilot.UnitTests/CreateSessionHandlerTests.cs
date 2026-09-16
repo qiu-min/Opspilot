@@ -38,6 +38,7 @@ public sealed class CreateSessionHandlerTests
     {
         public Task<AgentSessionCreated> CreateSessionAsync(CancellationToken cancellationToken) => Task.FromResult(new AgentSessionCreated(sessionId, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow));
         public Task<AgentSessionHistory> GetHistoryAsync(Guid sessionId, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<AgentExcelResourceContent> GetExcelResourceContentAsync(Guid sessionId, Guid resourceId, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<AgentTurnTrace> GetTurnTraceAsync(Guid turnId, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<AgentTurnResult> RunTurnAsync(Guid sessionId, AgentTurnRequest request, CancellationToken cancellationToken) => throw new NotSupportedException();
         public IAsyncEnumerable<AgentTurnStreamEvent> StartTurnStreamAsync(Guid sessionId, AgentTurnRequest request, CancellationToken cancellationToken) => throw new NotSupportedException();

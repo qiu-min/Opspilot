@@ -79,6 +79,16 @@ describe('buildOpsPilotSystemPrompt', () => {
     expect(prompt).not.toContain('sourcePath');
   });
 
+  it('guides verification after a successful mutation when read_range is available', () => {
+    const prompt = buildOpsPilotSystemPrompt({
+      tools: [fakeTool('write_data'), fakeTool('read_range')],
+    });
+
+    expect(prompt).toContain(
+      'After a successful Excel mutation, read back the affected range before reporting completion.',
+    );
+  });
+
   it('prefers aggregate and filter tools for large worksheet analysis', () => {
     const prompt = buildOpsPilotSystemPrompt({
       tools: [fakeTool('aggregate_data'), fakeTool('filter_data')],

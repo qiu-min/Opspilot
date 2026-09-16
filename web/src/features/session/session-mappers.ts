@@ -15,6 +15,7 @@ export function toSessionItems(response: SessionDetailResponse): SessionItem[] {
   const flushResponse = () => {
     flushTools();
     if (blocks.length === 0 && turnSummary === undefined) return;
+    const completedTurnSummary = turnSummary;
     const responseId = turnSummary === undefined ? `response-${responseIdSeed ?? blocks[0]?.id ?? "unknown"}` : `turn-${turnSummary.turnId}`;
     items.push({
       type: "response",
@@ -24,6 +25,24 @@ export function toSessionItems(response: SessionDetailResponse): SessionItem[] {
       blocks,
       ...(turnSummary === undefined ? {} : { metrics: toTurnMetrics(turnSummary) }),
     });
+    if (completedTurnSummary?.status === "completed") {
+      for (const resourceId of new Set(completedTurnSummary.modifiedExcelResourceIds ?? [])) {
+        const artifactId = `artifact-${completedTurnSummary.turnId}-${resourceId}`;
+        items.push({
+          type: "artifact",
+          id: artifactId,
+          artifact: {
+            id: artifactId,
+            resourceId,
+            name: "modified-workbook.xlsx",
+            detail: "Current committed workbook",
+            size: "XLSX",
+            kind: "xlsx",
+            generatedAt: formatMessageCreatedAt(completedTurnSummary.completedAt),
+          },
+        });
+      }
+    }
     blocks = [];
     responseIdSeed = null;
     turnSummary = undefined;

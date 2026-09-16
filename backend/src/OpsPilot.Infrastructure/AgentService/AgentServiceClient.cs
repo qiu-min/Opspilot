@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -10,6 +11,7 @@ namespace OpsPilot.Infrastructure.AgentService;
 
 public sealed class AgentServiceClient(HttpClient httpClient) : IAgentSessionClient
 {
+    private const string ExcelWorkbookContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     private static readonly JsonSerializerOptions JsonSerializerOptions = new(
         JsonSerializerDefaults.Web)
     {
@@ -35,6 +37,31 @@ public sealed class AgentServiceClient(HttpClient httpClient) : IAgentSessionCli
 
         return result
             ?? throw new HttpRequestException("Agent Service returned an empty history response.");
+    }
+
+    public async Task<AgentExcelResourceContent> GetExcelResourceContentAsync(
+        Guid sessionId,
+        Guid resourceId,
+        CancellationToken cancellationToken)
+    {
+        HttpResponseMessage response = await httpClient.GetAsync(
+            $"sessions/{sessionId:D}/resources/{resourceId:D}/content",
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+        try
+        {
+            await EnsureSuccessAsync(response, cancellationToken);
+            Stream content = await response.Content.ReadAsStreamAsync(cancellationToken);
+            return new AgentExcelResourceContent(
+                content,
+                GetFileName(response.Content.Headers, resourceId),
+                response.Content.Headers.ContentType?.MediaType ?? ExcelWorkbookContentType);
+        }
+        catch
+        {
+            response.Dispose();
+            throw;
+        }
     }
 
     public async Task<AgentTurnTrace> GetTurnTraceAsync(
@@ -161,5 +188,14 @@ public sealed class AgentServiceClient(HttpClient httpClient) : IAgentSessionCli
         {
             return ("CONFLICT", "Agent Service reported a conflict.");
         }
+    }
+
+    private static string GetFileName(HttpContentHeaders headers, Guid resourceId)
+    {
+        string? headerFileName = headers.ContentDisposition?.FileNameStar ?? headers.ContentDisposition?.FileName;
+        string fileName = Path.GetFileName(headerFileName?.Trim('"') ?? string.Empty);
+        return string.IsNullOrWhiteSpace(fileName) || fileName.Contains('\r') || fileName.Contains('\n')
+            ? $"{resourceId:N}.xlsx"
+            : fileName;
     }
 }

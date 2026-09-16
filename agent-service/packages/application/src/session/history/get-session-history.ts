@@ -1,6 +1,7 @@
 import type { SessionStore } from '../ports/session-store.js';
 import type { TurnStore } from '../../turn/ports/turn-store.js';
 import type { ToolPresentationResolver } from '../../turn/presentation/tool-presentation.js';
+import type { TurnExecutionContextStore } from '../../turn/ports/turn-execution-context-store.js';
 import {
   buildTurnPresentationSummary,
   type TurnPresentationSummary,
@@ -14,6 +15,7 @@ export interface GetSessionHistoryDependencies {
   readonly sessionStore: SessionStore;
   readonly turnStore: TurnStore;
   readonly toolPresentationResolver?: ToolPresentationResolver;
+  readonly turnExecutionContextStore?: TurnExecutionContextStore;
 }
 
 export interface SessionHistoryResult extends SessionHistoryProjection {
@@ -25,11 +27,13 @@ export class GetSessionHistory {
   private readonly sessionStore: SessionStore;
   private readonly turnStore: TurnStore;
   private readonly toolPresentationResolver?: ToolPresentationResolver;
+  private readonly turnExecutionContextStore?: TurnExecutionContextStore;
 
   public constructor(dependencies: GetSessionHistoryDependencies) {
     this.sessionStore = dependencies.sessionStore;
     this.turnStore = dependencies.turnStore;
     this.toolPresentationResolver = dependencies.toolPresentationResolver;
+    this.turnExecutionContextStore = dependencies.turnExecutionContextStore;
   }
 
   /** Loads an existing session without creating one and projects its UI-safe history. */
@@ -51,6 +55,7 @@ export class GetSessionHistory {
           events: this.turnStore.loadEvents(turn.getId()),
           session,
           toolPresentationResolver: this.toolPresentationResolver,
+          excelResourceId: this.turnExecutionContextStore?.load(turn.getId())?.excelResource?.id,
         }),
       )
       .filter((summary): summary is TurnPresentationSummary => summary !== undefined)

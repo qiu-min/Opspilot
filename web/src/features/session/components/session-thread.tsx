@@ -8,9 +8,12 @@ type SessionThreadProps = {
   items: SessionItem[];
   agentName: string;
   onOpenTrace?: (turnId: string) => void;
+  sessionId?: string;
+  accessToken?: string;
+  onArtifactDownloadError?: (message: string) => void;
 };
 
-export function SessionThread({ items, agentName, onOpenTrace }: SessionThreadProps) {
+export function SessionThread({ items, agentName, onOpenTrace, sessionId, accessToken, onArtifactDownloadError }: SessionThreadProps) {
   if (items.length === 0) {
     return (
       <div className="flex min-h-[360px] flex-col items-center justify-center text-center">
@@ -26,7 +29,7 @@ export function SessionThread({ items, agentName, onOpenTrace }: SessionThreadPr
       {items.map((item) => {
         if (item.type === "message") return <ChatMessageView key={item.id} message={item.message} agentName={agentName} />;
         if (item.type === "response") return <SessionResponseView key={item.id} response={item} agentName={agentName} onOpenTrace={onOpenTrace} />;
-        return <GeneratedArtifactCard key={item.id} artifact={item.artifact} />;
+        return <GeneratedArtifactCard key={item.id} artifact={item.artifact} sessionId={sessionId} accessToken={accessToken} onDownloadError={onArtifactDownloadError} />;
       })}
     </div>
   );
