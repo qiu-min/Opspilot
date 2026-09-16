@@ -21,7 +21,14 @@ describe('loadExcelCases', () => {
     expect(cases).toHaveLength(3);
     expect(excelCase).toMatchObject({
       id: 'excel-sheet-count-001',
-      expected: { sheetCount: 3 },
+      expected: {
+        sheetCount: 3,
+        behavior: {
+          requiredTools: ['get_workbook_info'],
+          forbiddenTools: ['write_data'],
+          maxToolErrors: 0,
+        },
+      },
       tags: ['excel', 'discovery', 'golden'],
       input: {
         message: '这个 Excel 工作簿总共有几个工作表？请使用阿拉伯数字明确回答数量。',
@@ -46,6 +53,11 @@ describe('loadExcelCases', () => {
           { sheetName: 'Products', dataRowCount: 8, headerRowCount: 1 },
           { sheetName: 'MonthlySummary', dataRowCount: 7, headerRowCount: 1 },
         ],
+        behavior: {
+          requiredTools: ['get_sheet_profile'],
+          forbiddenTools: ['write_data'],
+          maxToolErrors: 0,
+        },
       },
       input: {
         message:
@@ -63,6 +75,11 @@ describe('loadExcelCases', () => {
           region: 'South',
           totalSales: 92726.94,
           orderCount: 40,
+        },
+        behavior: {
+          requiredTools: ['aggregate_data'],
+          forbiddenTools: ['write_data'],
+          maxToolErrors: 0,
         },
       },
       input: {
@@ -129,7 +146,49 @@ describe('loadExcelCases', () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it.each([-1, 1.5, '0'])('rejects invalid behavior.maxToolErrors: %s', async (maxToolErrors) => {
+    await expectBehaviorToReject({ maxToolErrors }, /maxToolErrors/);
+  });
+
+  it('rejects duplicate behavior.requiredTools', async () => {
+    await expectBehaviorToReject(
+      { requiredTools: ['aggregate_data', 'aggregate_data'] },
+      /requiredTools.*duplicates/,
+    );
+  });
+
+  it('rejects a tool declared as both required and forbidden', async () => {
+    await expectBehaviorToReject(
+      { requiredTools: ['write_data'], forbiddenTools: ['write_data'] },
+      /both required and forbidden/,
+    );
+  });
 });
+
+async function expectBehaviorToReject(behavior: unknown, message: RegExp): Promise<void> {
+  const directory = await mkdtemp(join(tmpdir(), 'opspilot-evals-loader-'));
+  const datasetPath = join(directory, 'cases.json');
+  await writeFile(
+    datasetPath,
+    JSON.stringify([
+      {
+        id: 'invalid-behavior',
+        name: 'Invalid behavior',
+        input: 'test',
+        workbook: 'sales.xlsx',
+        expected: { sheetCount: 3, behavior },
+        tags: ['excel'],
+      },
+    ]),
+    'utf8',
+  );
+  try {
+    await expect(loadExcelCases(datasetPath)).rejects.toThrow(message);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
 
 function isResourceInput(input: AgentEvalInput | undefined): input is AgentEvalInputWithResource {
   return typeof input === 'object' && input !== null && 'message' in input;

@@ -43,4 +43,31 @@ describe('reporters', () => {
       ],
     });
   });
+
+  it('shows compact Trace metrics in the console report', () => {
+    const output = new ConsoleReporter().render([
+      {
+        ...reports[0],
+        scores: [
+          {
+            evaluator: 'trace_behavior',
+            score: 1,
+            passed: true,
+            details: {
+              modelCalls: 2,
+              toolCalls: 3,
+              toolErrors: 0,
+              retries: 1,
+              totalTokens: 350,
+              durationMs: 123,
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(output).toContain(
+      'modelCalls=2 toolCalls=3 toolErrors=0 retries=1 totalTokens=350 durationMs=123',
+    );
+  });
 });

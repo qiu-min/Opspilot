@@ -16,6 +16,13 @@ export {
 export { RunCompletedEvaluator } from './evaluators/run-completed-evaluator.js';
 export { ExcelWorkbookCorrectnessEvaluator } from './evaluators/excel-workbook-correctness-evaluator.js';
 export {
+  TraceBehaviorEvaluator,
+  type TraceBehaviorEvaluatorOptions,
+  type TraceBehaviorExpected,
+  type TraceEvalMetrics,
+  type TurnTraceReader,
+} from './evaluators/trace-behavior-evaluator.js';
+export {
   loadExcelCases,
   type ExcelGoldenCase,
   type ExcelGoldenCaseExpected,

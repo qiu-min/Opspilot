@@ -4,12 +4,14 @@ import { fileURLToPath } from 'node:url';
 
 import type { EvalCase } from '../core/eval-case.js';
 import type { AgentEvalInput } from '../executors/agent-eval-executor.js';
+import type { TraceBehaviorExpected } from '../evaluators/trace-behavior-evaluator.js';
 
 /** Fixed, checked-in expected facts for one Excel Golden Case. */
 export interface ExcelGoldenCaseExpected {
   readonly sheetCount?: number;
   readonly sheetRows?: readonly ExcelGoldenSheetRowsExpected[];
   readonly topRegionSales?: ExcelGoldenTopRegionSalesExpected;
+  readonly behavior?: TraceBehaviorExpected;
 }
 
 /** Fixed expected data/header row counts for one worksheet in an Excel Golden Case. */
@@ -115,8 +117,10 @@ function parseExpected(value: unknown, index: number): ExcelGoldenCaseExpected {
     );
   }
 
+  const behavior = parseBehaviorExpected(value.behavior, index);
+
   if (value.topRegionSales !== undefined) {
-    return { topRegionSales: parseTopRegionSalesExpected(value.topRegionSales, index) };
+    return { topRegionSales: parseTopRegionSalesExpected(value.topRegionSales, index), ...behavior };
   }
 
   if (value.sheetRows !== undefined) {
@@ -153,13 +157,65 @@ function parseExpected(value: unknown, index: number): ExcelGoldenCaseExpected {
       } satisfies ExcelGoldenSheetRowsExpected;
     });
 
-    return { sheetRows };
+    return { sheetRows, ...behavior };
   }
 
   if (!isNonNegativeInteger(value.sheetCount)) {
     throw new Error(`Excel dataset case ${index} expected.sheetCount must be an integer >= 0.`);
   }
-  return { sheetCount: value.sheetCount };
+  return { sheetCount: value.sheetCount, ...behavior };
+}
+
+/** Validates the minimal Trace behavior contract at the dataset boundary. */
+function parseBehaviorExpected(
+  value: unknown,
+  index: number,
+): { readonly behavior?: TraceBehaviorExpected } {
+  if (value === undefined) return {};
+  if (!isRecord(value)) {
+    throw new Error(`Excel dataset case ${index} expected.behavior must be an object.`);
+  }
+
+  const requiredTools = parseToolNames(value.requiredTools, 'requiredTools', index);
+  const forbiddenTools = parseToolNames(value.forbiddenTools, 'forbiddenTools', index);
+  const maxToolErrors = value.maxToolErrors;
+  if (maxToolErrors !== undefined && !isNonNegativeInteger(maxToolErrors)) {
+    throw new Error(
+      `Excel dataset case ${index} expected.behavior.maxToolErrors must be an integer >= 0.`,
+    );
+  }
+
+  const forbiddenToolSet = new Set(forbiddenTools ?? []);
+  const conflictingTool = (requiredTools ?? []).find((tool) => forbiddenToolSet.has(tool));
+  if (conflictingTool !== undefined) {
+    throw new Error(
+      `Excel dataset case ${index} expected.behavior tool ${conflictingTool} cannot be both required and forbidden.`,
+    );
+  }
+
+  return {
+    behavior: {
+      ...(requiredTools === undefined ? {} : { requiredTools }),
+      ...(forbiddenTools === undefined ? {} : { forbiddenTools }),
+      ...(maxToolErrors === undefined ? {} : { maxToolErrors }),
+    },
+  };
+}
+
+/** Validates an optional unique list of non-empty tool names. */
+function parseToolNames(
+  value: unknown,
+  field: string,
+  index: number,
+): readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || !value.every((tool) => isNonEmptyString(tool))) {
+    throw new Error(`Excel dataset case ${index} expected.behavior.${field} must be an array of non-empty strings.`);
+  }
+  if (new Set(value).size !== value.length) {
+    throw new Error(`Excel dataset case ${index} expected.behavior.${field} must not contain duplicates.`);
+  }
+  return value;
 }
 
 /** Validates the fixed worksheet, region, sales, and order-count Golden values. */

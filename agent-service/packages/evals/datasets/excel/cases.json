@@ -6,7 +6,12 @@
     "input": "这个 Excel 工作簿总共有几个工作表？请使用阿拉伯数字明确回答数量。",
     "workbook": "sales.xlsx",
     "expected": {
-      "sheetCount": 3
+      "sheetCount": 3,
+      "behavior": {
+        "requiredTools": ["get_workbook_info"],
+        "forbiddenTools": ["write_data"],
+        "maxToolErrors": 0
+      }
     },
     "tags": ["excel", "discovery", "golden"]
   },
@@ -33,7 +38,12 @@
           "dataRowCount": 7,
           "headerRowCount": 1
         }
-      ]
+      ],
+      "behavior": {
+        "requiredTools": ["get_sheet_profile"],
+        "forbiddenTools": ["write_data"],
+        "maxToolErrors": 0
+      }
     },
     "tags": ["excel", "discovery", "row-count", "golden"]
   },
@@ -49,6 +59,11 @@
         "region": "South",
         "totalSales": 92726.94,
         "orderCount": 40
+      },
+      "behavior": {
+        "requiredTools": ["aggregate_data"],
+        "forbiddenTools": ["write_data"],
+        "maxToolErrors": 0
       }
     },
     "tags": ["excel", "analysis", "aggregate", "golden"]

@@ -15,6 +15,7 @@ import {
   createWriteDataTool,
   ExcelWorkingResourceManager,
   ExecuteTurn,
+  GetTurnTrace,
   type ExecuteTurnResult,
   type ToolDefinition,
 } from '@opspilot/application';
@@ -40,6 +41,7 @@ import {
   ExcelWorkbookCorrectnessEvaluator,
   JsonReporter,
   RunCompletedEvaluator,
+  TraceBehaviorEvaluator,
   loadExcelCases,
   type AgentEvalInput,
   type EvalCase,
@@ -56,6 +58,7 @@ const resultPath = resolve(packageRoot, 'results/eval-report.json');
 /** Builds a real Application Turn executor using isolated temporary persistence. */
 async function createApplicationExecutor(modelConfigPath: string): Promise<{
   readonly executeTurn: ExecuteTurn;
+  readonly getTurnTrace: GetTurnTrace;
   readonly cleanup: () => Promise<void>;
 }> {
   const config = await loadModelGatewayConfig(modelConfigPath);
@@ -84,19 +87,22 @@ async function createApplicationExecutor(modelConfigPath: string): Promise<{
     fileOperator: excelWorkingResourceStore,
   });
   const toolDefinitions = createExcelToolDefinitions(excelWorkingResourceManager);
+  const turnStore = new FileSystemTurnStore(storageRoot);
   const executeTurn = new ExecuteTurn({
     sessionStore: new FileSystemSessionStore(join(storageRoot, 'sessions')),
     excelSourceResourceStore: new FileSystemExcelSourceResourceStore(workspaceStorageRoot),
-    turnStore: new FileSystemTurnStore(storageRoot),
+    turnStore,
     turnExecutionContextStore: new FileSystemTurnExecutionContextStore(storageRoot),
     modelGateway,
     defaultModel,
     toolDefinitions,
     systemPrompt: buildOpsPilotSystemPrompt({ tools: toolDefinitions }),
   });
+  const getTurnTrace = new GetTurnTrace({ turnStore });
 
   return {
     executeTurn,
+    getTurnTrace,
     cleanup: async () => await rm(storageRoot, { recursive: true, force: true }),
   };
 }
@@ -171,6 +177,7 @@ async function main(): Promise<void> {
       evaluators: [
         new RunCompletedEvaluator<ExecuteTurnResult>(),
         new ExcelWorkbookCorrectnessEvaluator(),
+        new TraceBehaviorEvaluator({ getTurnTrace: application.getTurnTrace }),
       ],
     });
     const reports = [

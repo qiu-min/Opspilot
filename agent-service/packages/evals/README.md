@@ -29,9 +29,28 @@ Eval answers:
 Deterministic evaluators should be preferred whenever the result can be verified programmatically.
 能程序化验证的 Excel 事实优先使用 deterministic evaluator，不要优先使用 LLM-as-Judge。
 
+## Outcome Eval and Behavior Eval
+
+Outcome Eval uses `ExecuteTurnResult`, structured `ToolResult` facts, and workbook state to decide
+whether the Agent completed the requested task correctly. The existing correctness evaluators keep
+this responsibility.
+
+Behavior Eval uses the durable `TurnTrace` for the same run to decide whether execution followed
+the expected behavior. The Excel dataset currently supports these optional constraints:
+
+```text
+requiredTools
+forbiddenTools
+maxToolErrors
+```
+
+The Trace evaluator also reports model calls, tool calls, tool errors, retries, compactions, token
+usage, duration, and the unique tools used in first-seen order. In PR1 these efficiency metrics are
+observational details only; they are not hard gates for an Eval Case.
+
 ## Excel Golden Cases
 
-当前两个 Golden Case 使用真实 fixture `datasets/excel/sales.xlsx`。Case 1 验证：
+当前三个 Golden Case 使用真实 fixture `datasets/excel/sales.xlsx`。Case 1 验证：
 
 ```text
 这个 Excel 工作簿总共有几个工作表？
@@ -55,7 +74,9 @@ How well did it happen?
 ```
 
 Runner 继续保留 `RunCompletedEvaluator` 和 smoke case；一个 case 只有在全部 required
-evaluators 通过时才通过。
+evaluators 通过时才通过。Excel runner 额外运行 `TraceBehaviorEvaluator`；它通过共享的
+Application `TurnStore` 调用 `GetTurnTrace`，不直接读取原始 `TurnEvent`，也不依赖
+`ExecuteTurnResult.messages` 作为行为证据。
 
 ## Run the Eval suite
 
