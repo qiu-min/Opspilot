@@ -7,23 +7,40 @@ import { fileURLToPath } from 'node:url';
 
 import {
   buildOpsPilotSystemPrompt,
+  createAggregateDataTool,
+  createFilterDataTool,
+  createGetSheetProfileTool,
+  createGetWorkbookInfoTool,
+  createReadRangeTool,
+  createWriteDataTool,
+  ExcelWorkingResourceManager,
   ExecuteTurn,
-  type ExecuteTurnInput,
   type ExecuteTurnResult,
+  type ToolDefinition,
 } from '@opspilot/application';
 import {
   FileSystemExcelSourceResourceStore,
+  FileSystemExcelWorkingResourceStore,
   FileSystemSessionStore,
+  FileSystemTurnExecutionContextStore,
   FileSystemTurnStore,
 } from '@opspilot/infrastructure';
 import { createModelGateway, loadModelGatewayConfig } from '@opspilot/model-gateway';
+import {
+  ExcelJsAggregateAdapter,
+  ExcelJsDataAdapter,
+  ExcelJsDiscoveryAdapter,
+  ExcelJsFilterAdapter,
+} from '@opspilot/tool-gateway';
 
 import {
   AgentEvalExecutor,
   ConsoleReporter,
   EvalRunner,
+  ExcelWorkbookCorrectnessEvaluator,
   JsonReporter,
   RunCompletedEvaluator,
+  loadExcelCases,
   type AgentEvalInput,
   type EvalCase,
 } from '../index.js';
@@ -60,22 +77,50 @@ async function createApplicationExecutor(modelConfigPath: string): Promise<{
   }
 
   const storageRoot = await mkdtemp(join(tmpdir(), 'opspilot-evals-'));
+  const workspaceStorageRoot = join(storageRoot, 'workspaces');
+  const excelWorkingResourceStore = new FileSystemExcelWorkingResourceStore(workspaceStorageRoot);
+  const excelWorkingResourceManager = new ExcelWorkingResourceManager({
+    store: excelWorkingResourceStore,
+    fileOperator: excelWorkingResourceStore,
+  });
+  const toolDefinitions = createExcelToolDefinitions(excelWorkingResourceManager);
   const executeTurn = new ExecuteTurn({
     sessionStore: new FileSystemSessionStore(join(storageRoot, 'sessions')),
-    excelSourceResourceStore: new FileSystemExcelSourceResourceStore(
-      join(storageRoot, 'workspaces'),
-    ),
+    excelSourceResourceStore: new FileSystemExcelSourceResourceStore(workspaceStorageRoot),
     turnStore: new FileSystemTurnStore(storageRoot),
+    turnExecutionContextStore: new FileSystemTurnExecutionContextStore(storageRoot),
     modelGateway,
     defaultModel,
-    toolDefinitions: [],
-    systemPrompt: buildOpsPilotSystemPrompt({ tools: [] }),
+    toolDefinitions,
+    systemPrompt: buildOpsPilotSystemPrompt({ tools: toolDefinitions }),
   });
 
   return {
     executeTurn,
     cleanup: async () => await rm(storageRoot, { recursive: true, force: true }),
   };
+}
+
+/** Builds the same production Excel tool set inside the Eval composition root. */
+function createExcelToolDefinitions(
+  workingResourceManager: Pick<
+    ExcelWorkingResourceManager,
+    'resolveReadablePath' | 'executeMutation'
+  >,
+): readonly ToolDefinition[] {
+  const excelDiscoveryConnector = new ExcelJsDiscoveryAdapter();
+  const excelDataConnector = new ExcelJsDataAdapter();
+  const excelAggregateConnector = new ExcelJsAggregateAdapter();
+  const excelFilterConnector = new ExcelJsFilterAdapter();
+
+  return [
+    createGetWorkbookInfoTool(excelDiscoveryConnector, workingResourceManager),
+    createGetSheetProfileTool(excelDiscoveryConnector, workingResourceManager),
+    createAggregateDataTool(excelAggregateConnector, workingResourceManager),
+    createFilterDataTool(excelFilterConnector, workingResourceManager),
+    createReadRangeTool(excelDataConnector, workingResourceManager),
+    createWriteDataTool(excelDataConnector, workingResourceManager),
+  ];
 }
 
 /** Reads and validates the small checked-in smoke dataset at the runner boundary. */
@@ -116,13 +161,22 @@ async function main(): Promise<void> {
     optionalEnvironmentValue('MODEL_CONFIG_PATH');
   const application = await createApplicationExecutor(modelConfigPath ?? defaultModelConfigPath);
   try {
-    const cases = await loadSmokeCases();
     const executor = new AgentEvalExecutor({ executeTurn: application.executeTurn });
-    const runner = new EvalRunner<AgentEvalInput, unknown, ExecuteTurnResult>({
+    const smokeRunner = new EvalRunner<AgentEvalInput, unknown, ExecuteTurnResult>({
       executor,
       evaluators: [new RunCompletedEvaluator<ExecuteTurnResult>()],
     });
-    const reports = await runner.runAll(cases);
+    const excelRunner = new EvalRunner<AgentEvalInput, unknown, ExecuteTurnResult>({
+      executor,
+      evaluators: [
+        new RunCompletedEvaluator<ExecuteTurnResult>(),
+        new ExcelWorkbookCorrectnessEvaluator(),
+      ],
+    });
+    const reports = [
+      ...(await smokeRunner.runAll(await loadSmokeCases())),
+      ...(await excelRunner.runAll(await loadExcelCases())),
+    ];
 
     process.stdout.write(`${new ConsoleReporter().render(reports)}\n`);
     await new JsonReporter().writeFile(resultPath, reports);

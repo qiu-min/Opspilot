@@ -9,7 +9,16 @@ import type { EvalExecutor } from '../core/eval-executor.js';
 import type { EvalRunResult } from '../core/eval-run-result.js';
 
 /** Input accepted by the default Agent adapter: a prompt or an existing Runtime message. */
-export type AgentEvalInput = string | ExecuteTurnInput['message'];
+export type AgentEvalMessageInput = string | ExecuteTurnInput['message'];
+
+/** Optional execution metadata for an Eval input, including an attached Excel resource. */
+export interface AgentEvalInputWithResource {
+  readonly message: AgentEvalMessageInput;
+  readonly excelResource?: ExecuteTurnInput['excelResource'];
+}
+
+/** Input accepted by the default Agent adapter, with optional per-case resources. */
+export type AgentEvalInput = AgentEvalMessageInput | AgentEvalInputWithResource;
 
 /** The small public Application surface needed by AgentEvalExecutor. */
 export interface ApplicationTurnExecutor {
@@ -21,7 +30,7 @@ export interface AgentEvalExecutorOptions {
   readonly model?: ExecuteTurnInput['model'];
   readonly thinkingLevel?: ExecuteTurnInput['thinkingLevel'];
   readonly onEvent?: ExecuteTurnOptions['onEvent'];
-  readonly inputToMessage?: (input: AgentEvalInput) => ExecuteTurnInput['message'];
+  readonly inputToMessage?: (input: AgentEvalMessageInput) => ExecuteTurnInput['message'];
 }
 
 /** Adapts the real Application ExecuteTurn entry point to the generic EvalExecutor contract. */
@@ -30,7 +39,7 @@ export class AgentEvalExecutor implements EvalExecutor<AgentEvalInput, ExecuteTu
   private readonly model?: ExecuteTurnInput['model'];
   private readonly thinkingLevel?: ExecuteTurnInput['thinkingLevel'];
   private readonly onEvent?: ExecuteTurnOptions['onEvent'];
-  private readonly inputToMessage: (input: AgentEvalInput) => ExecuteTurnInput['message'];
+  private readonly inputToMessage: (input: AgentEvalMessageInput) => ExecuteTurnInput['message'];
 
   /** Creates an adapter without owning or recreating Application Session/Turn dependencies. */
   public constructor(options: AgentEvalExecutorOptions) {
@@ -48,11 +57,7 @@ export class AgentEvalExecutor implements EvalExecutor<AgentEvalInput, ExecuteTu
     const startedAt = Date.now();
     try {
       const result = await this.executeTurn.execute(
-        {
-          message: this.inputToMessage(evalCase.input),
-          model: this.model,
-          thinkingLevel: this.thinkingLevel,
-        },
+        createExecuteTurnInput(evalCase.input, this.inputToMessage, this.model, this.thinkingLevel),
         this.onEvent === undefined ? undefined : { onEvent: this.onEvent },
       );
       const failedAssistant = findFailedAssistant(result);
@@ -89,9 +94,37 @@ export class AgentEvalExecutor implements EvalExecutor<AgentEvalInput, ExecuteTu
 }
 
 /** Converts a plain smoke prompt into the standard Application user message. */
-function toAgentUserMessage(input: AgentEvalInput): ExecuteTurnInput['message'] {
+function toAgentUserMessage(input: AgentEvalMessageInput): ExecuteTurnInput['message'] {
   if (typeof input !== 'string') return input;
   return { role: 'user', content: [{ type: 'text', text: input }] };
+}
+
+/** Converts an Eval input into the Application input without owning resource behavior. */
+function createExecuteTurnInput(
+  input: AgentEvalInput,
+  inputToMessage: (input: AgentEvalMessageInput) => ExecuteTurnInput['message'],
+  model: ExecuteTurnInput['model'] | undefined,
+  thinkingLevel: ExecuteTurnInput['thinkingLevel'] | undefined,
+): ExecuteTurnInput {
+  if (isAgentEvalInputWithResource(input)) {
+    return {
+      message: inputToMessage(input.message),
+      model,
+      thinkingLevel,
+      ...(input.excelResource === undefined ? {} : { excelResource: input.excelResource }),
+    };
+  }
+
+  return {
+    message: inputToMessage(input),
+    model,
+    thinkingLevel,
+  };
+}
+
+/** Distinguishes the resource-bearing Eval wrapper from a standard Runtime message. */
+function isAgentEvalInputWithResource(input: AgentEvalInput): input is AgentEvalInputWithResource {
+  return typeof input === 'object' && input !== null && 'message' in input;
 }
 
 /** Finds a model/runtime failure without depending on the position of the final message. */

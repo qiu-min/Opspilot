@@ -18,7 +18,8 @@
   "dependencies": {
     "@opspilot/application": "workspace:*",
     "@opspilot/infrastructure": "workspace:*",
-    "@opspilot/model-gateway": "workspace:*"
+    "@opspilot/model-gateway": "workspace:*",
+    "@opspilot/tool-gateway": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

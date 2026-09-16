@@ -3,7 +3,7 @@
 ## Purpose
 
 `evals` 用于离线评估 OpsPilot Agent。它定义通用的 Eval Case、执行器、Evaluator、Runner
-和 Report，并提供一个最小的真实 Agent smoke case。
+和 Report，并提供真实 Agent smoke case 与 Excel Golden Case。
 
 ## Boundary
 
@@ -27,10 +27,34 @@ Eval answers:
 ```
 
 Deterministic evaluators should be preferred whenever the result can be verified programmatically.
-PR1 暂时只实现 `RunCompletedEvaluator`；Excel correctness、Trace、LLM-as-Judge 和 UI 留给后续
-PR。
+能程序化验证的 Excel 事实优先使用 deterministic evaluator，不要优先使用 LLM-as-Judge。
 
-## Run the smoke case
+## PR2 Excel Golden Case
+
+当前第一个 Golden Case 使用真实 fixture `datasets/excel/sales.xlsx`，验证：
+
+```text
+这个 Excel 工作簿总共有几个工作表？
+```
+
+Eval 会把 fixture 作为 `ExcelResource` 传入 Application `ExecuteTurn.execute()`，并在 Eval
+自己的 composition root 中组合真实 Excel tools，包括 `get_workbook_info`、
+`get_sheet_profile`、`aggregate_data`、`filter_data`、`read_range` 和 `write_data`。
+`ExcelWorkbookCorrectnessEvaluator` 会同时检查真实 `get_workbook_info` tool result 的固定
+`sheetCount` Golden expected，以及最后一个成功 Assistant 回答中的阿拉伯数字。
+
+```text
+Observability:
+What happened?
+
+Eval:
+How well did it happen?
+```
+
+Runner 继续保留 `RunCompletedEvaluator` 和 smoke case；一个 case 只有在全部 required
+evaluators 通过时才通过。
+
+## Run the Eval suite
 
 在 `agent-service/` 下配置模型 provider 所需的 API key，然后运行：
 
@@ -40,5 +64,6 @@ pnpm --filter @opspilot/evals eval
 
 默认读取 `config/model-providers.json`，并使用 `DEFAULT_MODEL_PROVIDER` /
 `DEFAULT_MODEL_ID`；也可以用 `EVAL_MODEL_CONFIG_PATH`、`EVAL_MODEL_PROVIDER` 和
-`EVAL_MODEL_ID` 覆盖。运行会打印 Console report，并写入未纳入版本控制的
-`packages/evals/results/eval-report.json`。
+`EVAL_MODEL_ID` 覆盖。运行会依次评估 smoke case 与 Excel Golden Case，打印 Console report，
+并写入未纳入版本控制的 `packages/evals/results/eval-report.json`。任一 required evaluator
+失败时进程以非零状态退出。

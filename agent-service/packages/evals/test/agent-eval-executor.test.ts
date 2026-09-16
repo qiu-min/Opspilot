@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { AgentEvalExecutor } from '../src/executors/agent-eval-executor.js';
-import type { ExecuteTurnResult } from '@opspilot/application';
+import type { ExecuteTurnInput, ExecuteTurnResult } from '@opspilot/application';
 
 const success: ExecuteTurnResult = {
   sessionId: 'session-1',
@@ -57,6 +57,35 @@ describe('AgentEvalExecutor', () => {
       caseId: 'case-1',
       status: 'error',
       error: { message: 'gateway unavailable' },
+    });
+  });
+
+  it('passes an attached Excel resource through to Application ExecuteTurn', async () => {
+    let receivedInput: ExecuteTurnInput | undefined;
+    const executor = new AgentEvalExecutor({
+      executeTurn: {
+        execute: async (input) => {
+          receivedInput = input;
+          return success;
+        },
+      },
+    });
+
+    await executor.execute({
+      id: 'excel-case-1',
+      name: 'Excel Case 1',
+      input: {
+        message: 'How many worksheets are there?',
+        excelResource: { id: 'excel-sales-workbook', filePath: '/fixtures/sales.xlsx' },
+      },
+    });
+
+    expect(receivedInput).toMatchObject({
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'How many worksheets are there?' }],
+      },
+      excelResource: { id: 'excel-sales-workbook', filePath: '/fixtures/sales.xlsx' },
     });
   });
 });
